@@ -25,6 +25,7 @@ type Row = {
   expenseCategoryId?: string | null;
   incomeCategory?: { id: string; name: string; slug: string } | null;
   expenseCategory?: { id: string; name: string; slug: string } | null;
+  projectName?: string | null;
 };
 
 type Draft = Omit<Row, "id"> & { id?: string };
@@ -45,6 +46,7 @@ function emptyDraft(): Draft {
     notes: "",
     incomeCategoryId: null,
     expenseCategoryId: null,
+    projectName: "",
   };
 }
 
@@ -216,6 +218,10 @@ export function PlannedEventsClient() {
       setSaving(false);
       return;
     }
+    const projectNamePayload = (() => {
+      const t = (editing.projectName ?? "").trim();
+      return t === "" ? null : t.slice(0, 500);
+    })();
     const body = {
       type: editing.type,
       title: editing.title,
@@ -225,6 +231,7 @@ export function PlannedEventsClient() {
       plannedDate,
       status: editing.status,
       notes: editing.notes,
+      projectName: projectNamePayload,
       incomeCategoryId: editing.type === "INCOME" ? (editing.incomeCategoryId || null) : null,
       expenseCategoryId: editing.type === "EXPENSE" ? (editing.expenseCategoryId || null) : null,
     };
@@ -326,11 +333,11 @@ export function PlannedEventsClient() {
           </div>
         </div>
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-6">
-          <Field label="Szukaj (tytuł, opis)">
+          <Field label="Szukaj (tytuł, opis, projekt)">
             <Input
               value={filterDraft.q}
               onChange={(e) => setFilterDraft((d) => ({ ...d, q: e.target.value }))}
-              placeholder="np. leasing"
+              placeholder="np. leasing lub nazwa projektu"
               disabled={listLoading}
             />
           </Field>
@@ -431,12 +438,13 @@ export function PlannedEventsClient() {
       {loadError && <Alert variant="error">{loadError}</Alert>}
 
       <div className="overflow-x-auto rounded-xl border border-zinc-200 shadow-sm dark:border-zinc-800">
-        <table className="w-full min-w-[880px] text-left text-sm">
+        <table className="w-full min-w-[960px] text-left text-sm">
           <thead className="border-b border-zinc-200 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900">
             <tr>
               <th className="px-3 py-2.5 font-semibold">Tytuł</th>
               <th className="px-3 py-2.5 font-semibold">Typ</th>
               <th className="px-3 py-2.5 font-semibold">Kategoria</th>
+              <th className="px-3 py-2.5 font-semibold">Projekt</th>
               <th className="px-3 py-2.5 font-semibold">Data</th>
               <th className="px-3 py-2.5 font-semibold">Kwota</th>
               <th className="px-3 py-2.5 font-semibold">Status</th>
@@ -446,14 +454,14 @@ export function PlannedEventsClient() {
           <tbody className="divide-y divide-zinc-200 dark:divide-zinc-800">
             {listLoading && rows.length === 0 ? (
               <tr>
-                <td colSpan={7} className="px-3 py-12 text-center text-zinc-500">
+                <td colSpan={8} className="px-3 py-12 text-center text-zinc-500">
                   <Spinner className="mr-2 inline !size-5" />
                   Ładowanie…
                 </td>
               </tr>
             ) : rows.length === 0 ? (
               <tr>
-                <td colSpan={7} className="px-3 py-12 text-center text-zinc-500">
+                <td colSpan={8} className="px-3 py-12 text-center text-zinc-500">
                   Brak zdarzeń. Dodaj pierwsze z poziomu przycisku <strong>Dodaj</strong>.
                 </td>
               </tr>
@@ -481,6 +489,9 @@ export function PlannedEventsClient() {
                     <td className="px-3 py-2 font-medium">{typeBadge(r.type)}</td>
                     <td className="max-w-[140px] truncate px-3 py-2 text-zinc-600 dark:text-zinc-400" title={categoryCell(r)}>
                       {categoryCell(r)}
+                    </td>
+                    <td className="max-w-[120px] truncate px-3 py-2 text-zinc-600 dark:text-zinc-400" title={r.projectName ?? undefined}>
+                      {r.projectName?.trim() ? r.projectName : "—"}
                     </td>
                     <td className="whitespace-nowrap px-3 py-2">{formatDate(r.plannedDate)}</td>
                     <td className="px-3 py-2 tabular-nums font-medium">{formatPlannedAmountCell(r)}</td>
@@ -514,6 +525,14 @@ export function PlannedEventsClient() {
           </Field>
           <Field label="Opis">
             <Textarea rows={2} value={editing.description} onChange={(e) => setEditing({ ...editing, description: e.target.value })} disabled={saving} />
+          </Field>
+          <Field label="Projekt">
+            <Input
+              value={editing.projectName ?? ""}
+              onChange={(e) => setEditing({ ...editing, projectName: e.target.value })}
+              placeholder="opcjonalnie"
+              disabled={saving}
+            />
           </Field>
           <div className="grid gap-3 sm:grid-cols-2">
             <Field label="Typ">

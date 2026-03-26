@@ -55,6 +55,7 @@ export async function PATCH(req: Request, ctx: Ctx) {
         plannedDate: data.plannedDate ? new Date(data.plannedDate) : existing.plannedDate,
         status: data.status ?? existing.status,
         notes: data.notes ?? existing.notes,
+        projectName: data.projectName !== undefined ? data.projectName : existing.projectName,
         incomeCategoryId,
         expenseCategoryId,
       },

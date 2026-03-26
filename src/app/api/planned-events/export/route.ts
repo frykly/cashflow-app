@@ -35,6 +35,7 @@ export async function GET(req: Request) {
     "plannedDate",
     "status",
     "categoryName",
+    "projectName",
     "notes",
   ];
 
@@ -50,6 +51,7 @@ export async function GET(req: Request) {
       formatDate(r.plannedDate),
       r.status,
       cat,
+      r.projectName ?? "",
       r.notes,
     ];
   });

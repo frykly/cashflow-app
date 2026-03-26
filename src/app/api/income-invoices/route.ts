@@ -56,6 +56,7 @@ export async function POST(req: Request) {
         confirmedIncome: data.confirmedIncome ?? false,
         actualIncomeDate: data.actualIncomeDate ? new Date(data.actualIncomeDate) : null,
         notes: data.notes ?? "",
+        projectName: data.projectName ?? null,
         incomeCategoryId: data.incomeCategoryId ?? null,
       },
       include: { incomeCategory: true, payments: true },

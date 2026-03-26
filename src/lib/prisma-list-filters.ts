@@ -16,6 +16,7 @@ export function buildIncomeWhere(sp: URLSearchParams): Prisma.IncomeInvoiceWhere
         { invoiceNumber: { contains: q } },
         { contractor: { contains: q } },
         { description: { contains: q } },
+        { projectName: { contains: q } },
       ],
     });
   }
@@ -64,6 +65,7 @@ export function buildCostWhere(sp: URLSearchParams): Prisma.CostInvoiceWhereInpu
         { documentNumber: { contains: q } },
         { supplier: { contains: q } },
         { description: { contains: q } },
+        { projectName: { contains: q } },
       ],
     });
   }
@@ -108,7 +110,11 @@ export function buildPlannedWhere(sp: URLSearchParams): Prisma.PlannedFinancialE
   const q = sp.get("q")?.trim();
   if (q) {
     filters.push({
-      OR: [{ title: { contains: q } }, { description: { contains: q } }],
+      OR: [
+        { title: { contains: q } },
+        { description: { contains: q } },
+        { projectName: { contains: q } },
+      ],
     });
   }
   const status = sp.get("status")?.trim();

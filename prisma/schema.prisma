@@ -50,6 +50,7 @@ model IncomeInvoice {
   confirmedIncome    Boolean  @default(false)
   actualIncomeDate   DateTime?
   notes              String   @default("")
+  projectName        String?
   incomeCategoryId   String?
   incomeCategory     IncomeCategory? @relation(fields: [incomeCategoryId], references: [id], onDelete: SetNull)
   payments           IncomeInvoicePayment[]
@@ -92,6 +93,7 @@ model CostInvoice {
   actualPaymentDate  DateTime?
   paymentSource      String // MAIN | VAT | VAT_THEN_MAIN
   notes              String   @default("")
+  projectName        String?
   expenseCategoryId  String?
   expenseCategory    ExpenseCategory? @relation(fields: [expenseCategoryId], references: [id], onDelete: SetNull)
   payments           CostInvoicePayment[]
@@ -154,6 +156,7 @@ model PlannedFinancialEvent {
   plannedDate         DateTime
   status              String // PLANNED | DONE | CANCELLED
   notes               String             @default("")
+  projectName         String?
   incomeCategoryId    String?
   expenseCategoryId   String?
   incomeCategory      IncomeCategory?    @relation("PlannedIncomeCategory", fields: [incomeCategoryId], references: [id], onDelete: SetNull)

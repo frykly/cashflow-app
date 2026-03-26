@@ -63,6 +63,7 @@ export async function POST(req: Request) {
         actualPaymentDate: data.actualPaymentDate ? new Date(data.actualPaymentDate) : null,
         paymentSource: data.paymentSource,
         notes: data.notes ?? "",
+        projectName: data.projectName ?? null,
         expenseCategoryId: data.expenseCategoryId ?? null,
       },
       include: { expenseCategory: true, payments: true },

@@ -84,6 +84,7 @@ export async function PATCH(req: Request, ctx: Ctx) {
               ? new Date(data.actualIncomeDate)
               : null,
         notes: data.notes ?? existing.notes,
+        projectName: data.projectName !== undefined ? data.projectName : existing.projectName,
         incomeCategoryId:
           data.incomeCategoryId !== undefined ? data.incomeCategoryId : existing.incomeCategoryId,
         isRecurringDetached:

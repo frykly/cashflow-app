@@ -43,6 +43,7 @@ export async function POST(req: Request) {
         plannedDate: new Date(data.plannedDate),
         status: data.status,
         notes: data.notes ?? "",
+        projectName: data.projectName ?? null,
         incomeCategoryId: data.type === "INCOME" ? (data.incomeCategoryId ?? null) : null,
         expenseCategoryId: data.type === "EXPENSE" ? (data.expenseCategoryId ?? null) : null,
       },

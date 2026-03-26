@@ -45,6 +45,16 @@ const optionalId = z.preprocess(
   z.string().nullable().optional(),
 );
 
+/** Dowolna etykieta projektu (bez osobnego modelu); puste → null. */
+const optionalProjectName = z.preprocess(
+  (v) => {
+    if (v === "" || v === null || v === undefined) return null;
+    const s = String(v).trim();
+    return s === "" ? null : s.slice(0, 500);
+  },
+  z.union([z.string().max(500), z.null()]).optional(),
+);
+
 export const appSettingsSchema = z.object({
   mainOpeningBalance: decimalLike,
   vatOpeningBalance: decimalLike,
@@ -65,6 +75,7 @@ export const incomeInvoiceCreateSchema = z.object({
   confirmedIncome: z.boolean().optional().default(false),
   actualIncomeDate: optionalIsoNullable(),
   incomeCategoryId: optionalId,
+  projectName: optionalProjectName,
   notes: z.string().optional().default(""),
 });
 
@@ -90,6 +101,7 @@ export const costInvoiceCreateSchema = z.object({
   actualPaymentDate: optionalIsoNullable(),
   paymentSource: z.enum(["MAIN", "VAT", "VAT_THEN_MAIN"]),
   expenseCategoryId: optionalId,
+  projectName: optionalProjectName,
   notes: z.string().optional().default(""),
 });
 
@@ -107,6 +119,7 @@ export const plannedEventCreateSchema = z.object({
   status: z.enum(["PLANNED", "DONE", "CANCELLED"]),
   incomeCategoryId: optionalId,
   expenseCategoryId: optionalId,
+  projectName: optionalProjectName,
   notes: z.string().optional().default(""),
 });
 

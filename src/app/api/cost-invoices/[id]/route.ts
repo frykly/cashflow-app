@@ -95,6 +95,7 @@ export async function PATCH(req: Request, ctx: Ctx) {
               : null,
         paymentSource: data.paymentSource ?? existing.paymentSource,
         notes: data.notes ?? existing.notes,
+        projectName: data.projectName !== undefined ? data.projectName : existing.projectName,
         expenseCategoryId:
           data.expenseCategoryId !== undefined ? data.expenseCategoryId : existing.expenseCategoryId,
         isRecurringDetached:

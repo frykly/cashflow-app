@@ -1,14 +1,6 @@
--- Recurring → normalne koszty / przychody: pola powiązania + migracja starych planów z recurringTemplateId
-
-ALTER TABLE "CostInvoice" ADD COLUMN "sourceRecurringTemplateId" TEXT;
-ALTER TABLE "CostInvoice" ADD COLUMN "generatedOccurrenceDate" DATETIME;
-ALTER TABLE "CostInvoice" ADD COLUMN "isGeneratedFromRecurring" BOOLEAN NOT NULL DEFAULT false;
-ALTER TABLE "CostInvoice" ADD COLUMN "isRecurringDetached" BOOLEAN NOT NULL DEFAULT false;
-
-ALTER TABLE "IncomeInvoice" ADD COLUMN "sourceRecurringTemplateId" TEXT;
-ALTER TABLE "IncomeInvoice" ADD COLUMN "generatedOccurrenceDate" DATETIME;
-ALTER TABLE "IncomeInvoice" ADD COLUMN "isGeneratedFromRecurring" BOOLEAN NOT NULL DEFAULT false;
-ALTER TABLE "IncomeInvoice" ADD COLUMN "isRecurringDetached" BOOLEAN NOT NULL DEFAULT false;
+-- Recurring → normalne koszty / przychody: migracja starych planów z recurringTemplateId
+-- (Kolumny sourceRecurringTemplateId / generatedOccurrenceDate / isGeneratedFromRecurring / isRecurringDetached
+--  są już w schemacie po migracji 20260326091725_backup_zmiany_cykliczne — bez ponownego ALTER.)
 
 -- Planowane wpisy powiązane z regułą → CostInvoice (EXPENSE)
 INSERT INTO "CostInvoice" (
@@ -197,10 +189,7 @@ FROM "PlannedFinancialEvent";
 DROP TABLE "PlannedFinancialEvent";
 ALTER TABLE "new_PlannedFinancialEvent" RENAME TO "PlannedFinancialEvent";
 
-CREATE INDEX "CostInvoice_sourceRecurringTemplateId_idx" ON "CostInvoice"("sourceRecurringTemplateId");
-CREATE INDEX "CostInvoice_generatedOccurrenceDate_idx" ON "CostInvoice"("generatedOccurrenceDate");
-CREATE INDEX "IncomeInvoice_sourceRecurringTemplateId_idx" ON "IncomeInvoice"("sourceRecurringTemplateId");
-CREATE INDEX "IncomeInvoice_generatedOccurrenceDate_idx" ON "IncomeInvoice"("generatedOccurrenceDate");
+-- Indeksy na fakturach utworzone już w 20260326091725_backup_zmiany_cykliczne
 
 PRAGMA foreign_keys=ON;
 PRAGMA defer_foreign_keys=OFF;

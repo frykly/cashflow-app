@@ -42,6 +42,7 @@ export async function GET(req: Request) {
     "plannedPaymentDate",
     "paymentDueDate",
     "categoryName",
+    "projectName",
     "recurringSource",
     "notes",
   ];
@@ -66,6 +67,7 @@ export async function GET(req: Request) {
       formatDate(r.plannedPaymentDate),
       formatDate(r.paymentDueDate),
       r.expenseCategory?.name ?? "",
+      r.projectName ?? "",
       r.isGeneratedFromRecurring ? "cykliczne" : "ręczne",
       r.notes,
     ];

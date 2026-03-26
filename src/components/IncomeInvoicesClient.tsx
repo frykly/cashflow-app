@@ -41,6 +41,7 @@ type Row = {
   payments?: { id: string; amountGross: string; paymentDate: string; notes: string }[];
   isGeneratedFromRecurring?: boolean;
   isRecurringDetached?: boolean;
+  projectName?: string | null;
 };
 
 type Draft = Omit<Row, "id"> & { id?: string };
@@ -68,6 +69,7 @@ function emptyDraft(): Draft {
     actualIncomeDate: null,
     notes: "",
     incomeCategoryId: null,
+    projectName: "",
   };
 }
 
@@ -400,6 +402,10 @@ export function IncomeInvoicesClient() {
       editing.id && editing.isGeneratedFromRecurring
         ? { isRecurringDetached: !!editing.isRecurringDetached }
         : {};
+    const projectNamePayload = (() => {
+      const t = (editing.projectName ?? "").trim();
+      return t === "" ? null : t.slice(0, 500);
+    })();
 
     const body = {
       invoiceNumber: editing.invoiceNumber,
@@ -415,6 +421,7 @@ export function IncomeInvoicesClient() {
       confirmedIncome: editing.confirmedIncome,
       actualIncomeDate: toIsoOrNull(editing.actualIncomeDate ?? undefined),
       notes: editing.notes,
+      projectName: projectNamePayload,
       incomeCategoryId: editing.incomeCategoryId || null,
       ...recurringPatch,
     };
@@ -495,11 +502,11 @@ export function IncomeInvoicesClient() {
           </div>
         </div>
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-6">
-          <Field label="Szukaj (nr, kontrahent, opis)">
+          <Field label="Szukaj (nr, kontrahent, opis, projekt)">
             <Input
               value={filterDraft.q}
               onChange={(e) => setFilterDraft((d) => ({ ...d, q: e.target.value }))}
-              placeholder="np. FV/1 lub nazwa"
+              placeholder="np. FV/1, kontrahent lub projekt"
               disabled={listLoading}
             />
           </Field>
@@ -612,7 +619,7 @@ export function IncomeInvoicesClient() {
 
       <div className="overflow-hidden rounded-xl border border-zinc-200 shadow-sm dark:border-zinc-800">
         <div className="max-h-[min(70vh,56rem)] overflow-auto overscroll-x-contain">
-          <table className="w-full min-w-[1280px] border-separate border-spacing-0 text-left text-sm">
+          <table className="w-full min-w-[1340px] border-separate border-spacing-0 text-left text-sm">
             <thead className="border-b border-zinc-200 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900">
               <tr>
                 <th className="sticky top-0 z-20 border-b border-zinc-200 bg-zinc-50 px-3 py-2.5 font-semibold dark:border-zinc-800 dark:bg-zinc-900">
@@ -626,6 +633,9 @@ export function IncomeInvoicesClient() {
                 </th>
                 <th className="sticky top-0 z-20 border-b border-zinc-200 bg-zinc-50 px-3 py-2.5 font-semibold dark:border-zinc-800 dark:bg-zinc-900">
                   Kategoria
+                </th>
+                <th className="sticky top-0 z-20 border-b border-zinc-200 bg-zinc-50 px-3 py-2.5 font-semibold dark:border-zinc-800 dark:bg-zinc-900">
+                  Projekt
                 </th>
                 <th className="sticky top-0 z-20 border-b border-zinc-200 bg-zinc-50 px-3 py-2.5 font-semibold dark:border-zinc-800 dark:bg-zinc-900">
                   Netto
@@ -656,14 +666,14 @@ export function IncomeInvoicesClient() {
           <tbody className="divide-y divide-zinc-200 dark:divide-zinc-800">
             {listLoading && rows.length === 0 ? (
               <tr>
-                <td colSpan={12} className="px-3 py-12 text-center text-zinc-500">
+                <td colSpan={13} className="px-3 py-12 text-center text-zinc-500">
                   <Spinner className="mr-2 inline !size-5" />
                   Ładowanie…
                 </td>
               </tr>
             ) : rows.length === 0 ? (
               <tr>
-                <td colSpan={12} className="px-3 py-12 text-center text-zinc-500">
+                <td colSpan={13} className="px-3 py-12 text-center text-zinc-500">
                   Brak faktur. Kliknij <strong>Dodaj</strong>, aby utworzyć pierwszą pozycję.
                 </td>
               </tr>
@@ -702,6 +712,9 @@ export function IncomeInvoicesClient() {
                     </td>
                     <td className="max-w-[140px] truncate px-3 py-2 text-zinc-600 dark:text-zinc-400" title={r.incomeCategory?.name}>
                       {r.incomeCategory?.name ?? "—"}
+                    </td>
+                    <td className="max-w-[120px] truncate px-3 py-2 text-zinc-600 dark:text-zinc-400" title={r.projectName ?? undefined}>
+                      {r.projectName?.trim() ? r.projectName : "—"}
                     </td>
                     <td className="px-3 py-2 tabular-nums">{formatMoney(Number(r.netAmount))}</td>
                     <td className="whitespace-nowrap px-3 py-2">{formatDate(r.plannedIncomeDate)}</td>
@@ -798,6 +811,14 @@ export function IncomeInvoicesClient() {
               rows={2}
               value={editing.description}
               onChange={(e) => setEditing({ ...editing, description: e.target.value })}
+              disabled={saving}
+            />
+          </Field>
+          <Field label="Projekt">
+            <Input
+              value={editing.projectName ?? ""}
+              onChange={(e) => setEditing({ ...editing, projectName: e.target.value })}
+              placeholder="opcjonalnie"
               disabled={saving}
             />
           </Field>
