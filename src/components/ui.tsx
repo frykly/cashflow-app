@@ -1,5 +1,7 @@
 "use client";
 
+import type { MouseEventHandler } from "react";
+
 export function Badge({
   children,
   variant = "default",
@@ -30,7 +32,7 @@ export function Button({
   className = "",
 }: {
   children: React.ReactNode;
-  onClick?: () => void;
+  onClick?: MouseEventHandler<HTMLButtonElement>;
   type?: "button" | "submit";
   variant?: "primary" | "secondary" | "ghost" | "danger";
   disabled?: boolean;

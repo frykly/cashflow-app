@@ -4,6 +4,8 @@ import { jsonError, zodErrorResponse } from "@/lib/api/errors";
 import { grossFromNetAndRate, vatFromNetAndRate } from "@/lib/validation/gross";
 import { incomeInvoiceCreateSchema } from "@/lib/validation/schemas";
 import { buildIncomeWhere } from "@/lib/prisma-list-filters";
+import { ensureClosingIncomePaymentIfFullySettled } from "@/lib/cashflow/invoice-auto-settlement";
+import { syncIncomeInvoiceStatus } from "@/lib/invoice-status-sync";
 import { ZodError } from "zod";
 
 const sortable = new Set(["plannedIncomeDate", "issueDate", "createdAt", "paymentDueDate"]);
@@ -58,7 +60,13 @@ export async function POST(req: Request) {
       },
       include: { incomeCategory: true, payments: true },
     });
-    return jsonData(row, { status: 201 });
+    await ensureClosingIncomePaymentIfFullySettled(row.id);
+    await syncIncomeInvoiceStatus(row.id);
+    const fresh = await prisma.incomeInvoice.findUnique({
+      where: { id: row.id },
+      include: { incomeCategory: true, payments: { orderBy: { paymentDate: "asc" } } },
+    });
+    return jsonData(fresh ?? row, { status: 201 });
   } catch (e) {
     if (e instanceof ZodError) return zodErrorResponse(e);
     throw e;

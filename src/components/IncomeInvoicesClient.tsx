@@ -232,6 +232,14 @@ export function IncomeInvoicesClient() {
     setOpen(true);
   }
 
+  function handleRowClickOpenEdit(r: Row) {
+    return (e: React.MouseEvent) => {
+      const el = e.target as HTMLElement;
+      if (el.closest("button, a, input, textarea, select, label")) return;
+      openEdit(r);
+    };
+  }
+
   function applyPaymentDue(dueYmd: string) {
     setEditing((prev) => {
       const next = { ...prev, paymentDueDate: dueYmd };
@@ -602,24 +610,49 @@ export function IncomeInvoicesClient() {
 
       {loadError && <Alert variant="error">{loadError}</Alert>}
 
-      <div className="overflow-x-auto rounded-xl border border-zinc-200 shadow-sm dark:border-zinc-800">
-        <table className="w-full min-w-[1280px] text-left text-sm">
-          <thead className="border-b border-zinc-200 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900">
-            <tr>
-              <th className="px-3 py-2.5 font-semibold">Numer</th>
-              <th className="px-3 py-2.5 font-semibold">Źródło</th>
-              <th className="px-3 py-2.5 font-semibold">Kontrahent</th>
-              <th className="px-3 py-2.5 font-semibold">Kategoria</th>
-              <th className="px-3 py-2.5 font-semibold">Netto</th>
-              <th className="px-3 py-2.5 font-semibold">Plan. wpływ</th>
-              <th className="px-3 py-2.5 font-semibold">Rozliczenie</th>
-              <th className="px-3 py-2.5 font-semibold">Brutto</th>
-              <th className="px-3 py-2.5 font-semibold">Rozliczono</th>
-              <th className="px-3 py-2.5 font-semibold">Pozostało</th>
-              <th className="px-3 py-2.5 font-semibold">Status</th>
-              <th className="px-3 py-2.5 font-semibold text-right">Akcje</th>
-            </tr>
-          </thead>
+      <div className="overflow-hidden rounded-xl border border-zinc-200 shadow-sm dark:border-zinc-800">
+        <div className="max-h-[min(70vh,56rem)] overflow-auto overscroll-x-contain">
+          <table className="w-full min-w-[1280px] border-separate border-spacing-0 text-left text-sm">
+            <thead className="border-b border-zinc-200 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900">
+              <tr>
+                <th className="sticky top-0 z-20 border-b border-zinc-200 bg-zinc-50 px-3 py-2.5 font-semibold dark:border-zinc-800 dark:bg-zinc-900">
+                  Numer
+                </th>
+                <th className="sticky top-0 z-20 border-b border-zinc-200 bg-zinc-50 px-3 py-2.5 font-semibold dark:border-zinc-800 dark:bg-zinc-900">
+                  Źródło
+                </th>
+                <th className="sticky top-0 z-20 border-b border-zinc-200 bg-zinc-50 px-3 py-2.5 font-semibold dark:border-zinc-800 dark:bg-zinc-900">
+                  Kontrahent
+                </th>
+                <th className="sticky top-0 z-20 border-b border-zinc-200 bg-zinc-50 px-3 py-2.5 font-semibold dark:border-zinc-800 dark:bg-zinc-900">
+                  Kategoria
+                </th>
+                <th className="sticky top-0 z-20 border-b border-zinc-200 bg-zinc-50 px-3 py-2.5 font-semibold dark:border-zinc-800 dark:bg-zinc-900">
+                  Netto
+                </th>
+                <th className="sticky top-0 z-20 border-b border-zinc-200 bg-zinc-50 px-3 py-2.5 font-semibold dark:border-zinc-800 dark:bg-zinc-900">
+                  Plan. wpływ
+                </th>
+                <th className="sticky top-0 z-20 border-b border-zinc-200 bg-zinc-50 px-3 py-2.5 font-semibold dark:border-zinc-800 dark:bg-zinc-900">
+                  Rozliczenie
+                </th>
+                <th className="sticky top-0 z-20 border-b border-zinc-200 bg-zinc-50 px-3 py-2.5 font-semibold dark:border-zinc-800 dark:bg-zinc-900">
+                  Brutto
+                </th>
+                <th className="sticky top-0 z-20 border-b border-zinc-200 bg-zinc-50 px-3 py-2.5 font-semibold dark:border-zinc-800 dark:bg-zinc-900">
+                  Rozliczono
+                </th>
+                <th className="sticky top-0 z-20 border-b border-zinc-200 bg-zinc-50 px-3 py-2.5 font-semibold dark:border-zinc-800 dark:bg-zinc-900">
+                  Pozostało
+                </th>
+                <th className="sticky top-0 z-20 border-b border-zinc-200 bg-zinc-50 px-3 py-2.5 font-semibold dark:border-zinc-800 dark:bg-zinc-900">
+                  Status
+                </th>
+                <th className="sticky top-0 right-0 z-30 border-b border-l border-zinc-200 bg-zinc-50 px-3 py-2.5 text-right font-semibold shadow-[-6px_0_8px_-6px_rgba(0,0,0,0.12)] dark:border-zinc-800 dark:bg-zinc-900 dark:shadow-[-6px_0_12px_-6px_rgba(0,0,0,0.4)]">
+                  Akcje
+                </th>
+              </tr>
+            </thead>
           <tbody className="divide-y divide-zinc-200 dark:divide-zinc-800">
             {listLoading && rows.length === 0 ? (
               <tr>
@@ -644,7 +677,16 @@ export function IncomeInvoicesClient() {
                 return (
                   <tr
                     key={r.id}
-                    className={`bg-white transition-colors hover:bg-zinc-50 dark:bg-zinc-950 dark:hover:bg-zinc-900/80 ${
+                    role="button"
+                    tabIndex={0}
+                    onClick={handleRowClickOpenEdit(r)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        openEdit(r);
+                      }
+                    }}
+                    className={`group cursor-pointer bg-white transition-colors hover:bg-zinc-50 dark:bg-zinc-950 dark:hover:bg-zinc-900/80 ${
                       overdue ? "border-l-4 border-amber-500 bg-amber-50/40 dark:bg-amber-950/20" : ""
                     }`}
                   >
@@ -670,11 +712,33 @@ export function IncomeInvoicesClient() {
                     </td>
                     <td className="px-3 py-2 tabular-nums">{formatMoney(remaining)}</td>
                     <td className="px-3 py-2">{statusBadge(r.status)}</td>
-                    <td className="px-3 py-2 text-right whitespace-nowrap">
-                      <Button variant="ghost" className="!py-1 text-xs" onClick={() => openEdit(r)}>
+                    <td
+                      className={`sticky right-0 z-10 border-l border-zinc-200 px-3 py-2 text-right whitespace-nowrap shadow-[-6px_0_8px_-6px_rgba(0,0,0,0.08)] transition-colors dark:border-zinc-800 dark:shadow-[-6px_0_12px_-6px_rgba(0,0,0,0.35)] ${
+                        overdue
+                          ? "bg-amber-50/95 group-hover:bg-amber-50 dark:bg-amber-950/50 dark:group-hover:bg-amber-950/40"
+                          : "bg-white group-hover:bg-zinc-50 dark:bg-zinc-950 dark:group-hover:bg-zinc-900/80"
+                      }`}
+                    >
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        className="!py-1 text-xs"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          openEdit(r);
+                        }}
+                      >
                         Edytuj
                       </Button>
-                      <Button variant="ghost" className="!py-1 text-xs text-red-600 dark:text-red-400" onClick={() => remove(r.id)}>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        className="!py-1 text-xs text-red-600 dark:text-red-400"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          remove(r.id);
+                        }}
+                      >
                         Usuń
                       </Button>
                     </td>
@@ -684,6 +748,7 @@ export function IncomeInvoicesClient() {
             )}
           </tbody>
         </table>
+        </div>
       </div>
 
       <Modal
@@ -893,6 +958,10 @@ export function IncomeInvoicesClient() {
                   Dodaj wpłatę
                 </Button>
               </div>
+              <p className="mb-2 text-xs text-zinc-500 dark:text-zinc-400">
+                Częściowe lub rozłożone w czasie — dodawaj wpłaty ręcznie. Pełne rozliczenie możesz ustawić statusem
+                „Opłacona”: brakująca kwota zapisze się tu automatycznie (data z faktycznego wpływu lub planowanego).
+              </p>
               {(() => {
                 const inv = editing as unknown as IncomeInvoice;
                 const pays = (editing.payments ?? []) as unknown as PayPick[];

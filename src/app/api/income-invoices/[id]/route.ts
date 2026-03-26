@@ -5,6 +5,10 @@ import { grossFromNetAndRate, vatFromNetAndRate } from "@/lib/validation/gross";
 import type { VatRatePct } from "@/lib/vat-rate";
 import { incomeInvoiceUpdateSchema } from "@/lib/validation/schemas";
 import { syncIncomeInvoiceStatus } from "@/lib/invoice-status-sync";
+import {
+  assertIncomeStatusAllowedForPayments,
+  ensureClosingIncomePaymentIfFullySettled,
+} from "@/lib/cashflow/invoice-auto-settlement";
 import { decToNumber } from "@/lib/cashflow/money";
 import { PAY_EPS, sumIncomePaymentsGross } from "@/lib/cashflow/settlement";
 import { NextResponse } from "next/server";
@@ -46,6 +50,13 @@ export async function PATCH(req: Request, ctx: Ctx) {
       return jsonError("Suma wpłat przekracza nową kwotę brutto — usuń lub zmień wpłaty.");
     }
 
+    const mergedStatus = data.status ?? existing.status;
+    try {
+      assertIncomeStatusAllowedForPayments({ grossAmount: gross }, existing.payments, mergedStatus);
+    } catch (e) {
+      return jsonError(e instanceof Error ? e.message : "Niedozwolona zmiana statusu", 400);
+    }
+
     const row = await prisma.incomeInvoice.update({
       where: { id },
       data: {
@@ -80,6 +91,7 @@ export async function PATCH(req: Request, ctx: Ctx) {
       },
       include: { incomeCategory: true, payments: { orderBy: { paymentDate: "asc" } } },
     });
+    await ensureClosingIncomePaymentIfFullySettled(id);
     await syncIncomeInvoiceStatus(id);
     const fresh = await prisma.incomeInvoice.findUnique({
       where: { id },

@@ -5,6 +5,8 @@ import { resolveCostInvoiceAmounts } from "@/lib/validation/cost-invoice-amounts
 import { costInvoiceCreateSchema } from "@/lib/validation/schemas";
 import { buildCostWhere } from "@/lib/prisma-list-filters";
 import type { VatRatePct } from "@/lib/vat-rate";
+import { ensureClosingCostPaymentIfFullySettled } from "@/lib/cashflow/invoice-auto-settlement";
+import { syncCostInvoiceStatus } from "@/lib/invoice-status-sync";
 import { ZodError } from "zod";
 
 const sortable = new Set(["plannedPaymentDate", "documentDate", "createdAt", "paymentDueDate"]);
@@ -65,7 +67,13 @@ export async function POST(req: Request) {
       },
       include: { expenseCategory: true, payments: true },
     });
-    return jsonData(row, { status: 201 });
+    await ensureClosingCostPaymentIfFullySettled(row.id);
+    await syncCostInvoiceStatus(row.id);
+    const fresh = await prisma.costInvoice.findUnique({
+      where: { id: row.id },
+      include: { expenseCategory: true, payments: { orderBy: { paymentDate: "asc" } } },
+    });
+    return jsonData(fresh ?? row, { status: 201 });
   } catch (e) {
     if (e instanceof ZodError) return zodErrorResponse(e);
     throw e;

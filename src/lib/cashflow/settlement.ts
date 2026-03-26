@@ -16,11 +16,17 @@ export function sumCostPaymentsGross(payments: Pick<CostInvoicePayment, "amountG
   return round2(payments.reduce((s, p) => s + decToNumber(p.amountGross), 0));
 }
 
-export function incomeRemainingGross(inv: IncomeInvoice, payments: Pick<IncomeInvoicePayment, "amountGross">[]): number {
+export function incomeRemainingGross(
+  inv: Pick<IncomeInvoice, "grossAmount">,
+  payments: Pick<IncomeInvoicePayment, "amountGross">[],
+): number {
   return round2(decToNumber(inv.grossAmount) - sumIncomePaymentsGross(payments));
 }
 
-export function costRemainingGross(inv: CostInvoice, payments: Pick<CostInvoicePayment, "amountGross">[]): number {
+export function costRemainingGross(
+  inv: Pick<CostInvoice, "grossAmount">,
+  payments: Pick<CostInvoicePayment, "amountGross">[],
+): number {
   return round2(decToNumber(inv.grossAmount) - sumCostPaymentsGross(payments));
 }
 

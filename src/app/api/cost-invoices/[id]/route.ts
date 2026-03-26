@@ -5,6 +5,10 @@ import { resolveCostInvoiceAmounts, resolveEffectiveVatOnly } from "@/lib/valida
 import type { VatRatePct } from "@/lib/vat-rate";
 import { costInvoiceUpdateSchema } from "@/lib/validation/schemas";
 import { syncCostInvoiceStatus } from "@/lib/invoice-status-sync";
+import {
+  assertCostStatusAllowedForPayments,
+  ensureClosingCostPaymentIfFullySettled,
+} from "@/lib/cashflow/invoice-auto-settlement";
 import { decToNumber } from "@/lib/cashflow/money";
 import { PAY_EPS, sumCostPaymentsGross } from "@/lib/cashflow/settlement";
 import { NextResponse } from "next/server";
@@ -56,6 +60,14 @@ export async function PATCH(req: Request, ctx: Ctx) {
       return jsonError("Suma płatności przekracza nową kwotę brutto — usuń lub zmień płatności.");
     }
 
+    const mergedStatus = data.status ?? existing.status;
+    const mergedPaid = data.paid ?? existing.paid;
+    try {
+      assertCostStatusAllowedForPayments({ grossAmount: gross }, existing.payments, mergedStatus, mergedPaid);
+    } catch (e) {
+      return jsonError(e instanceof Error ? e.message : "Niedozwolona zmiana statusu", 400);
+    }
+
     const row = await prisma.costInvoice.update({
       where: { id },
       data: {
@@ -90,6 +102,7 @@ export async function PATCH(req: Request, ctx: Ctx) {
       },
       include: { expenseCategory: true, payments: { orderBy: { paymentDate: "asc" } } },
     });
+    await ensureClosingCostPaymentIfFullySettled(id);
     await syncCostInvoiceStatus(id);
     const fresh = await prisma.costInvoice.findUnique({
       where: { id },
