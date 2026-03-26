@@ -36,7 +36,6 @@ export async function GET(req: Request) {
     "status",
     "categoryName",
     "notes",
-    "recurringTemplateId",
   ];
 
   const dataRows = rows.map((r) => {
@@ -52,7 +51,6 @@ export async function GET(req: Request) {
       r.status,
       cat,
       r.notes,
-      r.recurringTemplateId ?? "",
     ];
   });
 

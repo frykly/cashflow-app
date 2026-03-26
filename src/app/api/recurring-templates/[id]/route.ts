@@ -3,10 +3,36 @@ import { jsonData } from "@/lib/api/json-response";
 import { jsonError, zodErrorResponse } from "@/lib/api/errors";
 import { recurringTemplateUpdateSchema } from "@/lib/validation/schemas";
 import { recurringSplitAmountError } from "@/lib/validation/recurring-split";
+import { syncRecurringTemplateAmounts, syncRecurringTemplateSchedule } from "@/lib/cashflow/recurring-sync";
+import type { RecurringTemplate } from "@prisma/client";
 import { NextResponse } from "next/server";
+import { startOfDay } from "date-fns";
 import { ZodError } from "zod";
 
 type Ctx = { params: Promise<{ id: string }> };
+
+function scheduleFingerprint(r: RecurringTemplate): string {
+  return [
+    r.frequency,
+    startOfDay(r.startDate).getTime(),
+    r.endDate ? startOfDay(r.endDate).getTime() : "null",
+    r.dayOfMonth ?? "n",
+    r.weekday ?? "n",
+    r.type,
+  ].join("|");
+}
+
+function metaFingerprint(r: RecurringTemplate): string {
+  return [
+    String(r.amount),
+    String(r.amountVat ?? ""),
+    r.accountMode ?? "MAIN",
+    r.title,
+    r.notes,
+    r.incomeCategoryId ?? "",
+    r.expenseCategoryId ?? "",
+  ].join("|");
+}
 
 export async function GET(_req: Request, ctx: Ctx) {
   const { id } = await ctx.params;
@@ -72,6 +98,15 @@ export async function PATCH(req: Request, ctx: Ctx) {
       },
       include: { incomeCategory: true, expenseCategory: true },
     });
+
+    if (row.isActive) {
+      if (scheduleFingerprint(existing) !== scheduleFingerprint(row)) {
+        await syncRecurringTemplateSchedule(id);
+      } else if (metaFingerprint(existing) !== metaFingerprint(row)) {
+        await syncRecurringTemplateAmounts(id);
+      }
+    }
+
     return jsonData(row);
   } catch (e) {
     if (e instanceof ZodError) return zodErrorResponse(e);

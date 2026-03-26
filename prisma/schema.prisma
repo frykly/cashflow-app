@@ -53,8 +53,16 @@ model IncomeInvoice {
   incomeCategoryId   String?
   incomeCategory     IncomeCategory? @relation(fields: [incomeCategoryId], references: [id], onDelete: SetNull)
   payments           IncomeInvoicePayment[]
+  sourceRecurringTemplateId String?
+  generatedOccurrenceDate   DateTime?
+  isGeneratedFromRecurring  Boolean  @default(false)
+  isRecurringDetached       Boolean  @default(false)
+  sourceRecurringTemplate   RecurringTemplate? @relation("RecurringGeneratedIncome", fields: [sourceRecurringTemplateId], references: [id], onDelete: SetNull)
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt
+
+  @@index([sourceRecurringTemplateId])
+  @@index([generatedOccurrenceDate])
 }
 
 model IncomeInvoicePayment {
@@ -87,8 +95,16 @@ model CostInvoice {
   expenseCategoryId  String?
   expenseCategory    ExpenseCategory? @relation(fields: [expenseCategoryId], references: [id], onDelete: SetNull)
   payments           CostInvoicePayment[]
+  sourceRecurringTemplateId String?
+  generatedOccurrenceDate   DateTime?
+  isGeneratedFromRecurring  Boolean  @default(false)
+  isRecurringDetached       Boolean  @default(false)
+  sourceRecurringTemplate   RecurringTemplate? @relation("RecurringGeneratedCost", fields: [sourceRecurringTemplateId], references: [id], onDelete: SetNull)
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt
+
+  @@index([sourceRecurringTemplateId])
+  @@index([generatedOccurrenceDate])
 }
 
 model CostInvoicePayment {
@@ -123,7 +139,8 @@ model RecurringTemplate {
   isActive          Boolean  @default(true)
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
-  plannedEvents     PlannedFinancialEvent[]
+  generatedCostInvoices   CostInvoice[]           @relation("RecurringGeneratedCost")
+  generatedIncomeInvoices IncomeInvoice[]         @relation("RecurringGeneratedIncome")
 }
 
 model PlannedFinancialEvent {
@@ -141,8 +158,6 @@ model PlannedFinancialEvent {
   expenseCategoryId   String?
   incomeCategory      IncomeCategory?    @relation("PlannedIncomeCategory", fields: [incomeCategoryId], references: [id], onDelete: SetNull)
   expenseCategory     ExpenseCategory?   @relation("PlannedExpenseCategory", fields: [expenseCategoryId], references: [id], onDelete: SetNull)
-  recurringTemplateId String?
-  recurringTemplate   RecurringTemplate? @relation(fields: [recurringTemplateId], references: [id], onDelete: SetNull)
   createdAt           DateTime           @default(now())
   updatedAt           DateTime           @updatedAt
 }

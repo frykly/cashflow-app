@@ -9,7 +9,7 @@ const links = [
   { href: "/income-invoices", label: "Przychody" },
   { href: "/cost-invoices", label: "Koszty" },
   { href: "/planned-events", label: "Zdarzenia" },
-  { href: "/recurring", label: "Powtarzalne" },
+  { href: "/recurring", label: "Reguły cykliczne" },
   { href: "/settings", label: "Ustawienia" },
 ];
 

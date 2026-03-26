@@ -68,7 +68,9 @@ export const incomeInvoiceCreateSchema = z.object({
   notes: z.string().optional().default(""),
 });
 
-export const incomeInvoiceUpdateSchema = incomeInvoiceCreateSchema.partial();
+export const incomeInvoiceUpdateSchema = incomeInvoiceCreateSchema.partial().extend({
+  isRecurringDetached: z.boolean().optional(),
+});
 
 export const costInvoiceCreateSchema = z.object({
   documentNumber: z.string().min(1),
@@ -91,7 +93,9 @@ export const costInvoiceCreateSchema = z.object({
   notes: z.string().optional().default(""),
 });
 
-export const costInvoiceUpdateSchema = costInvoiceCreateSchema.partial();
+export const costInvoiceUpdateSchema = costInvoiceCreateSchema.partial().extend({
+  isRecurringDetached: z.boolean().optional(),
+});
 
 export const plannedEventCreateSchema = z.object({
   type: z.enum(["INCOME", "EXPENSE"]),

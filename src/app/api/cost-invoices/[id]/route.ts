@@ -85,6 +85,8 @@ export async function PATCH(req: Request, ctx: Ctx) {
         notes: data.notes ?? existing.notes,
         expenseCategoryId:
           data.expenseCategoryId !== undefined ? data.expenseCategoryId : existing.expenseCategoryId,
+        isRecurringDetached:
+          data.isRecurringDetached !== undefined ? data.isRecurringDetached : existing.isRecurringDetached,
       },
       include: { expenseCategory: true, payments: { orderBy: { paymentDate: "asc" } } },
     });

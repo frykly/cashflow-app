@@ -39,6 +39,8 @@ type Row = {
   incomeCategoryId?: string | null;
   incomeCategory?: { id: string; name: string; slug: string } | null;
   payments?: { id: string; amountGross: string; paymentDate: string; notes: string }[];
+  isGeneratedFromRecurring?: boolean;
+  isRecurringDetached?: boolean;
 };
 
 type Draft = Omit<Row, "id"> & { id?: string };
@@ -74,6 +76,12 @@ function statusBadge(s: string) {
   if (s === "PARTIALLY_RECEIVED") return <Badge variant="warning">Częściowo</Badge>;
   if (s === "WYSTAWIONA") return <Badge variant="warning">Wystawiona</Badge>;
   return <Badge variant="muted">Planowana</Badge>;
+}
+
+function recurringSourceBadge(r: Row) {
+  if (!r.isGeneratedFromRecurring) return <Badge variant="muted">Ręczne</Badge>;
+  if (r.isRecurringDetached) return <Badge variant="warning">Cykliczne · odłączone</Badge>;
+  return <Badge variant="default">Cykliczne</Badge>;
 }
 
 function incomeRowOverdue(r: Row): boolean {
@@ -125,6 +133,7 @@ export function IncomeInvoicesClient() {
     q: "",
     status: "",
     categoryId: "",
+    recurringSource: "",
     dateFrom: "",
     dateTo: "",
     dateField: "plannedIncomeDate",
@@ -137,6 +146,7 @@ export function IncomeInvoicesClient() {
       q: m.get("q") ?? "",
       status: m.get("status") ?? "",
       categoryId: m.get("categoryId") ?? "",
+      recurringSource: m.get("recurringSource") ?? "",
       dateFrom: m.get("dateFrom") ?? "",
       dateTo: m.get("dateTo") ?? "",
       dateField: m.get("dateField") || "plannedIncomeDate",
@@ -184,6 +194,7 @@ export function IncomeInvoicesClient() {
       q: filterDraft.q.trim() || null,
       status: filterDraft.status || null,
       categoryId: filterDraft.categoryId || null,
+      recurringSource: filterDraft.recurringSource || null,
       dateFrom: filterDraft.dateFrom || null,
       dateTo: filterDraft.dateTo || null,
       dateField: filterDraft.dateField,
@@ -196,6 +207,7 @@ export function IncomeInvoicesClient() {
       q: null,
       status: null,
       categoryId: null,
+      recurringSource: null,
       dateFrom: null,
       dateTo: null,
       dateField: null,
@@ -239,6 +251,8 @@ export function IncomeInvoicesClient() {
     setAmountEntryMode("net");
     setEditing({
       ...r,
+      isGeneratedFromRecurring: !!r.isGeneratedFromRecurring,
+      isRecurringDetached: !!r.isRecurringDetached,
       vatRate: rate,
       incomeCategoryId: r.incomeCategoryId ?? null,
       issueDate: isoToDateInputValue(r.issueDate),
@@ -265,6 +279,8 @@ export function IncomeInvoicesClient() {
       return {
         ...prev,
         ...j,
+        isGeneratedFromRecurring: !!j.isGeneratedFromRecurring,
+        isRecurringDetached: !!j.isRecurringDetached,
         incomeCategoryId: j.incomeCategoryId ?? null,
         vatRate: j.vatRate ?? prev.vatRate,
         issueDate: isoToDateInputValue(j.issueDate),
@@ -372,6 +388,11 @@ export function IncomeInvoicesClient() {
       setSaving(false);
       return;
     }
+    const recurringPatch =
+      editing.id && editing.isGeneratedFromRecurring
+        ? { isRecurringDetached: !!editing.isRecurringDetached }
+        : {};
+
     const body = {
       invoiceNumber: editing.invoiceNumber,
       contractor: editing.contractor,
@@ -387,6 +408,7 @@ export function IncomeInvoicesClient() {
       actualIncomeDate: toIsoOrNull(editing.actualIncomeDate ?? undefined),
       notes: editing.notes,
       incomeCategoryId: editing.incomeCategoryId || null,
+      ...recurringPatch,
     };
     const url = editing.id ? `/api/income-invoices/${editing.id}` : "/api/income-invoices";
     const method = editing.id ? "PATCH" : "POST";
@@ -500,6 +522,17 @@ export function IncomeInvoicesClient() {
               ))}
             </Select>
           </Field>
+          <Field label="Źródło wpisu">
+            <Select
+              value={filterDraft.recurringSource}
+              onChange={(e) => setFilterDraft((d) => ({ ...d, recurringSource: e.target.value }))}
+              disabled={listLoading}
+            >
+              <option value="">Wszystkie</option>
+              <option value="manual">Ręczne</option>
+              <option value="generated">Z cyklicznych</option>
+            </Select>
+          </Field>
           <Field label="Pole daty (zakres)">
             <Select
               value={filterDraft.dateField}
@@ -570,10 +603,11 @@ export function IncomeInvoicesClient() {
       {loadError && <Alert variant="error">{loadError}</Alert>}
 
       <div className="overflow-x-auto rounded-xl border border-zinc-200 shadow-sm dark:border-zinc-800">
-        <table className="w-full min-w-[1200px] text-left text-sm">
+        <table className="w-full min-w-[1280px] text-left text-sm">
           <thead className="border-b border-zinc-200 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900">
             <tr>
               <th className="px-3 py-2.5 font-semibold">Numer</th>
+              <th className="px-3 py-2.5 font-semibold">Źródło</th>
               <th className="px-3 py-2.5 font-semibold">Kontrahent</th>
               <th className="px-3 py-2.5 font-semibold">Kategoria</th>
               <th className="px-3 py-2.5 font-semibold">Netto</th>
@@ -589,14 +623,14 @@ export function IncomeInvoicesClient() {
           <tbody className="divide-y divide-zinc-200 dark:divide-zinc-800">
             {listLoading && rows.length === 0 ? (
               <tr>
-                <td colSpan={11} className="px-3 py-12 text-center text-zinc-500">
+                <td colSpan={12} className="px-3 py-12 text-center text-zinc-500">
                   <Spinner className="mr-2 inline !size-5" />
                   Ładowanie…
                 </td>
               </tr>
             ) : rows.length === 0 ? (
               <tr>
-                <td colSpan={11} className="px-3 py-12 text-center text-zinc-500">
+                <td colSpan={12} className="px-3 py-12 text-center text-zinc-500">
                   Brak faktur. Kliknij <strong>Dodaj</strong>, aby utworzyć pierwszą pozycję.
                 </td>
               </tr>
@@ -620,6 +654,7 @@ export function IncomeInvoicesClient() {
                         {overdue ? <Badge variant="warning">Po terminie</Badge> : null}
                       </span>
                     </td>
+                    <td className="whitespace-nowrap px-3 py-2">{recurringSourceBadge(r)}</td>
                     <td className="max-w-[200px] truncate px-3 py-2" title={r.contractor}>
                       {r.contractor}
                     </td>
@@ -814,6 +849,20 @@ export function IncomeInvoicesClient() {
               disabled={saving}
             />
           </Field>
+          {editing.isGeneratedFromRecurring ? (
+            <label className="flex cursor-pointer items-start gap-2 text-sm text-zinc-700 dark:text-zinc-300">
+              <input
+                type="checkbox"
+                className="mt-0.5 size-4 rounded border-zinc-300"
+                checked={!!editing.isRecurringDetached}
+                onChange={(e) => setEditing({ ...editing, isRecurringDetached: e.target.checked })}
+                disabled={saving}
+              />
+              <span>
+                Odłącz od reguły cyklicznej — zmiany reguły nie nadpiszą tej faktury przy synchronizacji.
+              </span>
+            </label>
+          ) : null}
           <Field label="Notatki">
             <Textarea
               rows={2}

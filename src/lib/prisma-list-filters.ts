@@ -48,6 +48,10 @@ export function buildIncomeWhere(sp: URLSearchParams): Prisma.IncomeInvoiceWhere
     });
   }
 
+  const recurringSource = sp.get("recurringSource")?.trim();
+  if (recurringSource === "manual") filters.push({ isGeneratedFromRecurring: false });
+  if (recurringSource === "generated") filters.push({ isGeneratedFromRecurring: true });
+
   return filters.length ? { AND: filters } : {};
 }
 
@@ -91,6 +95,10 @@ export function buildCostWhere(sp: URLSearchParams): Prisma.CostInvoiceWhereInpu
       OR: [{ plannedPaymentDate: { lt: today } }, { paymentDueDate: { lt: today } }],
     });
   }
+
+  const recurringSource = sp.get("recurringSource")?.trim();
+  if (recurringSource === "manual") filters.push({ isGeneratedFromRecurring: false });
+  if (recurringSource === "generated") filters.push({ isGeneratedFromRecurring: true });
 
   return filters.length ? { AND: filters } : {};
 }

@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Alert, Badge, Button, Field, Input, Modal, Select, Spinner, Textarea } from "@/components/ui";
 import { formatDate, formatMoney, toIsoOrNull } from "@/lib/format";
@@ -79,6 +80,26 @@ function formatRecurringAmount(r: Row): string {
 
 type Cat = { id: string; name: string; slug: string };
 
+type GeneratedBlock = {
+  templateType: string;
+  upcomingCosts: {
+    id: string;
+    documentNumber: string;
+    plannedPaymentDate: string;
+    grossAmount: string;
+    status: string;
+    isRecurringDetached: boolean;
+  }[];
+  upcomingIncomes: {
+    id: string;
+    invoiceNumber: string;
+    plannedIncomeDate: string;
+    grossAmount: string;
+    status: string;
+    isRecurringDetached: boolean;
+  }[];
+};
+
 export function RecurringClient() {
   const [rows, setRows] = useState<Row[]>([]);
   const [listLoading, setListLoading] = useState(true);
@@ -92,6 +113,8 @@ export function RecurringClient() {
   const [genBusy, setGenBusy] = useState<string | null>(null);
   const [genModalId, setGenModalId] = useState<string | null>(null);
   const [genUntilDate, setGenUntilDate] = useState(todayYmd());
+  const [generatedBlock, setGeneratedBlock] = useState<GeneratedBlock | null>(null);
+  const [rowToolBusy, setRowToolBusy] = useState<string | null>(null);
 
   useEffect(() => {
     Promise.all([
@@ -128,6 +151,25 @@ export function RecurringClient() {
     load();
   }, [load]);
 
+  useEffect(() => {
+    if (!open || !editing.id) {
+      setGeneratedBlock(null);
+      return;
+    }
+    let cancelled = false;
+    fetch(`/api/recurring-templates/${editing.id}/generated`)
+      .then((r) => r.json())
+      .then((j) => {
+        if (!cancelled && j && typeof j === "object") setGeneratedBlock(j as GeneratedBlock);
+      })
+      .catch(() => {
+        if (!cancelled) setGeneratedBlock(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, editing.id]);
+
   const previewDates = useMemo(() => {
     const sd = toIsoOrNull(String(editing.startDate ?? ""));
     if (!sd) return [];
@@ -141,6 +183,7 @@ export function RecurringClient() {
     };
     const fromToday = startOfDay(new Date());
     const start = startOfDay(new Date(sd));
+    /** Najbliższe wystąpienia od dziś lub od startu reguły (jeśli start jest w przyszłości). */
     const effFrom = isAfter(start, fromToday) ? start : fromToday;
     try {
       return nextNOccurrences(tmpl, 5, effFrom);
@@ -234,7 +277,7 @@ export function RecurringClient() {
   }
 
   async function remove(id: string) {
-    if (!confirm("Usunąć to zdarzenie powtarzalne?")) return;
+    if (!confirm("Usunąć tę regułę cykliczną? (Wygenerowane dokumenty zostaną w kosztach / przychodach.)")) return;
     const res = await fetch(`/api/recurring-templates/${id}`, { method: "DELETE" });
     if (!res.ok) {
       const j = await res.json();
@@ -242,6 +285,41 @@ export function RecurringClient() {
       return;
     }
     load();
+  }
+
+  async function runRowTool(id: string, tool: "sync" | "deleteFuture" | "dedupe") {
+    const key = `${id}:${tool}`;
+    if (tool === "deleteFuture") {
+      if (!confirm("Usunąć przyszłe wygenerowane wpisy z tej reguły (bez płatności, nieodłączone)?")) return;
+    }
+    if (tool === "dedupe") {
+      if (!confirm("Usunąć zduplikowane przyszłe wpisy (ten sam dzień wystąpienia), zostawiając najstarszy?")) return;
+    }
+    setRowToolBusy(key);
+    try {
+      const path =
+        tool === "sync" ? "sync" : tool === "deleteFuture" ? "delete-future-generated" : "dedupe-future";
+      const res = await fetch(`/api/recurring-templates/${id}/${path}`, { method: "POST" });
+      const j = await res.json();
+      if (!res.ok) {
+        alert(readApiErrorBody(j));
+        return;
+      }
+      if (tool === "sync") {
+        alert(
+          `Zsynchronizowano harmonogram: utworzono ${j.created ?? 0} wpisów; usunięto przyszłych planowanych — koszty: ${j.deletedCosts ?? 0}, przychody: ${j.deletedIncomes ?? 0}.`,
+        );
+      } else if (tool === "deleteFuture") {
+        alert(`Usunięto: koszty ${j.deletedCosts ?? 0}, przychody ${j.deletedIncomes ?? 0}.`);
+      } else {
+        alert(`Dedup: usunięto koszty ${j.removedCosts ?? 0}, przychody ${j.removedIncomes ?? 0}.`);
+      }
+      load();
+    } catch {
+      alert("Błąd sieci");
+    } finally {
+      setRowToolBusy(null);
+    }
   }
 
   async function toggleActive(r: Row) {
@@ -282,7 +360,7 @@ export function RecurringClient() {
         alert(readApiErrorBody(j));
         return;
       }
-      alert(`Utworzono ${j.created ?? 0} planowanych zdarzeń (do ${genUntilDate}).`);
+      alert(`Utworzono ${j.created ?? 0} brakujących wpisów w kosztach / przychodach (do ${genUntilDate}).`);
       setGenModalId(null);
     } catch {
       alert("Błąd sieci");
@@ -297,10 +375,10 @@ export function RecurringClient() {
     <div className="space-y-6">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div>
-          <h1 className="text-2xl font-semibold text-zinc-900 dark:text-zinc-50">Powtarzalne zdarzenia</h1>
+          <h1 className="text-2xl font-semibold text-zinc-900 dark:text-zinc-50">Reguły cykliczne</h1>
           <p className="mt-1 text-sm text-zinc-500">
-            Zdarzenia powtarzalne tworzą wpisy w planowanych zdarzeniach — bez duplikatów dla tej samej daty i tego samego
-            zdarzenia źródłowego.
+            Reguła jest tylko szablonem: wygenerowane pozycje trafiają jako zwykłe faktury kosztowe lub przychodowe (z
+            oznaczeniem źródła). Synchronizacja aktualizuje przyszłe wpisy w stanie „planowana”, bez płatności.
           </p>
         </div>
         <div className="flex flex-wrap items-center justify-end gap-2">
@@ -326,7 +404,7 @@ export function RecurringClient() {
               <th className="px-3 py-2.5 font-semibold">Częstotliwość</th>
               <th className="px-3 py-2.5 font-semibold">Start</th>
               <th className="px-3 py-2.5 font-semibold">Aktywny</th>
-              <th className="px-3 py-2.5 font-semibold">Generuj</th>
+              <th className="min-w-[200px] px-3 py-2.5 font-semibold">Narzędzia</th>
               <th className="px-3 py-2.5 text-right font-semibold">Akcje</th>
             </tr>
           </thead>
@@ -341,7 +419,7 @@ export function RecurringClient() {
             ) : rows.length === 0 ? (
               <tr>
                 <td colSpan={9} className="px-3 py-12 text-center text-zinc-500">
-                  Brak zdarzeń powtarzalnych. Dodaj pierwsze przyciskiem <strong>Dodaj</strong>.
+                  Brak reguł cyklicznych. Dodaj pierwszą przyciskiem <strong>Dodaj</strong>.
                 </td>
               </tr>
             ) : (
@@ -364,16 +442,45 @@ export function RecurringClient() {
                   <td className="px-3 py-2">
                     {r.isActive ? <Badge variant="success">Tak</Badge> : <Badge variant="muted">Nie</Badge>}
                   </td>
-                  <td className="px-3 py-2 whitespace-nowrap">
-                    <Button
-                      type="button"
-                      variant="secondary"
-                      className="!py-1 !text-xs"
-                      disabled={!r.isActive || genBusy !== null}
-                      onClick={() => openGenerateModal(r.id)}
-                    >
-                      {genBusy === r.id ? <Spinner className="!size-3" /> : "Wygeneruj do daty"}
-                    </Button>
+                  <td className="px-3 py-2 align-top">
+                    <div className="flex max-w-[220px] flex-col gap-1">
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        className="!py-1 !text-xs"
+                        disabled={!r.isActive || genBusy !== null || rowToolBusy !== null}
+                        onClick={() => openGenerateModal(r.id)}
+                      >
+                        {genBusy === r.id ? <Spinner className="!size-3" /> : "Brakujące do daty"}
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        className="!py-1 !text-xs"
+                        disabled={!r.isActive || rowToolBusy !== null || genBusy !== null}
+                        onClick={() => runRowTool(r.id, "sync")}
+                      >
+                        {rowToolBusy === `${r.id}:sync` ? <Spinner className="!size-3" /> : "Synchronizuj"}
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        className="!py-1 !text-xs"
+                        disabled={rowToolBusy !== null || genBusy !== null}
+                        onClick={() => runRowTool(r.id, "deleteFuture")}
+                      >
+                        {rowToolBusy === `${r.id}:deleteFuture` ? <Spinner className="!size-3" /> : "Usuń przyszłe"}
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        className="!py-1 !text-xs"
+                        disabled={rowToolBusy !== null || genBusy !== null}
+                        onClick={() => runRowTool(r.id, "dedupe")}
+                      >
+                        {rowToolBusy === `${r.id}:dedupe` ? <Spinner className="!size-3" /> : "Dedup"}
+                      </Button>
+                    </div>
                   </td>
                   <td className="px-3 py-2 text-right whitespace-nowrap">
                     <Button variant="ghost" className="!py-1 text-xs" onClick={() => openEdit(r)}>
@@ -395,14 +502,14 @@ export function RecurringClient() {
 
       <Modal
         open={genModalId !== null}
-        title="Wygeneruj planowane zdarzenia"
+        title="Wygeneruj brakujące wpisy"
         onClose={() => setGenModalId(null)}
         size="md"
       >
         <div className="space-y-3">
           <p className="text-sm text-zinc-600 dark:text-zinc-400">
-            Zostaną utworzone wszystkie wystąpienia od daty startu zdarzenia powtarzalnego do wybranej daty (włącznie), z
-            uwzględnieniem daty końca serii (jeśli jest ustawiona).
+            Zostaną dodane tylko brakujące wystąpienia jako dokumenty w kosztach lub przychodach (do wybranej daty), bez
+            usuwania istniejących rekordów. Uwzględniana jest data końca serii i horyzont aplikacji.
           </p>
           <Field label="Generuj do (włącznie)">
             <Input type="date" value={genUntilDate} onChange={(e) => setGenUntilDate(e.target.value)} />
@@ -421,7 +528,7 @@ export function RecurringClient() {
 
       <Modal
         open={open}
-        title={editing.id ? "Edycja zdarzenia powtarzalnego" : "Nowe zdarzenie powtarzalne"}
+        title={editing.id ? "Edycja reguły cyklicznej" : "Nowa reguła cykliczna"}
         onClose={closeModal}
         size="lg"
       >
@@ -576,9 +683,59 @@ export function RecurringClient() {
               />
             </Field>
           </div>
+          {editing.id && generatedBlock ? (
+            <div className="rounded-lg border border-zinc-200 bg-white p-3 dark:border-zinc-700 dark:bg-zinc-950/50">
+              <p className="text-sm font-medium text-zinc-800 dark:text-zinc-200">Powiązane wygenerowane wpisy</p>
+              <p className="mt-1 text-xs text-zinc-500">
+                Najbliższe terminy (od dziś). Otwórz pozycję na liście{" "}
+                {editing.type === "EXPENSE" ? (
+                  <Link href="/cost-invoices?recurringSource=generated" className="font-medium text-zinc-800 underline dark:text-zinc-200">
+                    kosztów
+                  </Link>
+                ) : (
+                  <Link
+                    href="/income-invoices?recurringSource=generated"
+                    className="font-medium text-zinc-800 underline dark:text-zinc-200"
+                  >
+                    przychodów
+                  </Link>
+                )}
+                .
+              </p>
+              <ul className="mt-2 space-y-1 text-sm">
+                {(editing.type === "EXPENSE" ? generatedBlock.upcomingCosts : generatedBlock.upcomingIncomes).map(
+                  (row) => {
+                    const num = "documentNumber" in row ? row.documentNumber : row.invoiceNumber;
+                    const date =
+                      "plannedPaymentDate" in row ? row.plannedPaymentDate : (row as { plannedIncomeDate: string }).plannedIncomeDate;
+                    const href =
+                      editing.type === "EXPENSE"
+                        ? `/cost-invoices?q=${encodeURIComponent(num)}`
+                        : `/income-invoices?q=${encodeURIComponent(num)}`;
+                    return (
+                      <li key={row.id} className="flex flex-wrap items-center gap-2">
+                        <Link href={href} className="font-mono text-xs text-emerald-800 underline dark:text-emerald-300">
+                          {num}
+                        </Link>
+                        <span className="text-zinc-500">{formatDate(date)}</span>
+                        {row.isRecurringDetached ? <Badge variant="warning">odłączone</Badge> : null}
+                      </li>
+                    );
+                  },
+                )}
+              </ul>
+              {(editing.type === "EXPENSE" ? generatedBlock.upcomingCosts : generatedBlock.upcomingIncomes).length ===
+              0 ? (
+                <p className="mt-2 text-sm text-zinc-500">Brak przyszłych wpisów — użyj „Brakujące do daty” lub „Synchronizuj”.</p>
+              ) : null}
+            </div>
+          ) : null}
           <div className="rounded-lg border border-zinc-200 bg-zinc-50 p-3 dark:border-zinc-700 dark:bg-zinc-900/50">
-            <p className="text-sm font-medium text-zinc-800 dark:text-zinc-200">Najbliższe wystąpienia (podgląd)</p>
-            <p className="mt-1 text-xs text-zinc-500">Tylko orientacyjnie — nie zapisuje się w bazie.</p>
+            <p className="text-sm font-medium text-zinc-800 dark:text-zinc-200">Podgląd: 5 najbliższych terminów</p>
+            <p className="mt-1 text-xs text-zinc-500">
+              Harmonogram: pierwsza data spełniająca regułę (dzień miesiąca / tydzień itd.) nie wcześniej niż data startu
+              reguły; następnie od dziś lub od startu — która jest późniejsza.
+            </p>
             {previewDates.length === 0 ? (
               <p className="mt-2 text-sm text-zinc-500">Uzupełnij datę startu i częstotliwość.</p>
             ) : (
