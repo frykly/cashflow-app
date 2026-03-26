@@ -4,6 +4,7 @@ import { decToNumber } from "@/lib/cashflow/money";
 import { formatDate } from "@/lib/format";
 import { rowsToCsv } from "@/lib/csv-string";
 import ExcelJS from "exceljs";
+import { projectDisplayLabel } from "@/lib/project-display";
 
 const sortable = new Set(["plannedDate", "createdAt"]);
 
@@ -23,7 +24,7 @@ export async function GET(req: Request) {
   const rows = await prisma.plannedFinancialEvent.findMany({
     where,
     orderBy: { [sort]: order },
-    include: { incomeCategory: true, expenseCategory: true },
+    include: { incomeCategory: true, expenseCategory: true, project: true },
   });
 
   const header = [
@@ -35,7 +36,7 @@ export async function GET(req: Request) {
     "plannedDate",
     "status",
     "categoryName",
-    "projectName",
+    "project",
     "notes",
   ];
 
@@ -51,7 +52,7 @@ export async function GET(req: Request) {
       formatDate(r.plannedDate),
       r.status,
       cat,
-      r.projectName ?? "",
+      projectDisplayLabel(r),
       r.notes,
     ];
   });

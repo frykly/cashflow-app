@@ -17,8 +17,11 @@ import { costRemainingGross, isCostFullyPaid, sumCostPaymentsGross } from "@/lib
 import { DueDateOffsetControls } from "@/components/DueDateOffsetControls";
 import { normalizeDecimalInput } from "@/lib/decimal-input";
 import { isStoredVatOnlyCost } from "@/lib/validation/is-vat-only-cost";
+import { projectDisplayLabel } from "@/lib/project-display";
 
 type PayPick = Pick<CostInvoicePayment, "amountGross">;
+
+type ProjectOption = { id: string; name: string; isActive: boolean; code?: string | null };
 
 type Row = {
   id: string;
@@ -42,6 +45,8 @@ type Row = {
   payments?: { id: string; amountGross: string; paymentDate: string; notes: string }[];
   isGeneratedFromRecurring?: boolean;
   isRecurringDetached?: boolean;
+  projectId?: string | null;
+  project?: { id: string; name: string } | null;
   projectName?: string | null;
 };
 
@@ -70,7 +75,7 @@ function emptyDraft(): Draft {
     paymentSource: "MAIN",
     notes: "",
     expenseCategoryId: null,
-    projectName: "",
+    projectId: null,
   };
 }
 
@@ -134,6 +139,7 @@ export function CostInvoicesClient() {
   const [paySaving, setPaySaving] = useState(false);
   const [importMsg, setImportMsg] = useState<string | null>(null);
   const [supplierSuggestions, setSupplierSuggestions] = useState<string[]>([]);
+  const [projects, setProjects] = useState<ProjectOption[]>([]);
   const plannedPaymentManualRef = useRef(false);
   const [amountEntryMode, setAmountEntryMode] = useState<AmountEntryMode>("net");
   /** Netto 0, brutto = VAT — np. płatność samego VAT z konta VAT. */
@@ -144,6 +150,7 @@ export function CostInvoicesClient() {
     status: "",
     categoryId: "",
     recurringSource: "",
+    projectId: "",
     dateFrom: "",
     dateTo: "",
     dateField: "plannedPaymentDate",
@@ -157,6 +164,7 @@ export function CostInvoicesClient() {
       status: m.get("status") ?? "",
       categoryId: m.get("categoryId") ?? "",
       recurringSource: m.get("recurringSource") ?? "",
+      projectId: m.get("projectId") ?? "",
       dateFrom: m.get("dateFrom") ?? "",
       dateTo: m.get("dateTo") ?? "",
       dateField: m.get("dateField") || "plannedPaymentDate",
@@ -169,6 +177,13 @@ export function CostInvoicesClient() {
       .then((r) => r.json())
       .then((j: Cat[]) => setCategories(Array.isArray(j) ? j : []))
       .catch(() => setCategories([]));
+  }, []);
+
+  useEffect(() => {
+    fetch("/api/projects")
+      .then((r) => r.json())
+      .then((j: ProjectOption[]) => setProjects(Array.isArray(j) ? j : []))
+      .catch(() => setProjects([]));
   }, []);
 
   useEffect(() => {
@@ -205,6 +220,7 @@ export function CostInvoicesClient() {
       status: filterDraft.status || null,
       categoryId: filterDraft.categoryId || null,
       recurringSource: filterDraft.recurringSource || null,
+      projectId: filterDraft.projectId || null,
       dateFrom: filterDraft.dateFrom || null,
       dateTo: filterDraft.dateTo || null,
       dateField: filterDraft.dateField,
@@ -218,6 +234,7 @@ export function CostInvoicesClient() {
       status: null,
       categoryId: null,
       recurringSource: null,
+      projectId: null,
       dateFrom: null,
       dateTo: null,
       dateField: null,
@@ -418,10 +435,7 @@ export function CostInvoicesClient() {
       editing.id && editing.isGeneratedFromRecurring
         ? { isRecurringDetached: !!editing.isRecurringDetached }
         : {};
-    const projectNamePayload = (() => {
-      const t = (editing.projectName ?? "").trim();
-      return t === "" ? null : t.slice(0, 500);
-    })();
+    const projectIdPayload = editing.projectId?.trim() || null;
 
     const body = vatOnlyPayment
       ? {
@@ -441,7 +455,7 @@ export function CostInvoicesClient() {
           actualPaymentDate: toIsoOrNull(editing.actualPaymentDate ?? undefined),
           paymentSource: editing.paymentSource,
           notes: editing.notes,
-          projectName: projectNamePayload,
+          projectId: projectIdPayload,
           expenseCategoryId: editing.expenseCategoryId || null,
           ...recurringPatch,
         }
@@ -460,7 +474,7 @@ export function CostInvoicesClient() {
           actualPaymentDate: toIsoOrNull(editing.actualPaymentDate ?? undefined),
           paymentSource: editing.paymentSource,
           notes: editing.notes,
-          projectName: projectNamePayload,
+          projectId: projectIdPayload,
           expenseCategoryId: editing.expenseCategoryId || null,
           ...recurringPatch,
         };
@@ -548,6 +562,24 @@ export function CostInvoicesClient() {
               placeholder="np. FV/1, dostawca lub projekt"
               disabled={listLoading}
             />
+          </Field>
+          <Field label="Projekt">
+            <Select
+              value={filterDraft.projectId}
+              onChange={(e) => setFilterDraft((d) => ({ ...d, projectId: e.target.value }))}
+              disabled={listLoading}
+            >
+              <option value="">(wszystkie)</option>
+              {projects
+                .slice()
+                .sort((a, b) => Number(b.isActive) - Number(a.isActive) || a.name.localeCompare(b.name, "pl"))
+                .map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                    {!p.isActive ? " (nieaktywny)" : ""}
+                  </option>
+                ))}
+            </Select>
           </Field>
           <Field label="Status">
             <Select
@@ -746,8 +778,11 @@ export function CostInvoicesClient() {
                     <td className="max-w-[140px] truncate px-3 py-2 text-zinc-600 dark:text-zinc-400" title={r.expenseCategory?.name}>
                       {r.expenseCategory?.name ?? "—"}
                     </td>
-                    <td className="max-w-[120px] truncate px-3 py-2 text-zinc-600 dark:text-zinc-400" title={r.projectName ?? undefined}>
-                      {r.projectName?.trim() ? r.projectName : "—"}
+                    <td
+                      className="max-w-[120px] truncate px-3 py-2 text-zinc-600 dark:text-zinc-400"
+                      title={projectDisplayLabel(r) || undefined}
+                    >
+                      {projectDisplayLabel(r) || "—"}
                     </td>
                     <td className="px-3 py-2 tabular-nums">{formatMoney(Number(r.netAmount))}</td>
                     <td className="whitespace-nowrap px-3 py-2">{formatDate(r.plannedPaymentDate)}</td>
@@ -846,12 +881,27 @@ export function CostInvoicesClient() {
             />
           </Field>
           <Field label="Projekt">
-            <Input
-              value={editing.projectName ?? ""}
-              onChange={(e) => setEditing({ ...editing, projectName: e.target.value })}
-              placeholder="opcjonalnie"
+            <Select
+              value={editing.projectId ?? ""}
+              onChange={(e) => setEditing({ ...editing, projectId: e.target.value || null })}
               disabled={saving}
-            />
+            >
+              <option value="">(brak)</option>
+              {projects
+                .slice()
+                .sort((a, b) => Number(b.isActive) - Number(a.isActive) || a.name.localeCompare(b.name, "pl"))
+                .map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                    {!p.isActive ? " (nieaktywny)" : ""}
+                  </option>
+                ))}
+            </Select>
+            {!editing.projectId && (editing.projectName ?? "").trim() ? (
+              <p className="mt-1 text-xs text-amber-700 dark:text-amber-400">
+                Legacy: „{(editing.projectName ?? "").trim()}” — wybierz projekt z listy, aby powiązać rekord.
+              </p>
+            ) : null}
           </Field>
           <label className="flex cursor-pointer items-center gap-2 text-sm text-zinc-700 dark:text-zinc-300">
             <input

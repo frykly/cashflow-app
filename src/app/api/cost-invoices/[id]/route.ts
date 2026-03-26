@@ -13,6 +13,7 @@ import { decToNumber } from "@/lib/cashflow/money";
 import { PAY_EPS, sumCostPaymentsGross } from "@/lib/cashflow/settlement";
 import { NextResponse } from "next/server";
 import { ZodError } from "zod";
+import { resolveProjectFields } from "@/lib/project-persist";
 
 type Ctx = { params: Promise<{ id: string }> };
 
@@ -20,7 +21,7 @@ export async function GET(_req: Request, ctx: Ctx) {
   const { id } = await ctx.params;
   const row = await prisma.costInvoice.findUnique({
     where: { id },
-    include: { expenseCategory: true, payments: { orderBy: { paymentDate: "asc" } } },
+    include: { expenseCategory: true, project: true, payments: { orderBy: { paymentDate: "asc" } } },
   });
   if (!row) return jsonError("Nie znaleziono", 404);
   return jsonData(row);
@@ -68,6 +69,18 @@ export async function PATCH(req: Request, ctx: Ctx) {
       return jsonError(e instanceof Error ? e.message : "Niedozwolona zmiana statusu", 400);
     }
 
+    let projectId = existing.projectId;
+    let projectName = existing.projectName;
+    if (data.projectId !== undefined) {
+      try {
+        const pf = await resolveProjectFields(prisma, data.projectId);
+        projectId = pf.projectId;
+        projectName = pf.projectName;
+      } catch {
+        return jsonError("Nieprawidłowy projekt", 400);
+      }
+    }
+
     const row = await prisma.costInvoice.update({
       where: { id },
       data: {
@@ -95,19 +108,20 @@ export async function PATCH(req: Request, ctx: Ctx) {
               : null,
         paymentSource: data.paymentSource ?? existing.paymentSource,
         notes: data.notes ?? existing.notes,
-        projectName: data.projectName !== undefined ? data.projectName : existing.projectName,
+        projectId,
+        projectName,
         expenseCategoryId:
           data.expenseCategoryId !== undefined ? data.expenseCategoryId : existing.expenseCategoryId,
         isRecurringDetached:
           data.isRecurringDetached !== undefined ? data.isRecurringDetached : existing.isRecurringDetached,
       },
-      include: { expenseCategory: true, payments: { orderBy: { paymentDate: "asc" } } },
+      include: { expenseCategory: true, project: true, payments: { orderBy: { paymentDate: "asc" } } },
     });
     await ensureClosingCostPaymentIfFullySettled(id);
     await syncCostInvoiceStatus(id);
     const fresh = await prisma.costInvoice.findUnique({
       where: { id },
-      include: { expenseCategory: true, payments: { orderBy: { paymentDate: "asc" } } },
+      include: { expenseCategory: true, project: true, payments: { orderBy: { paymentDate: "asc" } } },
     });
     return jsonData(fresh ?? row);
   } catch (e) {

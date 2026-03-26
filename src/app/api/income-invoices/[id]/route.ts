@@ -13,6 +13,7 @@ import { decToNumber } from "@/lib/cashflow/money";
 import { PAY_EPS, sumIncomePaymentsGross } from "@/lib/cashflow/settlement";
 import { NextResponse } from "next/server";
 import { ZodError } from "zod";
+import { resolveProjectFields } from "@/lib/project-persist";
 
 type Ctx = { params: Promise<{ id: string }> };
 
@@ -20,7 +21,7 @@ export async function GET(_req: Request, ctx: Ctx) {
   const { id } = await ctx.params;
   const row = await prisma.incomeInvoice.findUnique({
     where: { id },
-    include: { incomeCategory: true, payments: { orderBy: { paymentDate: "asc" } } },
+    include: { incomeCategory: true, project: true, payments: { orderBy: { paymentDate: "asc" } } },
   });
   if (!row) return jsonError("Nie znaleziono", 404);
   return jsonData(row);
@@ -57,6 +58,18 @@ export async function PATCH(req: Request, ctx: Ctx) {
       return jsonError(e instanceof Error ? e.message : "Niedozwolona zmiana statusu", 400);
     }
 
+    let projectId = existing.projectId;
+    let projectName = existing.projectName;
+    if (data.projectId !== undefined) {
+      try {
+        const pf = await resolveProjectFields(prisma, data.projectId);
+        projectId = pf.projectId;
+        projectName = pf.projectName;
+      } catch {
+        return jsonError("Nieprawidłowy projekt", 400);
+      }
+    }
+
     const row = await prisma.incomeInvoice.update({
       where: { id },
       data: {
@@ -84,19 +97,20 @@ export async function PATCH(req: Request, ctx: Ctx) {
               ? new Date(data.actualIncomeDate)
               : null,
         notes: data.notes ?? existing.notes,
-        projectName: data.projectName !== undefined ? data.projectName : existing.projectName,
+        projectId,
+        projectName,
         incomeCategoryId:
           data.incomeCategoryId !== undefined ? data.incomeCategoryId : existing.incomeCategoryId,
         isRecurringDetached:
           data.isRecurringDetached !== undefined ? data.isRecurringDetached : existing.isRecurringDetached,
       },
-      include: { incomeCategory: true, payments: { orderBy: { paymentDate: "asc" } } },
+      include: { incomeCategory: true, project: true, payments: { orderBy: { paymentDate: "asc" } } },
     });
     await ensureClosingIncomePaymentIfFullySettled(id);
     await syncIncomeInvoiceStatus(id);
     const fresh = await prisma.incomeInvoice.findUnique({
       where: { id },
-      include: { incomeCategory: true, payments: { orderBy: { paymentDate: "asc" } } },
+      include: { incomeCategory: true, project: true, payments: { orderBy: { paymentDate: "asc" } } },
     });
     return jsonData(fresh ?? row);
   } catch (e) {

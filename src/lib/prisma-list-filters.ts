@@ -17,11 +17,17 @@ export function buildIncomeWhere(sp: URLSearchParams): Prisma.IncomeInvoiceWhere
         { contractor: { contains: q } },
         { description: { contains: q } },
         { projectName: { contains: q } },
+        { project: { name: { contains: q } } },
+        { project: { code: { contains: q } } },
+        { project: { clientName: { contains: q } } },
       ],
     });
   }
   const status = sp.get("status")?.trim();
   if (status) filters.push({ status });
+
+  const projectId = sp.get("projectId")?.trim();
+  if (projectId) filters.push({ projectId });
 
   const categoryId = sp.get("categoryId")?.trim();
   if (categoryId) filters.push({ incomeCategoryId: categoryId });
@@ -66,11 +72,17 @@ export function buildCostWhere(sp: URLSearchParams): Prisma.CostInvoiceWhereInpu
         { supplier: { contains: q } },
         { description: { contains: q } },
         { projectName: { contains: q } },
+        { project: { name: { contains: q } } },
+        { project: { code: { contains: q } } },
+        { project: { clientName: { contains: q } } },
       ],
     });
   }
   const status = sp.get("status")?.trim();
   if (status) filters.push({ status });
+
+  const projectId = sp.get("projectId")?.trim();
+  if (projectId) filters.push({ projectId });
 
   const categoryId = sp.get("categoryId")?.trim();
   if (categoryId) filters.push({ expenseCategoryId: categoryId });
@@ -114,11 +126,17 @@ export function buildPlannedWhere(sp: URLSearchParams): Prisma.PlannedFinancialE
         { title: { contains: q } },
         { description: { contains: q } },
         { projectName: { contains: q } },
+        { project: { name: { contains: q } } },
+        { project: { code: { contains: q } } },
+        { project: { clientName: { contains: q } } },
       ],
     });
   }
   const status = sp.get("status")?.trim();
   if (status) filters.push({ status });
+
+  const projectId = sp.get("projectId")?.trim();
+  if (projectId) filters.push({ projectId });
 
   const type = sp.get("type")?.trim();
   if (type === "INCOME" || type === "EXPENSE") filters.push({ type });

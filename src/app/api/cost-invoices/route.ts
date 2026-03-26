@@ -7,6 +7,7 @@ import { buildCostWhere } from "@/lib/prisma-list-filters";
 import type { VatRatePct } from "@/lib/vat-rate";
 import { ensureClosingCostPaymentIfFullySettled } from "@/lib/cashflow/invoice-auto-settlement";
 import { syncCostInvoiceStatus } from "@/lib/invoice-status-sync";
+import { resolveProjectFields } from "@/lib/project-persist";
 import { ZodError } from "zod";
 
 const sortable = new Set(["plannedPaymentDate", "documentDate", "createdAt", "paymentDueDate"]);
@@ -23,7 +24,7 @@ export async function GET(req: Request) {
   const rows = await prisma.costInvoice.findMany({
     where,
     orderBy: { [sort]: order },
-    include: { expenseCategory: true, payments: { orderBy: { paymentDate: "asc" } } },
+    include: { expenseCategory: true, project: true, payments: { orderBy: { paymentDate: "asc" } } },
   });
   return jsonData(rows);
 }
@@ -46,6 +47,12 @@ export async function POST(req: Request) {
     });
     if (!resolved.ok) return jsonError(resolved.message);
     const { net, vat, gross, storedVatRate } = resolved.amounts;
+    let pf: { projectId: string | null; projectName: string | null };
+    try {
+      pf = await resolveProjectFields(prisma, data.projectId ?? null);
+    } catch {
+      return jsonError("Nieprawidłowy projekt", 400);
+    }
     const row = await prisma.costInvoice.create({
       data: {
         documentNumber: data.documentNumber,
@@ -63,16 +70,17 @@ export async function POST(req: Request) {
         actualPaymentDate: data.actualPaymentDate ? new Date(data.actualPaymentDate) : null,
         paymentSource: data.paymentSource,
         notes: data.notes ?? "",
-        projectName: data.projectName ?? null,
+        projectId: pf.projectId,
+        projectName: pf.projectName,
         expenseCategoryId: data.expenseCategoryId ?? null,
       },
-      include: { expenseCategory: true, payments: true },
+      include: { expenseCategory: true, project: true, payments: true },
     });
     await ensureClosingCostPaymentIfFullySettled(row.id);
     await syncCostInvoiceStatus(row.id);
     const fresh = await prisma.costInvoice.findUnique({
       where: { id: row.id },
-      include: { expenseCategory: true, payments: { orderBy: { paymentDate: "asc" } } },
+      include: { expenseCategory: true, project: true, payments: { orderBy: { paymentDate: "asc" } } },
     });
     return jsonData(fresh ?? row, { status: 201 });
   } catch (e) {

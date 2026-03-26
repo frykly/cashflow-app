@@ -10,6 +10,9 @@ import { readApiErrorBody } from "@/lib/api-client";
 import { normalizeDecimalInput } from "@/lib/decimal-input";
 import { useListQuery } from "@/hooks/useListQuery";
 import { isCalendarOverdue } from "@/lib/cashflow/overdue";
+import { projectDisplayLabel } from "@/lib/project-display";
+
+type ProjectOption = { id: string; name: string; isActive: boolean; code?: string | null };
 
 type Row = {
   id: string;
@@ -25,6 +28,8 @@ type Row = {
   expenseCategoryId?: string | null;
   incomeCategory?: { id: string; name: string; slug: string } | null;
   expenseCategory?: { id: string; name: string; slug: string } | null;
+  projectId?: string | null;
+  project?: { id: string; name: string } | null;
   projectName?: string | null;
 };
 
@@ -46,7 +51,7 @@ function emptyDraft(): Draft {
     notes: "",
     incomeCategoryId: null,
     expenseCategoryId: null,
-    projectName: "",
+    projectId: null,
   };
 }
 
@@ -98,12 +103,14 @@ export function PlannedEventsClient() {
   const [incomeCats, setIncomeCats] = useState<Cat[]>([]);
   const [expenseCats, setExpenseCats] = useState<Cat[]>([]);
   const [importMsg, setImportMsg] = useState<string | null>(null);
+  const [projects, setProjects] = useState<ProjectOption[]>([]);
 
   const [filterDraft, setFilterDraft] = useState({
     q: "",
     status: "",
     type: "",
     categoryId: "",
+    projectId: "",
     dateFrom: "",
     dateTo: "",
     overdueOnly: false,
@@ -116,6 +123,7 @@ export function PlannedEventsClient() {
       status: m.get("status") ?? "",
       type: m.get("type") ?? "",
       categoryId: m.get("categoryId") ?? "",
+      projectId: m.get("projectId") ?? "",
       dateFrom: m.get("dateFrom") ?? "",
       dateTo: m.get("dateTo") ?? "",
       overdueOnly: m.get("overdue") === "1",
@@ -135,6 +143,13 @@ export function PlannedEventsClient() {
         setIncomeCats([]);
         setExpenseCats([]);
       });
+  }, []);
+
+  useEffect(() => {
+    fetch("/api/projects")
+      .then((r) => r.json())
+      .then((j: ProjectOption[]) => setProjects(Array.isArray(j) ? j : []))
+      .catch(() => setProjects([]));
   }, []);
 
   const load = useCallback(async () => {
@@ -163,6 +178,7 @@ export function PlannedEventsClient() {
       status: filterDraft.status || null,
       type: filterDraft.type || null,
       categoryId: filterDraft.categoryId || null,
+      projectId: filterDraft.projectId || null,
       dateFrom: filterDraft.dateFrom || null,
       dateTo: filterDraft.dateTo || null,
       overdue: filterDraft.overdueOnly ? "1" : null,
@@ -175,6 +191,7 @@ export function PlannedEventsClient() {
       status: null,
       type: null,
       categoryId: null,
+      projectId: null,
       dateFrom: null,
       dateTo: null,
       overdue: null,
@@ -218,10 +235,7 @@ export function PlannedEventsClient() {
       setSaving(false);
       return;
     }
-    const projectNamePayload = (() => {
-      const t = (editing.projectName ?? "").trim();
-      return t === "" ? null : t.slice(0, 500);
-    })();
+    const projectIdPayload = editing.projectId?.trim() || null;
     const body = {
       type: editing.type,
       title: editing.title,
@@ -231,7 +245,7 @@ export function PlannedEventsClient() {
       plannedDate,
       status: editing.status,
       notes: editing.notes,
-      projectName: projectNamePayload,
+      projectId: projectIdPayload,
       incomeCategoryId: editing.type === "INCOME" ? (editing.incomeCategoryId || null) : null,
       expenseCategoryId: editing.type === "EXPENSE" ? (editing.expenseCategoryId || null) : null,
     };
@@ -387,6 +401,24 @@ export function PlannedEventsClient() {
               </optgroup>
             </Select>
           </Field>
+          <Field label="Projekt">
+            <Select
+              value={filterDraft.projectId}
+              onChange={(e) => setFilterDraft((d) => ({ ...d, projectId: e.target.value }))}
+              disabled={listLoading}
+            >
+              <option value="">(wszystkie)</option>
+              {projects
+                .slice()
+                .sort((a, b) => Number(b.isActive) - Number(a.isActive) || a.name.localeCompare(b.name, "pl"))
+                .map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                    {!p.isActive ? " (nieaktywny)" : ""}
+                  </option>
+                ))}
+            </Select>
+          </Field>
           <Field label="Data od (plan.)">
             <Input
               type="date"
@@ -490,8 +522,11 @@ export function PlannedEventsClient() {
                     <td className="max-w-[140px] truncate px-3 py-2 text-zinc-600 dark:text-zinc-400" title={categoryCell(r)}>
                       {categoryCell(r)}
                     </td>
-                    <td className="max-w-[120px] truncate px-3 py-2 text-zinc-600 dark:text-zinc-400" title={r.projectName ?? undefined}>
-                      {r.projectName?.trim() ? r.projectName : "—"}
+                    <td
+                      className="max-w-[120px] truncate px-3 py-2 text-zinc-600 dark:text-zinc-400"
+                      title={projectDisplayLabel(r) || undefined}
+                    >
+                      {projectDisplayLabel(r) || "—"}
                     </td>
                     <td className="whitespace-nowrap px-3 py-2">{formatDate(r.plannedDate)}</td>
                     <td className="px-3 py-2 tabular-nums font-medium">{formatPlannedAmountCell(r)}</td>
@@ -527,12 +562,27 @@ export function PlannedEventsClient() {
             <Textarea rows={2} value={editing.description} onChange={(e) => setEditing({ ...editing, description: e.target.value })} disabled={saving} />
           </Field>
           <Field label="Projekt">
-            <Input
-              value={editing.projectName ?? ""}
-              onChange={(e) => setEditing({ ...editing, projectName: e.target.value })}
-              placeholder="opcjonalnie"
+            <Select
+              value={editing.projectId ?? ""}
+              onChange={(e) => setEditing({ ...editing, projectId: e.target.value || null })}
               disabled={saving}
-            />
+            >
+              <option value="">(brak)</option>
+              {projects
+                .slice()
+                .sort((a, b) => Number(b.isActive) - Number(a.isActive) || a.name.localeCompare(b.name, "pl"))
+                .map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                    {!p.isActive ? " (nieaktywny)" : ""}
+                  </option>
+                ))}
+            </Select>
+            {!editing.projectId && (editing.projectName ?? "").trim() ? (
+              <p className="mt-1 text-xs text-amber-700 dark:text-amber-400">
+                Legacy: „{(editing.projectName ?? "").trim()}” — wybierz projekt z listy, aby powiązać rekord.
+              </p>
+            ) : null}
           </Field>
           <div className="grid gap-3 sm:grid-cols-2">
             <Field label="Typ">

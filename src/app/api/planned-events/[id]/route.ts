@@ -4,6 +4,7 @@ import { jsonError, zodErrorResponse } from "@/lib/api/errors";
 import { plannedEventUpdateSchema } from "@/lib/validation/schemas";
 import { NextResponse } from "next/server";
 import { ZodError } from "zod";
+import { resolveProjectFields } from "@/lib/project-persist";
 
 type Ctx = { params: Promise<{ id: string }> };
 
@@ -11,7 +12,7 @@ export async function GET(_req: Request, ctx: Ctx) {
   const { id } = await ctx.params;
   const row = await prisma.plannedFinancialEvent.findUnique({
     where: { id },
-    include: { incomeCategory: true, expenseCategory: true },
+    include: { incomeCategory: true, expenseCategory: true, project: true },
   });
   if (!row) return jsonError("Nie znaleziono", 404);
   return jsonData(row);
@@ -44,6 +45,18 @@ export async function PATCH(req: Request, ctx: Ctx) {
           : existing.expenseCategoryId
         : null;
 
+    let projectId = existing.projectId;
+    let projectName = existing.projectName;
+    if (data.projectId !== undefined) {
+      try {
+        const pf = await resolveProjectFields(prisma, data.projectId);
+        projectId = pf.projectId;
+        projectName = pf.projectName;
+      } catch {
+        return jsonError("Nieprawidłowy projekt", 400);
+      }
+    }
+
     const row = await prisma.plannedFinancialEvent.update({
       where: { id },
       data: {
@@ -55,11 +68,12 @@ export async function PATCH(req: Request, ctx: Ctx) {
         plannedDate: data.plannedDate ? new Date(data.plannedDate) : existing.plannedDate,
         status: data.status ?? existing.status,
         notes: data.notes ?? existing.notes,
-        projectName: data.projectName !== undefined ? data.projectName : existing.projectName,
+        projectId,
+        projectName,
         incomeCategoryId,
         expenseCategoryId,
       },
-      include: { incomeCategory: true, expenseCategory: true },
+      include: { incomeCategory: true, expenseCategory: true, project: true },
     });
     return jsonData(row);
   } catch (e) {

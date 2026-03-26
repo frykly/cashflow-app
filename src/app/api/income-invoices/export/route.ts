@@ -5,6 +5,7 @@ import { incomeRemainingGross, sumIncomePaymentsGross } from "@/lib/cashflow/set
 import { formatDate } from "@/lib/format";
 import { rowsToCsv } from "@/lib/csv-string";
 import ExcelJS from "exceljs";
+import { projectDisplayLabel } from "@/lib/project-display";
 
 const sortable = new Set(["plannedIncomeDate", "issueDate", "createdAt", "paymentDueDate"]);
 
@@ -24,7 +25,7 @@ export async function GET(req: Request) {
   const rows = await prisma.incomeInvoice.findMany({
     where,
     orderBy: { [sort]: order },
-    include: { incomeCategory: true, payments: true },
+    include: { incomeCategory: true, project: true, payments: true },
   });
 
   const header = [
@@ -42,7 +43,7 @@ export async function GET(req: Request) {
     "plannedIncomeDate",
     "paymentDueDate",
     "categoryName",
-    "projectName",
+    "project",
     "recurringSource",
     "notes",
   ];
@@ -67,7 +68,7 @@ export async function GET(req: Request) {
       formatDate(r.plannedIncomeDate),
       formatDate(r.paymentDueDate),
       r.incomeCategory?.name ?? "",
-      r.projectName ?? "",
+      projectDisplayLabel(r),
       r.isGeneratedFromRecurring ? "cykliczne" : "ręczne",
       r.notes,
     ];

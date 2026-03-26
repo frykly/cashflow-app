@@ -45,16 +45,6 @@ const optionalId = z.preprocess(
   z.string().nullable().optional(),
 );
 
-/** Dowolna etykieta projektu (bez osobnego modelu); puste → null. */
-const optionalProjectName = z.preprocess(
-  (v) => {
-    if (v === "" || v === null || v === undefined) return null;
-    const s = String(v).trim();
-    return s === "" ? null : s.slice(0, 500);
-  },
-  z.union([z.string().max(500), z.null()]).optional(),
-);
-
 export const appSettingsSchema = z.object({
   mainOpeningBalance: decimalLike,
   vatOpeningBalance: decimalLike,
@@ -75,7 +65,7 @@ export const incomeInvoiceCreateSchema = z.object({
   confirmedIncome: z.boolean().optional().default(false),
   actualIncomeDate: optionalIsoNullable(),
   incomeCategoryId: optionalId,
-  projectName: optionalProjectName,
+  projectId: optionalId,
   notes: z.string().optional().default(""),
 });
 
@@ -101,7 +91,7 @@ export const costInvoiceCreateSchema = z.object({
   actualPaymentDate: optionalIsoNullable(),
   paymentSource: z.enum(["MAIN", "VAT", "VAT_THEN_MAIN"]),
   expenseCategoryId: optionalId,
-  projectName: optionalProjectName,
+  projectId: optionalId,
   notes: z.string().optional().default(""),
 });
 
@@ -119,11 +109,33 @@ export const plannedEventCreateSchema = z.object({
   status: z.enum(["PLANNED", "DONE", "CANCELLED"]),
   incomeCategoryId: optionalId,
   expenseCategoryId: optionalId,
-  projectName: optionalProjectName,
+  projectId: optionalId,
   notes: z.string().optional().default(""),
 });
 
 export const plannedEventUpdateSchema = plannedEventCreateSchema.partial();
+
+const optionalTrimmed = (max: number) =>
+  z.preprocess(
+    (v) => (v === "" || v === null || v === undefined ? null : String(v).trim()),
+    z.union([z.string().max(max), z.null()]).optional(),
+  );
+
+export const projectCreateSchema = z.object({
+  name: z.string().min(1).max(500),
+  code: optionalTrimmed(100),
+  clientName: optionalTrimmed(500),
+  description: optionalTrimmed(5000),
+  isActive: z.boolean().optional().default(true),
+});
+
+export const projectUpdateSchema = z.object({
+  name: z.string().min(1).max(500).optional(),
+  code: optionalTrimmed(100),
+  clientName: optionalTrimmed(500),
+  description: optionalTrimmed(5000),
+  isActive: z.boolean().optional(),
+});
 
 export const incomePaymentCreateSchema = z.object({
   amountGross: decimalLike,
