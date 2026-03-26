@@ -1,0 +1,148 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model AppSettings {
+  id                 Int      @id @default(1)
+  mainOpeningBalance Decimal
+  vatOpeningBalance  Decimal
+  effectiveFrom      DateTime
+  updatedAt          DateTime @updatedAt
+}
+
+model IncomeCategory {
+  id                 String                  @id @default(cuid())
+  name               String
+  slug               String                  @unique
+  invoices           IncomeInvoice[]
+  plannedAsIncome    PlannedFinancialEvent[] @relation("PlannedIncomeCategory")
+  recurringTemplates RecurringTemplate[]     @relation("RecurringIncomeCategory")
+}
+
+model ExpenseCategory {
+  id                 String                  @id @default(cuid())
+  name               String
+  slug               String                  @unique
+  invoices           CostInvoice[]
+  plannedAsExpense   PlannedFinancialEvent[] @relation("PlannedExpenseCategory")
+  recurringTemplates RecurringTemplate[]     @relation("RecurringExpenseCategory")
+}
+
+model IncomeInvoice {
+  id                 String   @id @default(cuid())
+  invoiceNumber      String
+  contractor         String
+  description        String   @default("")
+  vatRate            Int      @default(23) // 0 | 8 | 23
+  netAmount          Decimal
+  vatAmount          Decimal
+  grossAmount        Decimal
+  issueDate          DateTime
+  paymentDueDate     DateTime
+  plannedIncomeDate  DateTime
+  status             String // PLANOWANA | WYSTAWIONA | PARTIALLY_RECEIVED | OPLACONA
+  vatDestination     String // MAIN | VAT
+  confirmedIncome    Boolean  @default(false)
+  actualIncomeDate   DateTime?
+  notes              String   @default("")
+  incomeCategoryId   String?
+  incomeCategory     IncomeCategory? @relation(fields: [incomeCategoryId], references: [id], onDelete: SetNull)
+  payments           IncomeInvoicePayment[]
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+}
+
+model IncomeInvoicePayment {
+  id              String        @id @default(cuid())
+  incomeInvoiceId String
+  incomeInvoice   IncomeInvoice @relation(fields: [incomeInvoiceId], references: [id], onDelete: Cascade)
+  amountGross     Decimal
+  paymentDate     DateTime
+  notes           String        @default("")
+  createdAt       DateTime      @default(now())
+}
+
+model CostInvoice {
+  id                 String   @id @default(cuid())
+  documentNumber     String
+  supplier           String
+  description        String   @default("")
+  vatRate            Int      @default(23) // 0 | 8 | 23
+  netAmount          Decimal
+  vatAmount          Decimal
+  grossAmount        Decimal
+  documentDate       DateTime
+  paymentDueDate     DateTime
+  plannedPaymentDate DateTime
+  status             String // PLANOWANA | DO_ZAPLATY | PARTIALLY_PAID | ZAPLACONA
+  paid               Boolean  @default(false)
+  actualPaymentDate  DateTime?
+  paymentSource      String // MAIN | VAT | VAT_THEN_MAIN
+  notes              String   @default("")
+  expenseCategoryId  String?
+  expenseCategory    ExpenseCategory? @relation(fields: [expenseCategoryId], references: [id], onDelete: SetNull)
+  payments           CostInvoicePayment[]
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+}
+
+model CostInvoicePayment {
+  id            String      @id @default(cuid())
+  costInvoiceId String
+  costInvoice   CostInvoice @relation(fields: [costInvoiceId], references: [id], onDelete: Cascade)
+  amountGross   Decimal
+  paymentDate   DateTime
+  notes         String      @default("")
+  createdAt     DateTime    @default(now())
+}
+
+model RecurringTemplate {
+  id                String   @id @default(cuid())
+  title             String
+  type              String // INCOME | EXPENSE
+  // accountMode: MAIN | VAT | SPLIT
+  accountMode       String   @default("MAIN")
+  amount            Decimal
+  // amountVat: tylko SPLIT (VAT-only używa pola amount)
+  amountVat         Decimal?
+  incomeCategoryId  String?
+  expenseCategoryId String?
+  incomeCategory    IncomeCategory? @relation("RecurringIncomeCategory", fields: [incomeCategoryId], references: [id], onDelete: SetNull)
+  expenseCategory   ExpenseCategory? @relation("RecurringExpenseCategory", fields: [expenseCategoryId], references: [id], onDelete: SetNull)
+  frequency         String // WEEKLY | MONTHLY | QUARTERLY | YEARLY
+  startDate         DateTime
+  endDate           DateTime?
+  dayOfMonth        Int?
+  weekday           Int?
+  notes             String   @default("")
+  isActive          Boolean  @default(true)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  plannedEvents     PlannedFinancialEvent[]
+}
+
+model PlannedFinancialEvent {
+  id                  String             @id @default(cuid())
+  type                String // INCOME | EXPENSE
+  title               String
+  description         String             @default("")
+  amount              Decimal
+  // amountVat: część VAT (0 = legacy)
+  amountVat           Decimal            @default(0)
+  plannedDate         DateTime
+  status              String // PLANNED | DONE | CANCELLED
+  notes               String             @default("")
+  incomeCategoryId    String?
+  expenseCategoryId   String?
+  incomeCategory      IncomeCategory?    @relation("PlannedIncomeCategory", fields: [incomeCategoryId], references: [id], onDelete: SetNull)
+  expenseCategory     ExpenseCategory?   @relation("PlannedExpenseCategory", fields: [expenseCategoryId], references: [id], onDelete: SetNull)
+  recurringTemplateId String?
+  recurringTemplate   RecurringTemplate? @relation(fields: [recurringTemplateId], references: [id], onDelete: SetNull)
+  createdAt           DateTime           @default(now())
+  updatedAt           DateTime           @updatedAt
+}

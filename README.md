@@ -1,36 +1,85 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Cashflow MVP
 
-## Getting Started
+Aplikacja Next.js (App Router) z API, Prisma i SQLite do prognozy cashflow, faktur i planów.
 
-First, run the development server:
+## Uruchomienie
 
 ```bash
+npm install
+npm run db:migrate
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Otwórz [http://localhost:3000](http://localhost:3000).
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Dane i baza SQLite
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+### Gdzie są przechowywane dane
 
-## Learn More
+- **`DATABASE_URL`** w pliku `.env` (skopiuj z `.env.example`).
+- Domyślnie: `file:../data/cashflow.db` — ścieżka jest **względna do katalogu `prisma/`** (jak w dokumentacji Prisma).
+- Fizyczny plik bazy: **`data/cashflow.db`** w katalogu głównym projektu (obok `package.json`).
+- Katalog `data/` jest w repozytorium (`.gitkeep`); sam plik **`cashflow.db` jest w `.gitignore`**, żeby nie commitować lokalnych danych.
 
-To learn more about Next.js, take a look at the following resources:
+### Czy dane przetrwają restart
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+- **Tak** — Next.js (`npm run dev` / `npm run start`) **nie** tworzy ani nie czyści bazy przy starcie.
+- Dane znikają tylko wtedy, gdy **usuniesz plik** `data/cashflow.db`, uruchomisz **`prisma migrate reset`**, lub **świadomie** uruchomisz seed z **`--force`** (patrz niżej).
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+### Seed i migracje
 
-## Deploy on Vercel
+- **`npm run db:seed`** — uruchamia **tylko na żądanie** (`prisma/seed.ts`). Nigdy przy `next dev` ani `postinstall` (`postinstall` to tylko `prisma generate`).
+- W `package.json` **nie** ma już wpisu `prisma.seed`, który powodowałby automatyczne odpalanie seeda przez niektóre polecenia Prisma (np. po migracji).
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+#### Bezpieczny seed (domyślnie)
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+- **`npm run db:seed`** **bez** `--force`:
+  - Jeśli w bazie **są już jakiekolwiek dane** (ustawienia, faktury, kategorie, plany, szablony itd.) — skrypt **nic nie usuwa**, kończy z komunikatem i **zostawia Twoje dane**.
+  - Jeśli baza jest **pusta** (np. świeżo po migracji) — wgrywa **dane demo** (tak jak wcześniej pierwszy seed).
+
+#### Tryb `--force` (usuwa dane, potem demo)
+
+- **`npm run db:seed -- --force`** — **czyści** istniejące rekordy w zakresie seeda i **wstawia od nowa** dane demonstracyjne. Używaj tylko świadomie.
+
+#### Jak bezpiecznie załadować demo na „pełnej” bazie
+
+1. Zrób kopię: `npm run db:backup`
+2. `npm run db:seed -- --force`
+
+- **`prisma migrate reset`** nadal usuwa bazę i stosuje migracje od zera — używaj tylko świadomie.
+
+### Backup
+
+```bash
+npm run db:backup
+```
+
+Tworzy katalog `backups/` (jeśli nie ma) i kopiuje aktualny plik SQLite do pliku z timestampem, np. `backups/cashflow-2026-03-25T12-14-21.db`.
+
+### Przywracanie z kopii
+
+1. Zatrzymaj serwer (`npm run dev` / `npm run start`).
+2. Nadpisz plik bazy:
+
+```bash
+cp backups/cashflow-2026-03-25T12-14-21.db data/cashflow.db
+```
+
+3. Uruchom ponownie aplikację.
+
+### Migracja ze starej lokalizacji (`prisma/dev.db`)
+
+Jeśli wcześniej używałeś `DATABASE_URL="file:./dev.db"`, baza leżała w `prisma/dev.db`. Po zmianie URL na `file:../data/cashflow.db` **przenieś** dane:
+
+```bash
+mkdir -p data
+cp prisma/dev.db data/cashflow.db
+```
+
+Stary plik `prisma/dev.db` możesz usunąć, żeby nie mieć dwóch kopii.
+
+---
+
+## Learn More (Next.js)
+
+- [Next.js Documentation](https://nextjs.org/docs) — aplikacja oparta na `create-next-app`.

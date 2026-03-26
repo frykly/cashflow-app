@@ -1,0 +1,489 @@
+import type {
+  AppSettings,
+  CostInvoice,
+  CostInvoicePayment,
+  IncomeInvoice,
+  IncomeInvoicePayment,
+  PlannedFinancialEvent,
+} from "@prisma/client";
+import { addDays, isBefore, startOfDay } from "date-fns";
+import { dayKey, parseDayKey } from "./dates";
+import { decToNumber, round2 } from "./money";
+import {
+  costPaymentDeltas,
+  costPaymentDeltasVatFirst,
+  costRemainingGross,
+  incomePaymentDeltas,
+  incomeRemainingGross,
+  isCostFullyPaid,
+  isIncomeFullyPaid,
+  PAY_EPS,
+} from "./settlement";
+
+export type MovementKind = "income" | "cost" | "planned";
+
+export type CashflowMovement = {
+  kind: MovementKind;
+  refId: string;
+  label: string;
+  dayKey: string;
+  mainDelta: number;
+  vatDelta: number;
+  /** Koszt VAT_THEN_MAIN — delty liczone w prognozie wg salda VAT przed ruchem */
+  splitCost?: { invoiceId: string; amountGross: number };
+};
+
+export type ForecastDayRow = {
+  dayKey: string;
+  mainStart: number;
+  vatStart: number;
+  mainInflows: number;
+  mainOutflows: number;
+  vatInflows: number;
+  vatOutflows: number;
+  mainEnd: number;
+  vatEnd: number;
+  totalEnd: number;
+  movements: CashflowMovement[];
+};
+
+/** Pełne brutto dokumentu (jak jedna wpłata). */
+export function incomeDeltas(inv: IncomeInvoice): { main: number; vat: number } {
+  return incomePaymentDeltas(inv, decToNumber(inv.grossAmount));
+}
+
+export function costDeltas(inv: CostInvoice): { main: number; vat: number } {
+  return costPaymentDeltas(inv, decToNumber(inv.grossAmount));
+}
+
+function plannedEventMovement(ev: PlannedFinancialEvent): CashflowMovement | null {
+  if (ev.status === "CANCELLED") return null;
+  const d = ev.plannedDate;
+  const mainAmt = decToNumber(ev.amount);
+  const vatAmt = decToNumber(ev.amountVat ?? 0);
+  const sign = ev.type === "INCOME" ? 1 : -1;
+  return {
+    kind: "planned",
+    refId: ev.id,
+    label: ev.title,
+    dayKey: dayKey(d),
+    mainDelta: round2(sign * mainAmt),
+    vatDelta: round2(sign * vatAmt),
+  };
+}
+
+function appendIncomeMovements(
+  inv: IncomeInvoice & { payments: IncomeInvoicePayment[] },
+  out: CashflowMovement[],
+) {
+  const label = `Przychód ${inv.invoiceNumber}`;
+
+  if (inv.payments.length === 0 && inv.status === "OPLACONA") {
+    const d = inv.actualIncomeDate ?? inv.plannedIncomeDate;
+    const { main, vat } = incomePaymentDeltas(inv, decToNumber(inv.grossAmount));
+    out.push({
+      kind: "income",
+      refId: inv.id,
+      label,
+      dayKey: dayKey(d),
+      mainDelta: round2(main),
+      vatDelta: round2(vat),
+    });
+    return;
+  }
+
+  for (const p of inv.payments) {
+    const amt = decToNumber(p.amountGross);
+    const { main, vat } = incomePaymentDeltas(inv, amt);
+    out.push({
+      kind: "income",
+      refId: `${inv.id}-p-${p.id}`,
+      label: `${label} (wpłata)`,
+      dayKey: dayKey(p.paymentDate),
+      mainDelta: round2(main),
+      vatDelta: round2(vat),
+    });
+  }
+
+  const rem = incomeRemainingGross(inv, inv.payments);
+  if (rem > PAY_EPS) {
+    const { main, vat } = incomePaymentDeltas(inv, rem);
+    out.push({
+      kind: "income",
+      refId: `${inv.id}-rem`,
+      label: `${label} (pozostało)`,
+      dayKey: dayKey(inv.plannedIncomeDate),
+      mainDelta: round2(main),
+      vatDelta: round2(vat),
+    });
+  }
+}
+
+function pushCostMovement(
+  inv: CostInvoice & { payments: CostInvoicePayment[] },
+  amountGross: number,
+  refId: string,
+  label: string,
+  d: Date,
+  out: CashflowMovement[],
+) {
+  const dk = dayKey(d);
+  if (inv.paymentSource === "VAT_THEN_MAIN") {
+    out.push({
+      kind: "cost",
+      refId,
+      label,
+      dayKey: dk,
+      mainDelta: 0,
+      vatDelta: 0,
+      splitCost: { invoiceId: inv.id, amountGross: round2(amountGross) },
+    });
+    return;
+  }
+  const { main, vat } = costPaymentDeltas(inv, amountGross);
+  out.push({
+    kind: "cost",
+    refId,
+    label,
+    dayKey: dk,
+    mainDelta: round2(main),
+    vatDelta: round2(vat),
+  });
+}
+
+function appendCostMovements(inv: CostInvoice & { payments: CostInvoicePayment[] }, out: CashflowMovement[]) {
+  const label = `Koszt ${inv.documentNumber}`;
+
+  if (inv.payments.length === 0 && inv.paid) {
+    const d = inv.actualPaymentDate ?? inv.plannedPaymentDate;
+    pushCostMovement(inv, decToNumber(inv.grossAmount), inv.id, label, d, out);
+    return;
+  }
+
+  for (const p of inv.payments) {
+    const amt = decToNumber(p.amountGross);
+    pushCostMovement(inv, amt, `${inv.id}-p-${p.id}`, `${label} (płatność)`, p.paymentDate, out);
+  }
+
+  const rem = costRemainingGross(inv, inv.payments);
+  if (rem > PAY_EPS) {
+    pushCostMovement(inv, rem, `${inv.id}-rem`, `${label} (pozostało)`, inv.plannedPaymentDate, out);
+  }
+}
+
+export function collectMovements(
+  incomes: (IncomeInvoice & { payments: IncomeInvoicePayment[] })[],
+  costs: (CostInvoice & { payments: CostInvoicePayment[] })[],
+  events: PlannedFinancialEvent[],
+): CashflowMovement[] {
+  const out: CashflowMovement[] = [];
+
+  for (const inv of incomes) {
+    appendIncomeMovements(inv, out);
+  }
+
+  for (const inv of costs) {
+    appendCostMovements(inv, out);
+  }
+
+  for (const ev of events) {
+    const m = plannedEventMovement(ev);
+    if (m) out.push(m);
+  }
+
+  return out.sort((a, b) => {
+    if (a.dayKey !== b.dayKey) return a.dayKey.localeCompare(b.dayKey);
+    const order = { income: 0, cost: 1, planned: 2 };
+    return order[a.kind] - order[b.kind] || a.refId.localeCompare(b.refId);
+  });
+}
+
+export function costInvoiceMap(costs: CostInvoice[]): Map<string, CostInvoice> {
+  return new Map(costs.map((c) => [c.id, c]));
+}
+
+function groupByDay(movements: CashflowMovement[]): Map<string, CashflowMovement[]> {
+  const m = new Map<string, CashflowMovement[]>();
+  for (const mv of movements) {
+    const arr = m.get(mv.dayKey) ?? [];
+    arr.push(mv);
+    m.set(mv.dayKey, arr);
+  }
+  return m;
+}
+
+function previousCalendarDay(dayKeyStr: string): string {
+  const d = addDays(parseDayKey(dayKeyStr), -1);
+  return dayKey(d);
+}
+
+function enumerateDayKeys(fromKey: string, toKey: string): string[] {
+  const out: string[] = [];
+  let d = parseDayKey(fromKey);
+  const end = parseDayKey(toKey);
+  while (d.getTime() <= end.getTime()) {
+    out.push(dayKey(d));
+    d = addDays(d, 1);
+  }
+  return out;
+}
+
+function sortDayMoves(dayMoves: CashflowMovement[]): CashflowMovement[] {
+  return dayMoves.slice().sort((a, b) => {
+    const order = { income: 0, cost: 1, planned: 2 };
+    return order[a.kind] - order[b.kind] || a.refId.localeCompare(b.refId);
+  });
+}
+
+/** Saldo po zastosowaniu ruchów danego dnia (bez rozwiązywania listy do UI). */
+function applyDayMovementsRaw(
+  mainStart: number,
+  vatStart: number,
+  dayMoves: CashflowMovement[],
+  costById: Map<string, CostInvoice>,
+): { mainEnd: number; vatEnd: number } {
+  let main = mainStart;
+  let vat = vatStart;
+  for (const m of sortDayMoves(dayMoves)) {
+    if (m.splitCost) {
+      const inv = costById.get(m.splitCost.invoiceId);
+      if (!inv) continue;
+      const d = costPaymentDeltasVatFirst(inv, m.splitCost.amountGross, vat);
+      main = round2(main + d.main);
+      vat = round2(vat + d.vat);
+    } else {
+      main = round2(main + m.mainDelta);
+      vat = round2(vat + m.vatDelta);
+    }
+  }
+  return { mainEnd: main, vatEnd: vat };
+}
+
+function resolveDayMovements(
+  mainStart: number,
+  vatStart: number,
+  dayMoves: CashflowMovement[],
+  costById: Map<string, CostInvoice>,
+): {
+  mainEnd: number;
+  vatEnd: number;
+  movements: CashflowMovement[];
+  mainInflows: number;
+  mainOutflows: number;
+  vatInflows: number;
+  vatOutflows: number;
+} {
+  let main = mainStart;
+  let vat = vatStart;
+  let mainIn = 0,
+    mainOut = 0,
+    vatIn = 0,
+    vatOut = 0;
+  const movements: CashflowMovement[] = [];
+  for (const m of sortDayMoves(dayMoves)) {
+    let dm: number;
+    let dv: number;
+    if (m.splitCost) {
+      const inv = costById.get(m.splitCost.invoiceId);
+      if (!inv) continue;
+      const d = costPaymentDeltasVatFirst(inv, m.splitCost.amountGross, vat);
+      dm = d.main;
+      dv = d.vat;
+      movements.push({
+        kind: m.kind,
+        refId: m.refId,
+        label: m.label,
+        dayKey: m.dayKey,
+        mainDelta: dm,
+        vatDelta: dv,
+      });
+    } else {
+      dm = m.mainDelta;
+      dv = m.vatDelta;
+      movements.push(m);
+    }
+    main = round2(main + dm);
+    vat = round2(vat + dv);
+    if (dm > 0) mainIn += dm;
+    else mainOut += dm;
+    if (dv > 0) vatIn += dv;
+    else vatOut += dv;
+  }
+  return {
+    mainEnd: main,
+    vatEnd: vat,
+    movements,
+    mainInflows: round2(mainIn),
+    mainOutflows: round2(mainOut),
+    vatInflows: round2(vatIn),
+    vatOutflows: round2(vatOut),
+  };
+}
+
+export function endBalanceAfterDay(
+  movementsByDay: Map<string, CashflowMovement[]>,
+  settings: AppSettings | null,
+  throughDayKey: string,
+  costById: Map<string, CostInvoice>,
+): { main: number; vat: number } {
+  if (movementsByDay.size === 0 && !settings) {
+    return { main: 0, vat: 0 };
+  }
+
+  const effK = settings ? dayKey(settings.effectiveFrom) : null;
+  const movKeys = [...movementsByDay.keys()].sort();
+  const minMovK = movKeys[0] ?? null;
+
+  const candidates: string[] = [throughDayKey];
+  if (effK) candidates.push(effK);
+  if (minMovK) candidates.push(minMovK);
+  const walkStart = candidates.sort()[0]!;
+
+  const dayList = enumerateDayKeys(walkStart, throughDayKey);
+
+  let mainEnd = 0;
+  let vatEnd = 0;
+
+  for (const k of dayList) {
+    let ms: number;
+    let vs: number;
+    if (effK && k === effK) {
+      ms = decToNumber(settings!.mainOpeningBalance);
+      vs = decToNumber(settings!.vatOpeningBalance);
+    } else {
+      ms = mainEnd;
+      vs = vatEnd;
+    }
+    const { mainEnd: me, vatEnd: ve } = applyDayMovementsRaw(ms, vs, movementsByDay.get(k) ?? [], costById);
+    mainEnd = me;
+    vatEnd = ve;
+  }
+
+  return { main: mainEnd, vat: vatEnd };
+}
+
+function startOfDayBalance(
+  movementsByDay: Map<string, CashflowMovement[]>,
+  settings: AppSettings | null,
+  dayKeyStr: string,
+  costById: Map<string, CostInvoice>,
+): { main: number; vat: number } {
+  const prev = previousCalendarDay(dayKeyStr);
+  return endBalanceAfterDay(movementsByDay, settings, prev, costById);
+}
+
+export function buildDailyForecast(
+  movements: CashflowMovement[],
+  settings: AppSettings | null,
+  from: Date,
+  to: Date,
+  costById: Map<string, CostInvoice>,
+): ForecastDayRow[] {
+  const movementsByDay = groupByDay(movements);
+  const fromK = dayKey(startOfDay(from));
+  const toK = dayKey(startOfDay(to));
+  const rows: ForecastDayRow[] = [];
+
+  let cursor = startOfDay(from);
+  while (!isBefore(startOfDay(to), cursor)) {
+    const k = dayKey(cursor);
+    if (k < fromK || k > toK) break;
+
+    const rawDayMoves = movementsByDay.get(k) ?? [];
+
+    const { main: mainStart, vat: vatStart } = startOfDayBalance(movementsByDay, settings, k, costById);
+
+    const {
+      mainEnd,
+      vatEnd,
+      movements: dayMovesResolved,
+      mainInflows,
+      mainOutflows,
+      vatInflows,
+      vatOutflows,
+    } = resolveDayMovements(mainStart, vatStart, rawDayMoves, costById);
+
+    rows.push({
+      dayKey: k,
+      mainStart: round2(mainStart),
+      vatStart: round2(vatStart),
+      mainInflows,
+      mainOutflows,
+      vatInflows,
+      vatOutflows,
+      mainEnd,
+      vatEnd,
+      totalEnd: round2(mainEnd + vatEnd),
+      movements: dayMovesResolved,
+    });
+
+    cursor = addDays(cursor, 1);
+  }
+  return rows;
+}
+
+export function currentBalances(
+  movements: CashflowMovement[],
+  settings: AppSettings | null,
+  now = new Date(),
+  costById: Map<string, CostInvoice> = new Map(),
+): { main: number; vat: number; total: number } {
+  const movementsByDay = groupByDay(movements);
+  const k = dayKey(now);
+  const { main, vat } = endBalanceAfterDay(movementsByDay, settings, k, costById);
+  return { main, vat, total: round2(main + vat) };
+}
+
+export type PlannedWindowSums = {
+  plannedInflowTotal: number;
+  plannedOutflowTotal: number;
+};
+
+export function plannedMainFlowsInWindow(
+  incomes: (IncomeInvoice & { payments: IncomeInvoicePayment[] })[],
+  costs: (CostInvoice & { payments: CostInvoicePayment[] })[],
+  events: PlannedFinancialEvent[],
+  days: number,
+  now = new Date(),
+): PlannedWindowSums {
+  const start = startOfDay(now);
+  const end = addDays(start, days);
+  let plannedInflowTotal = 0;
+  let plannedOutflowTotal = 0;
+
+  for (const inv of incomes) {
+    if (isIncomeFullyPaid(inv, inv.payments)) continue;
+    const d = inv.plannedIncomeDate;
+    if (isBefore(d, start) || !isBefore(d, end)) continue;
+    const rem = incomeRemainingGross(inv, inv.payments);
+    const { main } = incomePaymentDeltas(inv, rem);
+    if (main > 0) plannedInflowTotal += main;
+  }
+
+  for (const inv of costs) {
+    if (isCostFullyPaid(inv, inv.payments)) continue;
+    const d = inv.plannedPaymentDate;
+    if (isBefore(d, start) || !isBefore(d, end)) continue;
+    const rem = costRemainingGross(inv, inv.payments);
+    const { main } = costPaymentDeltas(inv, rem);
+    if (main < 0) plannedOutflowTotal += -main;
+  }
+
+  for (const ev of events) {
+    if (ev.status !== "PLANNED") continue;
+    const d = ev.plannedDate;
+    if (isBefore(d, start) || !isBefore(d, end)) continue;
+    const total = decToNumber(ev.amount) + decToNumber(ev.amountVat ?? 0);
+    if (ev.type === "INCOME") plannedInflowTotal += total;
+    else plannedOutflowTotal += total;
+  }
+
+  return {
+    plannedInflowTotal: round2(plannedInflowTotal),
+    plannedOutflowTotal: round2(plannedOutflowTotal),
+  };
+}
+
+export function mainAccountNegativeInForecast(rows: ForecastDayRow[]): boolean {
+  return rows.some((r) => r.mainEnd < 0);
+}
