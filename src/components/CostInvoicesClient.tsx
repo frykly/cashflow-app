@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { ProjectSearchPicker } from "@/components/ProjectSearchPicker";
 import { Alert, Badge, Button, Field, Input, Modal, Select, Spinner, Textarea } from "@/components/ui";
 import { CrudToolbar } from "@/components/CrudToolbar";
 import { formatDate, formatMoney, toIsoOrNull } from "@/lib/format";
@@ -307,6 +308,44 @@ export function CostInvoicesClient() {
     setFormError(null);
     setOpen(true);
   }
+
+  const openEditRef = useRef(openEdit);
+  openEditRef.current = openEdit;
+
+  const listQs = merged.toString();
+  useEffect(() => {
+    const m = new URLSearchParams(listQs);
+    const editCost = m.get("editCost");
+    const wantNew = m.get("new") === "1";
+    const prefillPid = m.get("projectId")?.trim() || null;
+    if (!editCost && !wantNew) return;
+    let cancelled = false;
+    void (async () => {
+      if (editCost) {
+        const r = await fetch(`/api/cost-invoices/${editCost}`);
+        const j = await r.json();
+        if (cancelled) return;
+        setParams({ editCost: null, new: null, projectId: null });
+        if (r.ok) openEditRef.current(j as Row);
+        return;
+      }
+      if (wantNew) {
+        if (cancelled) return;
+        setParams({ editCost: null, new: null, projectId: null });
+        plannedPaymentManualRef.current = false;
+        setAmountEntryMode("net");
+        setVatOnlyPayment(false);
+        const d = emptyDraft();
+        if (prefillPid) d.projectId = prefillPid;
+        setEditing(d);
+        setFormError(null);
+        setOpen(true);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [listQs, setParams]);
 
   async function refreshPaymentsForInvoice(id: string) {
     const r = await fetch(`/api/cost-invoices/${id}`);
@@ -881,22 +920,11 @@ export function CostInvoicesClient() {
             />
           </Field>
           <Field label="Projekt">
-            <Select
-              value={editing.projectId ?? ""}
-              onChange={(e) => setEditing({ ...editing, projectId: e.target.value || null })}
+            <ProjectSearchPicker
+              value={editing.projectId ?? null}
+              onChange={(id) => setEditing({ ...editing, projectId: id })}
               disabled={saving}
-            >
-              <option value="">(brak)</option>
-              {projects
-                .slice()
-                .sort((a, b) => Number(b.isActive) - Number(a.isActive) || a.name.localeCompare(b.name, "pl"))
-                .map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.name}
-                    {!p.isActive ? " (nieaktywny)" : ""}
-                  </option>
-                ))}
-            </Select>
+            />
             {!editing.projectId && (editing.projectName ?? "").trim() ? (
               <p className="mt-1 text-xs text-amber-700 dark:text-amber-400">
                 Legacy: „{(editing.projectName ?? "").trim()}” — wybierz projekt z listy, aby powiązać rekord.

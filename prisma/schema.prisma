@@ -16,17 +16,25 @@ model AppSettings {
 }
 
 model Project {
-  id               String                  @id @default(cuid())
-  name             String
-  code             String?
-  clientName       String?
-  description      String?
-  isActive         Boolean                 @default(true)
-  createdAt        DateTime                @default(now())
-  updatedAt        DateTime                @updatedAt
-  costInvoices     CostInvoice[]
-  incomeInvoices   IncomeInvoice[]
-  plannedEvents    PlannedFinancialEvent[]
+  id                 String                   @id @default(cuid())
+  name               String
+  code               String?
+  clientName         String?
+  description        String?
+  isActive           Boolean                  @default(true)
+  /// NEW | IN_PROGRESS | FOR_HANDOFF | COMPLETED
+  lifecycleStatus    String?
+  /// NONE | TO_SETTLE | WAITING_FOR_SETTLEMENT | DPW_TODO | SETTLED | SETTLED_WITH_GAPS | SETTLED_BLOCKED
+  settlementStatus   String?
+  plannedRevenueNet  Decimal?
+  plannedCostNet     Decimal?
+  startDate          DateTime?
+  endDate            DateTime?
+  createdAt          DateTime                 @default(now())
+  updatedAt          DateTime                 @updatedAt
+  costInvoices       CostInvoice[]
+  incomeInvoices     IncomeInvoice[]
+  plannedEvents      PlannedFinancialEvent[]
 }
 
 model IncomeCategory {

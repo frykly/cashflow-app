@@ -7,6 +7,37 @@ import type { Prisma } from "@prisma/client";
 
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
+
+  if (searchParams.get("picker") === "1") {
+    const qPicker = searchParams.get("q")?.trim() ?? "";
+    const selectedId = searchParams.get("selectedId")?.trim();
+
+    const where: Prisma.ProjectWhereInput = qPicker
+      ? {
+          isActive: true,
+          OR: [
+            { name: { contains: qPicker } },
+            { code: { contains: qPicker } },
+            { clientName: { contains: qPicker } },
+          ],
+        }
+      : { isActive: true };
+
+    let rows = await prisma.project.findMany({
+      where,
+      orderBy: { name: "asc" },
+      take: 60,
+    });
+
+    if (selectedId) {
+      const extra = await prisma.project.findUnique({ where: { id: selectedId } });
+      if (extra && !rows.some((r) => r.id === extra.id)) {
+        rows = [extra, ...rows];
+      }
+    }
+    return jsonData(rows);
+  }
+
   const q = searchParams.get("q")?.trim();
   const active = searchParams.get("active")?.trim();
 
@@ -48,6 +79,12 @@ export async function POST(req: Request) {
         clientName: data.clientName?.trim() || null,
         description: data.description?.trim() || null,
         isActive: data.isActive ?? true,
+        lifecycleStatus: data.lifecycleStatus ?? null,
+        settlementStatus: data.settlementStatus ?? null,
+        plannedRevenueNet: data.plannedRevenueNet ?? null,
+        plannedCostNet: data.plannedCostNet ?? null,
+        startDate: data.startDate ? new Date(data.startDate) : null,
+        endDate: data.endDate ? new Date(data.endDate) : null,
       },
     });
     return jsonData(row, { status: 201 });

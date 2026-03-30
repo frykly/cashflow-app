@@ -121,12 +121,44 @@ const optionalTrimmed = (max: number) =>
     z.union([z.string().max(max), z.null()]).optional(),
   );
 
+const projectLifecycleEnum = z.enum(["NEW", "IN_PROGRESS", "FOR_HANDOFF", "COMPLETED"]);
+const projectSettlementEnum = z.enum([
+  "NONE",
+  "TO_SETTLE",
+  "WAITING_FOR_SETTLEMENT",
+  "DPW_TODO",
+  "SETTLED",
+  "SETTLED_WITH_GAPS",
+  "SETTLED_BLOCKED",
+]);
+
+const optionalLifecycleStatus = z.preprocess(
+  (v) => (v === "" || v === null || v === undefined ? null : v),
+  z.union([projectLifecycleEnum, z.null()]).optional(),
+);
+
+const optionalSettlementStatus = z.preprocess(
+  (v) => (v === "" || v === null || v === undefined ? null : v),
+  z.union([projectSettlementEnum, z.null()]).optional(),
+);
+
+const optionalPlannedDecimal = z.preprocess(
+  (v) => (v === "" || v === null || v === undefined ? null : v),
+  z.union([decimalLike, z.null()]).optional(),
+);
+
 export const projectCreateSchema = z.object({
   name: z.string().min(1).max(500),
   code: optionalTrimmed(100),
   clientName: optionalTrimmed(500),
   description: optionalTrimmed(5000),
   isActive: z.boolean().optional().default(true),
+  lifecycleStatus: optionalLifecycleStatus,
+  settlementStatus: optionalSettlementStatus,
+  plannedRevenueNet: optionalPlannedDecimal,
+  plannedCostNet: optionalPlannedDecimal,
+  startDate: optionalIsoNullable(),
+  endDate: optionalIsoNullable(),
 });
 
 export const projectUpdateSchema = z.object({
@@ -135,6 +167,12 @@ export const projectUpdateSchema = z.object({
   clientName: optionalTrimmed(500),
   description: optionalTrimmed(5000),
   isActive: z.boolean().optional(),
+  lifecycleStatus: optionalLifecycleStatus,
+  settlementStatus: optionalSettlementStatus,
+  plannedRevenueNet: optionalPlannedDecimal,
+  plannedCostNet: optionalPlannedDecimal,
+  startDate: optionalIsoNullable(),
+  endDate: optionalIsoNullable(),
 });
 
 export const incomePaymentCreateSchema = z.object({

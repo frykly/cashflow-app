@@ -35,6 +35,22 @@ export async function PATCH(req: Request, ctx: Ctx) {
         clientName: data.clientName !== undefined ? (data.clientName?.trim() || null) : existing.clientName,
         description: data.description !== undefined ? (data.description?.trim() || null) : existing.description,
         isActive: data.isActive !== undefined ? data.isActive : existing.isActive,
+        lifecycleStatus:
+          data.lifecycleStatus !== undefined ? data.lifecycleStatus : existing.lifecycleStatus,
+        settlementStatus:
+          data.settlementStatus !== undefined ? data.settlementStatus : existing.settlementStatus,
+        plannedRevenueNet:
+          data.plannedRevenueNet !== undefined ? data.plannedRevenueNet : existing.plannedRevenueNet,
+        plannedCostNet:
+          data.plannedCostNet !== undefined ? data.plannedCostNet : existing.plannedCostNet,
+        startDate:
+          data.startDate === undefined
+            ? existing.startDate
+            : data.startDate
+              ? new Date(data.startDate)
+              : null,
+        endDate:
+          data.endDate === undefined ? existing.endDate : data.endDate ? new Date(data.endDate) : null,
       },
     });
 
