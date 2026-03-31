@@ -66,6 +66,8 @@ export const incomeInvoiceCreateSchema = z.object({
   actualIncomeDate: optionalIsoNullable(),
   incomeCategoryId: optionalId,
   projectId: optionalId,
+  /** Po utworzeniu faktury — oznacza zdarzenie planowane jako CONVERTED (tylko PLANNED + typ INCOME). */
+  sourcePlannedEventId: optionalId,
   notes: z.string().optional().default(""),
 });
 
@@ -92,6 +94,8 @@ export const costInvoiceCreateSchema = z.object({
   paymentSource: z.enum(["MAIN", "VAT", "VAT_THEN_MAIN"]),
   expenseCategoryId: optionalId,
   projectId: optionalId,
+  /** Po utworzeniu faktury — oznacza zdarzenie planowane jako CONVERTED (tylko PLANNED + typ EXPENSE). */
+  sourcePlannedEventId: optionalId,
   notes: z.string().optional().default(""),
 });
 

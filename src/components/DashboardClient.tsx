@@ -8,6 +8,12 @@ import { readApiErrorBody } from "@/lib/api-client";
 
 type FlowRow = { kind: string; id: string; date: string; label: string; mainAmount: number };
 
+function flowRowEditHref(r: FlowRow): string {
+  if (r.kind === "income") return `/income-invoices?editIncome=${r.id}`;
+  if (r.kind === "cost") return `/cost-invoices?editCost=${r.id}`;
+  return `/planned-events?editPlanned=${r.id}`;
+}
+
 type OverdueIncome = {
   id: string;
   invoiceNumber: string;
@@ -217,7 +223,7 @@ export function DashboardClient() {
                 {data.overdue.incomes.map((i) => (
                   <li key={i.id} className="flex flex-col gap-0.5 border-b border-amber-200/60 pb-2 last:border-0 dark:border-amber-900/40">
                     <Link
-                      href={`/income-invoices?overdue=1&q=${encodeURIComponent(i.invoiceNumber)}`}
+                      href={`/income-invoices?editIncome=${i.id}`}
                       className="font-medium text-zinc-900 underline dark:text-zinc-100"
                     >
                       {i.label}
@@ -236,7 +242,7 @@ export function DashboardClient() {
                 {data.overdue.costs.map((c) => (
                   <li key={c.id} className="flex flex-col gap-0.5 border-b border-amber-200/60 pb-2 last:border-0 dark:border-amber-900/40">
                     <Link
-                      href={`/cost-invoices?overdue=1&q=${encodeURIComponent(c.documentNumber)}`}
+                      href={`/cost-invoices?editCost=${c.id}`}
                       className="font-medium text-zinc-900 underline dark:text-zinc-100"
                     >
                       {c.label}
@@ -255,7 +261,7 @@ export function DashboardClient() {
                 {data.overdue.planned.map((p) => (
                   <li key={p.id} className="flex flex-col gap-0.5 border-b border-amber-200/60 pb-2 last:border-0 dark:border-amber-900/40">
                     <Link
-                      href={`/planned-events?overdue=1&q=${encodeURIComponent(p.title)}`}
+                      href={`/planned-events?editPlanned=${p.id}`}
                       className="font-medium text-zinc-900 underline dark:text-zinc-100"
                     >
                       {p.title}
@@ -279,14 +285,19 @@ export function DashboardClient() {
               <li className="px-4 py-6 text-center text-sm text-zinc-500">Brak zaplanowanych wpływów w tym oknie.</li>
             )}
             {data.upcomingInflows7.map((r) => (
-              <li key={`${r.kind}-${r.id}`} className="flex items-center justify-between gap-4 px-4 py-3 text-sm">
-                <div className="min-w-0">
-                  <div className="truncate font-medium text-zinc-900 dark:text-zinc-100">{r.label}</div>
-                  <div className="text-zinc-500">{formatDate(r.date)}</div>
-                </div>
-                <div className="shrink-0 tabular-nums font-medium text-emerald-700 dark:text-emerald-400">
-                  +{formatMoney(r.mainAmount)}
-                </div>
+              <li key={`${r.kind}-${r.id}`} className="text-sm">
+                <Link
+                  href={flowRowEditHref(r)}
+                  className="flex items-center justify-between gap-4 px-4 py-3 transition hover:bg-zinc-50 dark:hover:bg-zinc-800/80"
+                >
+                  <div className="min-w-0">
+                    <div className="truncate font-medium text-zinc-900 dark:text-zinc-100">{r.label}</div>
+                    <div className="text-zinc-500">{formatDate(r.date)}</div>
+                  </div>
+                  <div className="shrink-0 tabular-nums font-medium text-emerald-700 dark:text-emerald-400">
+                    +{formatMoney(r.mainAmount)}
+                  </div>
+                </Link>
               </li>
             ))}
           </ul>
@@ -298,12 +309,17 @@ export function DashboardClient() {
               <li className="px-4 py-6 text-center text-sm text-zinc-500">Brak zaplanowanych wydatków w tym oknie.</li>
             )}
             {data.upcomingOutflows7.map((r) => (
-              <li key={`${r.kind}-${r.id}`} className="flex items-center justify-between gap-4 px-4 py-3 text-sm">
-                <div className="min-w-0">
-                  <div className="truncate font-medium text-zinc-900 dark:text-zinc-100">{r.label}</div>
-                  <div className="text-zinc-500">{formatDate(r.date)}</div>
-                </div>
-                <div className="shrink-0 tabular-nums font-medium text-red-700 dark:text-red-400">{formatMoney(r.mainAmount)}</div>
+              <li key={`${r.kind}-${r.id}`} className="text-sm">
+                <Link
+                  href={flowRowEditHref(r)}
+                  className="flex items-center justify-between gap-4 px-4 py-3 transition hover:bg-zinc-50 dark:hover:bg-zinc-800/80"
+                >
+                  <div className="min-w-0">
+                    <div className="truncate font-medium text-zinc-900 dark:text-zinc-100">{r.label}</div>
+                    <div className="text-zinc-500">{formatDate(r.date)}</div>
+                  </div>
+                  <div className="shrink-0 tabular-nums font-medium text-red-700 dark:text-red-400">{formatMoney(r.mainAmount)}</div>
+                </Link>
               </li>
             ))}
           </ul>
@@ -318,14 +334,19 @@ export function DashboardClient() {
               <li className="px-4 py-6 text-center text-sm text-zinc-500">Brak zaplanowanych wpływów w tym oknie.</li>
             )}
             {data.upcomingInflows.map((r) => (
-              <li key={`${r.kind}-${r.id}`} className="flex items-center justify-between gap-4 px-4 py-3 text-sm">
-                <div className="min-w-0">
-                  <div className="truncate font-medium text-zinc-900 dark:text-zinc-100">{r.label}</div>
-                  <div className="text-zinc-500">{formatDate(r.date)}</div>
-                </div>
-                <div className="shrink-0 tabular-nums font-medium text-emerald-700 dark:text-emerald-400">
-                  +{formatMoney(r.mainAmount)}
-                </div>
+              <li key={`${r.kind}-${r.id}`} className="text-sm">
+                <Link
+                  href={flowRowEditHref(r)}
+                  className="flex items-center justify-between gap-4 px-4 py-3 transition hover:bg-zinc-50 dark:hover:bg-zinc-800/80"
+                >
+                  <div className="min-w-0">
+                    <div className="truncate font-medium text-zinc-900 dark:text-zinc-100">{r.label}</div>
+                    <div className="text-zinc-500">{formatDate(r.date)}</div>
+                  </div>
+                  <div className="shrink-0 tabular-nums font-medium text-emerald-700 dark:text-emerald-400">
+                    +{formatMoney(r.mainAmount)}
+                  </div>
+                </Link>
               </li>
             ))}
           </ul>
@@ -337,12 +358,17 @@ export function DashboardClient() {
               <li className="px-4 py-6 text-center text-sm text-zinc-500">Brak zaplanowanych wydatków w tym oknie.</li>
             )}
             {data.upcomingOutflows.map((r) => (
-              <li key={`${r.kind}-${r.id}`} className="flex items-center justify-between gap-4 px-4 py-3 text-sm">
-                <div className="min-w-0">
-                  <div className="truncate font-medium text-zinc-900 dark:text-zinc-100">{r.label}</div>
-                  <div className="text-zinc-500">{formatDate(r.date)}</div>
-                </div>
-                <div className="shrink-0 tabular-nums font-medium text-red-700 dark:text-red-400">{formatMoney(r.mainAmount)}</div>
+              <li key={`${r.kind}-${r.id}`} className="text-sm">
+                <Link
+                  href={flowRowEditHref(r)}
+                  className="flex items-center justify-between gap-4 px-4 py-3 transition hover:bg-zinc-50 dark:hover:bg-zinc-800/80"
+                >
+                  <div className="min-w-0">
+                    <div className="truncate font-medium text-zinc-900 dark:text-zinc-100">{r.label}</div>
+                    <div className="text-zinc-500">{formatDate(r.date)}</div>
+                  </div>
+                  <div className="shrink-0 tabular-nums font-medium text-red-700 dark:text-red-400">{formatMoney(r.mainAmount)}</div>
+                </Link>
               </li>
             ))}
           </ul>

@@ -1,15 +1,18 @@
 "use client";
 
+import Link from "next/link";
 import { Fragment, useEffect, useState } from "react";
 import { Alert, Button, Spinner } from "@/components/ui";
 import { formatMoney, safeFormatDayKey } from "@/lib/format";
 import { readApiErrorBody } from "@/lib/api-client";
+import { hrefForForecastMovement } from "@/lib/forecast-movement-link";
 
 type Movement = {
   kind: string;
   label: string;
   mainDelta: number;
   vatDelta: number;
+  refId?: string;
 };
 
 function startOfCurrentMonthYmd(): string {
@@ -289,17 +292,40 @@ export function ForecastClient() {
                             <span className="italic">Brak ruchów tego dnia.</span>
                           ) : (
                             <ul className="list-inside list-disc space-y-1">
-                              {r.movements.map((m, i) => (
-                                <li key={`${m.label}-${i}`}>
-                                  <span className="font-medium text-zinc-800 dark:text-zinc-200">{m.label}</span>
-                                  {" — "}
-                                  <span className="tabular-nums">
-                                    MAIN {m.mainDelta >= 0 ? "+" : ""}
-                                    {formatMoney(m.mainDelta)}, VAT {m.vatDelta >= 0 ? "+" : ""}
-                                    {formatMoney(m.vatDelta)}
-                                  </span>
-                                </li>
-                              ))}
+                              {r.movements.map((m, i) => {
+                                const href = hrefForForecastMovement({
+                                  kind: m.kind,
+                                  refId: m.refId ?? "",
+                                });
+                                const body = (
+                                  <>
+                                    <span className="font-medium text-zinc-800 dark:text-zinc-200">{m.label}</span>
+                                    {" — "}
+                                    <span className="tabular-nums">
+                                      MAIN {m.mainDelta >= 0 ? "+" : ""}
+                                      {formatMoney(m.mainDelta)}, VAT {m.vatDelta >= 0 ? "+" : ""}
+                                      {formatMoney(m.vatDelta)}
+                                    </span>
+                                    {!href && (
+                                      <span className="ml-1 text-zinc-400 italic dark:text-zinc-500">(brak linku)</span>
+                                    )}
+                                  </>
+                                );
+                                return (
+                                  <li key={`${m.kind}-${m.refId ?? ""}-${i}`}>
+                                    {href ? (
+                                      <Link
+                                        href={href}
+                                        className="-mx-1 block rounded-md px-1 py-0.5 text-left text-inherit no-underline transition-colors hover:bg-zinc-100 hover:underline dark:hover:bg-zinc-800"
+                                      >
+                                        {body}
+                                      </Link>
+                                    ) : (
+                                      <span className="block">{body}</span>
+                                    )}
+                                  </li>
+                                );
+                              })}
                             </ul>
                           )}
                         </td>

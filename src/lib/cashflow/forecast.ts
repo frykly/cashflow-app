@@ -57,7 +57,7 @@ export function costDeltas(inv: CostInvoice): { main: number; vat: number } {
 }
 
 function plannedEventMovement(ev: PlannedFinancialEvent): CashflowMovement | null {
-  if (ev.status === "CANCELLED") return null;
+  if (ev.status === "CANCELLED" || ev.status === "CONVERTED") return null;
   const d = ev.plannedDate;
   const mainAmt = decToNumber(ev.amount);
   const vatAmt = decToNumber(ev.amountVat ?? 0);

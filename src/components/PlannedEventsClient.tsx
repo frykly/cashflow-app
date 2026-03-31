@@ -32,6 +32,8 @@ type Row = {
   projectId?: string | null;
   project?: { id: string; name: string } | null;
   projectName?: string | null;
+  convertedToIncomeInvoice?: { id: string; invoiceNumber: string } | null;
+  convertedToCostInvoice?: { id: string; documentNumber: string } | null;
 };
 
 type Draft = Omit<Row, "id"> & { id?: string };
@@ -57,6 +59,7 @@ function emptyDraft(): Draft {
 }
 
 function statusBadge(s: string) {
+  if (s === "CONVERTED") return <Badge variant="success">Skonwertowane na fakturę</Badge>;
   if (s === "DONE") return <Badge variant="success">Zrealizowane</Badge>;
   if (s === "CANCELLED") return <Badge variant="danger">Anulowane</Badge>;
   return <Badge variant="warning">Zaplanowane</Badge>;
@@ -242,18 +245,42 @@ export function PlannedEventsClient() {
         const r = await fetch(`/api/planned-events/${editPlanned}`);
         const j = await r.json();
         if (cancelled) return;
-        setParams({ editPlanned: null, new: null, projectId: null });
         if (r.ok) openEditRef.current(j as Row);
+        queueMicrotask(() =>
+          setParams({
+            editPlanned: null,
+            new: null,
+            projectId: null,
+            clientName: null,
+            projectName: null,
+            projectCode: null,
+          }),
+        );
         return;
       }
       if (wantNew) {
         if (cancelled) return;
-        setParams({ editPlanned: null, new: null, projectId: null });
         const d = emptyDraft();
         if (prefillPid) d.projectId = prefillPid;
+        const pn = m.get("projectName")?.trim();
+        const pc = m.get("projectCode")?.trim();
+        if (pn || pc) {
+          d.title = pn ? `Projekt: ${pn}` : d.title;
+          if (pc) d.description = d.description ? `${d.description} · Numer zlecenia: ${pc}` : `Numer zlecenia: ${pc}`;
+        }
         setEditing(d);
         setFormError(null);
         setOpen(true);
+        queueMicrotask(() =>
+          setParams({
+            editPlanned: null,
+            new: null,
+            projectId: null,
+            clientName: null,
+            projectName: null,
+            projectCode: null,
+          }),
+        );
       }
     })();
     return () => {
@@ -340,6 +367,7 @@ export function PlannedEventsClient() {
   }
 
   const overdueFilterActive = merged.get("overdue") === "1";
+  const formLocked = editing.status === "CONVERTED";
 
   return (
     <div className="space-y-6">
@@ -591,17 +619,52 @@ export function PlannedEventsClient() {
       >
         <form onSubmit={save} className="space-y-3">
           {formError && <Alert variant="error">{formError}</Alert>}
+          {formLocked ? (
+            <Alert variant="info">
+              To zdarzenie zostało skonwertowane na fakturę — edycja jest wyłączona.
+              {editing.convertedToIncomeInvoice ? (
+                <span className="mt-2 block">
+                  <Link
+                    href={`/income-invoices?editIncome=${editing.convertedToIncomeInvoice.id}`}
+                    className="font-medium underline"
+                  >
+                    Otwórz fakturę przychodową {editing.convertedToIncomeInvoice.invoiceNumber}
+                  </Link>
+                </span>
+              ) : null}
+              {editing.convertedToCostInvoice ? (
+                <span className="mt-2 block">
+                  <Link
+                    href={`/cost-invoices?editCost=${editing.convertedToCostInvoice.id}`}
+                    className="font-medium underline"
+                  >
+                    Otwórz fakturę kosztową {editing.convertedToCostInvoice.documentNumber}
+                  </Link>
+                </span>
+              ) : null}
+            </Alert>
+          ) : null}
           <Field label="Tytuł">
-            <Input value={editing.title} onChange={(e) => setEditing({ ...editing, title: e.target.value })} required disabled={saving} />
+            <Input
+              value={editing.title}
+              onChange={(e) => setEditing({ ...editing, title: e.target.value })}
+              required
+              disabled={saving || formLocked}
+            />
           </Field>
           <Field label="Opis">
-            <Textarea rows={2} value={editing.description} onChange={(e) => setEditing({ ...editing, description: e.target.value })} disabled={saving} />
+            <Textarea
+              rows={2}
+              value={editing.description}
+              onChange={(e) => setEditing({ ...editing, description: e.target.value })}
+              disabled={saving || formLocked}
+            />
           </Field>
           <Field label="Projekt">
             <ProjectSearchPicker
               value={editing.projectId ?? null}
               onChange={(id) => setEditing({ ...editing, projectId: id })}
-              disabled={saving}
+              disabled={saving || formLocked}
             />
             {!editing.projectId && (editing.projectName ?? "").trim() ? (
               <p className="mt-1 text-xs text-amber-700 dark:text-amber-400">
@@ -622,21 +685,26 @@ export function PlannedEventsClient() {
                     expenseCategoryId: t === "EXPENSE" ? editing.expenseCategoryId : null,
                   });
                 }}
-                disabled={saving}
+                disabled={saving || formLocked}
               >
                 <option value="INCOME">Wpływ (INCOME)</option>
                 <option value="EXPENSE">Wydatek (EXPENSE)</option>
               </Select>
             </Field>
             <Field label="Kwota — konto główne (PLN)">
-              <Input value={editing.amount} onChange={(e) => setEditing({ ...editing, amount: e.target.value })} required disabled={saving} />
+              <Input
+                value={editing.amount}
+                onChange={(e) => setEditing({ ...editing, amount: e.target.value })}
+                required
+                disabled={saving || formLocked}
+              />
             </Field>
           </div>
           <Field label="Kwota — konto VAT (PLN, opcjonalnie)">
             <Input
               value={editing.amountVat ?? "0"}
               onChange={(e) => setEditing({ ...editing, amountVat: e.target.value })}
-              disabled={saving}
+              disabled={saving || formLocked}
               placeholder="0"
             />
           </Field>
@@ -645,7 +713,7 @@ export function PlannedEventsClient() {
               <Select
                 value={editing.incomeCategoryId ?? ""}
                 onChange={(e) => setEditing({ ...editing, incomeCategoryId: e.target.value || null })}
-                disabled={saving}
+                disabled={saving || formLocked}
               >
                 <option value="">(brak)</option>
                 {incomeCats.map((c) => (
@@ -660,7 +728,7 @@ export function PlannedEventsClient() {
               <Select
                 value={editing.expenseCategoryId ?? ""}
                 onChange={(e) => setEditing({ ...editing, expenseCategoryId: e.target.value || null })}
-                disabled={saving}
+                disabled={saving || formLocked}
               >
                 <option value="">(brak)</option>
                 {expenseCats.map((c) => (
@@ -677,21 +745,52 @@ export function PlannedEventsClient() {
               value={editing.plannedDate ?? ""}
               onChange={(e) => setEditing({ ...editing, plannedDate: e.target.value })}
               required
-              disabled={saving}
+              disabled={saving || formLocked}
             />
           </Field>
           <Field label="Status">
-            <Select value={editing.status} onChange={(e) => setEditing({ ...editing, status: e.target.value })} disabled={saving}>
-              <option value="PLANNED">Zaplanowane — uwzględnij w prognozie</option>
-              <option value="DONE">Zrealizowane</option>
-              <option value="CANCELLED">Anulowane — pomiń</option>
-            </Select>
+            {editing.status === "CONVERTED" ? (
+              <p className="rounded-lg border border-emerald-200 bg-emerald-50/80 px-3 py-2 text-sm text-emerald-900 dark:border-emerald-900/50 dark:bg-emerald-950/40 dark:text-emerald-100">
+                Skonwertowane na fakturę — edycja statusu jest zablokowana.
+              </p>
+            ) : (
+              <Select value={editing.status} onChange={(e) => setEditing({ ...editing, status: e.target.value })} disabled={saving || formLocked}>
+                <option value="PLANNED">Zaplanowane — uwzględnij w prognozie</option>
+                <option value="DONE">Zrealizowane</option>
+                <option value="CANCELLED">Anulowane — pomiń</option>
+              </Select>
+            )}
           </Field>
+          {editing.id && editing.status === "PLANNED" ? (
+            <div className="rounded-lg border border-indigo-200 bg-indigo-50/60 p-3 dark:border-indigo-900/40 dark:bg-indigo-950/30">
+              <p className="text-xs font-medium text-indigo-900 dark:text-indigo-200">Konwersja na fakturę</p>
+              <p className="mt-1 text-xs text-indigo-800/90 dark:text-indigo-300/90">
+                Otworzy formularz z uzupełnionymi danymi; po zapisaniu faktury to zdarzenie zostanie oznaczone jako skonwertowane.
+              </p>
+              <div className="mt-2 flex flex-wrap gap-2">
+                {editing.type === "INCOME" ? (
+                  <Link
+                    href={`/income-invoices?new=1&convertPlannedEventId=${editing.id}`}
+                    className="inline-flex items-center rounded-lg border border-indigo-300 bg-white px-3 py-1.5 text-xs font-medium text-indigo-900 hover:bg-indigo-50 dark:border-indigo-700 dark:bg-zinc-900 dark:text-indigo-100 dark:hover:bg-zinc-800"
+                  >
+                    Utwórz fakturę przychodową
+                  </Link>
+                ) : (
+                  <Link
+                    href={`/cost-invoices?new=1&convertPlannedEventId=${editing.id}`}
+                    className="inline-flex items-center rounded-lg border border-indigo-300 bg-white px-3 py-1.5 text-xs font-medium text-indigo-900 hover:bg-indigo-50 dark:border-indigo-700 dark:bg-zinc-900 dark:text-indigo-100 dark:hover:bg-zinc-800"
+                  >
+                    Utwórz fakturę kosztową
+                  </Link>
+                )}
+              </div>
+            </div>
+          ) : null}
           <Field label="Notatki">
-            <Textarea rows={2} value={editing.notes} onChange={(e) => setEditing({ ...editing, notes: e.target.value })} disabled={saving} />
+            <Textarea rows={2} value={editing.notes} onChange={(e) => setEditing({ ...editing, notes: e.target.value })} disabled={saving || formLocked} />
           </Field>
           <div className="flex flex-wrap gap-2 border-t border-zinc-200 pt-4 dark:border-zinc-700">
-            <Button type="submit" disabled={saving}>
+            <Button type="submit" disabled={saving || formLocked}>
               {saving ? <Spinner className="!size-4" /> : null}
               Zapisz
             </Button>

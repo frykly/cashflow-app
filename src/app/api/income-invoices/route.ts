@@ -7,6 +7,7 @@ import { buildIncomeWhere } from "@/lib/prisma-list-filters";
 import { ensureClosingIncomePaymentIfFullySettled } from "@/lib/cashflow/invoice-auto-settlement";
 import { syncIncomeInvoiceStatus } from "@/lib/invoice-status-sync";
 import { resolveProjectFields } from "@/lib/project-persist";
+import { finalizePlannedToIncomeConversion } from "@/lib/planned-event-conversion";
 import { ZodError } from "zod";
 
 const sortable = new Set(["plannedIncomeDate", "issueDate", "createdAt", "paymentDueDate"]);
@@ -46,28 +47,43 @@ export async function POST(req: Request) {
     } catch {
       return jsonError("Nieprawidłowy projekt", 400);
     }
-    const row = await prisma.incomeInvoice.create({
-      data: {
-        invoiceNumber: data.invoiceNumber,
-        contractor: data.contractor,
-        description: data.description ?? "",
-        vatRate: rate,
-        netAmount: data.netAmount,
-        vatAmount: vat,
-        grossAmount: gross,
-        issueDate: new Date(data.issueDate),
-        paymentDueDate: new Date(data.paymentDueDate),
-        plannedIncomeDate: new Date(data.plannedIncomeDate),
-        status: data.status,
-        vatDestination: data.vatDestination,
-        confirmedIncome: data.confirmedIncome ?? false,
-        actualIncomeDate: data.actualIncomeDate ? new Date(data.actualIncomeDate) : null,
-        notes: data.notes ?? "",
-        projectId: pf.projectId,
-        projectName: pf.projectName,
-        incomeCategoryId: data.incomeCategoryId ?? null,
-      },
-      include: { incomeCategory: true, project: true, payments: true },
+    const row = await prisma.$transaction(async (tx) => {
+      const created = await tx.incomeInvoice.create({
+        data: {
+          invoiceNumber: data.invoiceNumber,
+          contractor: data.contractor,
+          description: data.description ?? "",
+          vatRate: rate,
+          netAmount: data.netAmount,
+          vatAmount: vat,
+          grossAmount: gross,
+          issueDate: new Date(data.issueDate),
+          paymentDueDate: new Date(data.paymentDueDate),
+          plannedIncomeDate: new Date(data.plannedIncomeDate),
+          status: data.status,
+          vatDestination: data.vatDestination,
+          confirmedIncome: data.confirmedIncome ?? false,
+          actualIncomeDate: data.actualIncomeDate ? new Date(data.actualIncomeDate) : null,
+          notes: data.notes ?? "",
+          projectId: pf.projectId,
+          projectName: pf.projectName,
+          incomeCategoryId: data.incomeCategoryId ?? null,
+        },
+        include: { incomeCategory: true, project: true, payments: true },
+      });
+      if (data.sourcePlannedEventId) {
+        try {
+          await finalizePlannedToIncomeConversion(tx, data.sourcePlannedEventId, created.id);
+        } catch (e) {
+          const code = e instanceof Error ? e.message : "";
+          if (code === "PLANNED_NOT_FOUND") throw new Error("INVALID_PLANNED_EVENT");
+          if (code === "PLANNED_TYPE_MISMATCH") throw new Error("PLANNED_TYPE_MISMATCH");
+          if (code === "PLANNED_NOT_ACTIVE") throw new Error("PLANNED_NOT_ACTIVE");
+          if (code === "PLANNED_ALREADY_CONVERTED") throw new Error("PLANNED_ALREADY_CONVERTED");
+          throw e;
+        }
+      }
+      return created;
     });
     await ensureClosingIncomePaymentIfFullySettled(row.id);
     await syncIncomeInvoiceStatus(row.id);
@@ -78,6 +94,12 @@ export async function POST(req: Request) {
     return jsonData(fresh ?? row, { status: 201 });
   } catch (e) {
     if (e instanceof ZodError) return zodErrorResponse(e);
+    if (e instanceof Error) {
+      if (e.message === "INVALID_PLANNED_EVENT") return jsonError("Nie znaleziono zdarzenia planowanego.", 400);
+      if (e.message === "PLANNED_TYPE_MISMATCH") return jsonError("Zdarzenie nie jest typu przychód.", 400);
+      if (e.message === "PLANNED_NOT_ACTIVE") return jsonError("Zdarzenie nie jest aktywne (tylko „Zaplanowane”).", 400);
+      if (e.message === "PLANNED_ALREADY_CONVERTED") return jsonError("Zdarzenie zostało już skonwertowane.", 409);
+    }
     throw e;
   }
 }

@@ -10,15 +10,27 @@ import {
   projectSettlementLabel,
   settlementBadgeVariant,
 } from "@/lib/project-status-labels";
+import {
+  costInvoiceNewFromProjectQuery,
+  incomeInvoiceNewFromProjectQuery,
+  plannedEventNewFromProjectQuery,
+} from "@/lib/project-quick-links";
 
 function moneyFromDecimal(v: Decimal | null | undefined): string {
   if (v == null) return "—";
   return formatMoney(decToNumber(v));
 }
 
+function plannedStatusLabel(s: string): string {
+  if (s === "CONVERTED") return "Skonwertowane";
+  if (s === "PLANNED") return "Zaplanowane";
+  if (s === "DONE") return "Zrealizowane";
+  if (s === "CANCELLED") return "Anulowane";
+  return s;
+}
+
 export function ProjectDetailView({ data }: { data: ProjectDetailsResult }) {
-  const { project, counts, sums, incomeInvoices, costInvoices, plannedEvents } = data;
-  const pid = project.id;
+  const { project, counts, real, forecast, progress, incomeInvoices, costInvoices, plannedEvents } = data;
 
   return (
     <div className="space-y-8">
@@ -31,7 +43,12 @@ export function ProjectDetailView({ data }: { data: ProjectDetailsResult }) {
           </p>
           <h1 className="mt-2 text-2xl font-semibold text-zinc-900 dark:text-zinc-50">{project.name}</h1>
           <div className="mt-2 flex flex-wrap items-center gap-2 text-sm text-zinc-600 dark:text-zinc-400">
-            {project.code ? <span className="font-mono">{project.code}</span> : null}
+            {project.code ? (
+              <span>
+                <span className="text-zinc-500">Numer zlecenia:</span>{" "}
+                <span className="font-mono">{project.code}</span>
+              </span>
+            ) : null}
             {project.clientName ? <span>· {project.clientName}</span> : null}
           </div>
           <div className="mt-3 flex flex-wrap gap-2">
@@ -45,7 +62,7 @@ export function ProjectDetailView({ data }: { data: ProjectDetailsResult }) {
           </div>
         </div>
         <Link
-          href={`/projects?edit=${pid}`}
+          href={`/projects?edit=${project.id}`}
           className="inline-flex shrink-0 items-center justify-center rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm font-medium text-zinc-900 hover:bg-zinc-50 dark:border-zinc-600 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800"
         >
           Edytuj
@@ -84,19 +101,19 @@ export function ProjectDetailView({ data }: { data: ProjectDetailsResult }) {
         <h2 className="mb-3 text-sm font-semibold text-zinc-800 dark:text-zinc-200">Szybkie akcje</h2>
         <div className="flex flex-wrap gap-2">
           <Link
-            href={`/income-invoices?new=1&projectId=${pid}`}
+            href={`/income-invoices?${incomeInvoiceNewFromProjectQuery(project)}`}
             className="inline-flex items-center rounded-lg border border-zinc-300 bg-white px-3 py-2 text-xs font-medium text-zinc-900 hover:bg-zinc-50 dark:border-zinc-600 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800"
           >
             + Faktura przychodowa
           </Link>
           <Link
-            href={`/cost-invoices?new=1&projectId=${pid}`}
+            href={`/cost-invoices?${costInvoiceNewFromProjectQuery(project)}`}
             className="inline-flex items-center rounded-lg border border-zinc-300 bg-white px-3 py-2 text-xs font-medium text-zinc-900 hover:bg-zinc-50 dark:border-zinc-600 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800"
           >
             + Faktura kosztowa
           </Link>
           <Link
-            href={`/planned-events?new=1&projectId=${pid}`}
+            href={`/planned-events?${plannedEventNewFromProjectQuery(project)}`}
             className="inline-flex items-center rounded-lg border border-zinc-300 bg-white px-3 py-2 text-xs font-medium text-zinc-900 hover:bg-zinc-50 dark:border-zinc-600 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800"
           >
             + Zdarzenie planowane
@@ -105,35 +122,102 @@ export function ProjectDetailView({ data }: { data: ProjectDetailsResult }) {
       </section>
 
       <section>
-        <h2 className="mb-3 text-sm font-semibold text-zinc-800 dark:text-zinc-200">Podsumowanie (z dokumentów)</h2>
+        <h2 className="mb-1 text-sm font-semibold text-zinc-800 dark:text-zinc-200">Wynik rzeczywisty (faktury)</h2>
+        <p className="mb-3 text-xs text-zinc-500">Tylko zafakturowane przychody i koszty — bez zdarzeń planowanych.</p>
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           <div className="rounded-lg border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-950">
-            <p className="text-xs text-zinc-500">Faktury przychodowe</p>
+            <p className="text-xs text-zinc-500">Liczba faktur przychodowych</p>
             <p className="mt-1 text-2xl font-semibold tabular-nums">{counts.income}</p>
           </div>
           <div className="rounded-lg border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-950">
-            <p className="text-xs text-zinc-500">Faktury kosztowe</p>
+            <p className="text-xs text-zinc-500">Liczba faktur kosztowych</p>
             <p className="mt-1 text-2xl font-semibold tabular-nums">{counts.cost}</p>
           </div>
           <div className="rounded-lg border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-950">
-            <p className="text-xs text-zinc-500">Zdarzenia planowane</p>
+            <p className="text-xs text-zinc-500">Zdarzenia planowane (łącznie)</p>
             <p className="mt-1 text-2xl font-semibold tabular-nums">{counts.planned}</p>
           </div>
-          <div className="rounded-lg border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-950">
-            <p className="text-xs text-zinc-500">Suma przychodów netto</p>
+          <div className="rounded-lg border border-emerald-200 bg-emerald-50/50 p-4 dark:border-emerald-900/40 dark:bg-emerald-950/20">
+            <p className="text-xs text-emerald-800 dark:text-emerald-300">Przychody netto (faktury)</p>
             <p className="mt-1 text-lg font-semibold tabular-nums text-emerald-800 dark:text-emerald-300">
-              {formatMoney(sums.incomeNet)}
+              {formatMoney(real.incomeNet)}
             </p>
           </div>
-          <div className="rounded-lg border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-950">
-            <p className="text-xs text-zinc-500">Suma kosztów netto</p>
+          <div className="rounded-lg border border-red-200 bg-red-50/50 p-4 dark:border-red-900/40 dark:bg-red-950/20">
+            <p className="text-xs text-red-800 dark:text-red-300">Koszty netto (faktury)</p>
             <p className="mt-1 text-lg font-semibold tabular-nums text-red-800 dark:text-red-300">
-              {formatMoney(sums.costNet)}
+              {formatMoney(real.costNet)}
             </p>
           </div>
           <div className="rounded-lg border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-950">
-            <p className="text-xs text-zinc-500">Wynik netto</p>
-            <p className="mt-1 text-lg font-semibold tabular-nums">{formatMoney(sums.netResult)}</p>
+            <p className="text-xs text-zinc-500">Wynik netto rzeczywisty</p>
+            <p className="mt-1 text-lg font-semibold tabular-nums">{formatMoney(real.netResult)}</p>
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <h2 className="mb-1 text-sm font-semibold text-zinc-800 dark:text-zinc-200">Plan / forecast projektu</h2>
+        <p className="mb-3 text-xs text-zinc-500">
+          Pola planu na projekcie + aktywne zdarzenia planowane (status „Zaplanowane”). Skonwertowane zdarzenia nie są tu liczone.
+        </p>
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          <div className="rounded-lg border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-950">
+            <p className="text-xs text-zinc-500">Plan przychodu (pole projektu)</p>
+            <p className="mt-1 text-sm font-semibold tabular-nums">{formatMoney(forecast.manualPlannedRevenueNet)}</p>
+          </div>
+          <div className="rounded-lg border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-950">
+            <p className="text-xs text-zinc-500">Plan kosztu (pole projektu)</p>
+            <p className="mt-1 text-sm font-semibold tabular-nums">{formatMoney(forecast.manualPlannedCostNet)}</p>
+          </div>
+          <div className="rounded-lg border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-950">
+            <p className="text-xs text-zinc-500">Plan z zdarzeń (wpływy netto)</p>
+            <p className="mt-1 text-sm font-semibold tabular-nums text-emerald-800 dark:text-emerald-300">
+              +{formatMoney(forecast.plannedEventsIncomeNet)}
+            </p>
+          </div>
+          <div className="rounded-lg border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-950">
+            <p className="text-xs text-zinc-500">Plan z zdarzeń (wydatki netto)</p>
+            <p className="mt-1 text-sm font-semibold tabular-nums text-red-800 dark:text-red-300">
+              {formatMoney(forecast.plannedEventsExpenseNet)}
+            </p>
+          </div>
+          <div className="rounded-lg border border-indigo-200 bg-indigo-50/60 p-4 dark:border-indigo-900/40 dark:bg-indigo-950/30">
+            <p className="text-xs text-indigo-900 dark:text-indigo-200">Łączny plan przychodu</p>
+            <p className="mt-1 text-lg font-semibold tabular-nums text-indigo-900 dark:text-indigo-100">
+              {formatMoney(forecast.totalPlannedRevenue)}
+            </p>
+          </div>
+          <div className="rounded-lg border border-indigo-200 bg-indigo-50/60 p-4 dark:border-indigo-900/40 dark:bg-indigo-950/30">
+            <p className="text-xs text-indigo-900 dark:text-indigo-200">Łączny plan kosztu</p>
+            <p className="mt-1 text-lg font-semibold tabular-nums text-indigo-900 dark:text-indigo-100">
+              {formatMoney(forecast.totalPlannedCost)}
+            </p>
+          </div>
+          <div className="rounded-lg border border-indigo-200 bg-indigo-50/80 p-4 dark:border-indigo-900/40 dark:bg-indigo-950/40 sm:col-span-2 lg:col-span-3">
+            <p className="text-xs text-indigo-900 dark:text-indigo-200">Bilans planowany (forecast netto)</p>
+            <p className="mt-1 text-xl font-semibold tabular-nums text-indigo-950 dark:text-indigo-50">
+              {formatMoney(forecast.forecastNet)}
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <h2 className="mb-1 text-sm font-semibold text-zinc-800 dark:text-zinc-200">Plan vs rzeczywistość</h2>
+        <p className="mb-3 text-xs text-zinc-500">Różnica: faktury minus łączny plan (pole + aktywne zdarzenia).</p>
+        <div className="grid gap-3 sm:grid-cols-3">
+          <div className="rounded-lg border border-zinc-200 bg-white p-3 dark:border-zinc-800 dark:bg-zinc-950">
+            <p className="text-xs text-zinc-500">Przychód: fakty − plan</p>
+            <p className="mt-1 text-sm font-semibold tabular-nums">{formatMoney(progress.revenueActualVsPlanned)}</p>
+          </div>
+          <div className="rounded-lg border border-zinc-200 bg-white p-3 dark:border-zinc-800 dark:bg-zinc-950">
+            <p className="text-xs text-zinc-500">Koszt: fakty − plan</p>
+            <p className="mt-1 text-sm font-semibold tabular-nums">{formatMoney(progress.costActualVsPlanned)}</p>
+          </div>
+          <div className="rounded-lg border border-zinc-200 bg-white p-3 dark:border-zinc-800 dark:bg-zinc-950">
+            <p className="text-xs text-zinc-500">Wynik: rzeczywisty − forecast</p>
+            <p className="mt-1 text-sm font-semibold tabular-nums">{formatMoney(progress.netActualVsForecast)}</p>
           </div>
         </div>
       </section>
@@ -243,13 +327,14 @@ export function ProjectDetailView({ data }: { data: ProjectDetailsResult }) {
                 <th className="px-3 py-2 font-medium">Kwota</th>
                 <th className="px-3 py-2 font-medium">Data</th>
                 <th className="px-3 py-2 font-medium">Status</th>
+                <th className="px-3 py-2 font-medium">Powiązanie</th>
                 <th className="px-3 py-2 text-right font-medium"> </th>
               </tr>
             </thead>
             <tbody className="divide-y divide-zinc-200 dark:divide-zinc-800">
               {plannedEvents.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="px-3 py-8 text-center text-zinc-500">
+                  <td colSpan={7} className="px-3 py-8 text-center text-zinc-500">
                     Brak powiązań
                   </td>
                 </tr>
@@ -258,9 +343,33 @@ export function ProjectDetailView({ data }: { data: ProjectDetailsResult }) {
                   <tr key={r.id} className="bg-white dark:bg-zinc-950">
                     <td className="max-w-[200px] truncate px-3 py-2 font-medium">{r.title}</td>
                     <td className="px-3 py-2 text-xs">{r.type}</td>
-                    <td className="px-3 py-2 tabular-nums">{formatMoney(decToNumber(r.amount))}</td>
+                    <td className="px-3 py-2 tabular-nums text-xs">
+                      {formatMoney(decToNumber(r.amount))}
+                      {decToNumber(r.amountVat ?? 0) > 0 ? (
+                        <span className="block text-zinc-500">+ VAT {formatMoney(decToNumber(r.amountVat ?? 0))}</span>
+                      ) : null}
+                    </td>
                     <td className="whitespace-nowrap px-3 py-2">{formatDate(r.plannedDate)}</td>
-                    <td className="px-3 py-2 text-xs">{r.status}</td>
+                    <td className="px-3 py-2 text-xs">{plannedStatusLabel(r.status)}</td>
+                    <td className="max-w-[140px] px-3 py-2 text-xs">
+                      {r.convertedToIncomeInvoice ? (
+                        <Link
+                          href={`/income-invoices?editIncome=${r.convertedToIncomeInvoice.id}`}
+                          className="font-medium text-emerald-800 underline dark:text-emerald-300"
+                        >
+                          FV {r.convertedToIncomeInvoice.invoiceNumber}
+                        </Link>
+                      ) : r.convertedToCostInvoice ? (
+                        <Link
+                          href={`/cost-invoices?editCost=${r.convertedToCostInvoice.id}`}
+                          className="font-medium text-red-800 underline dark:text-red-300"
+                        >
+                          {r.convertedToCostInvoice.documentNumber}
+                        </Link>
+                      ) : (
+                        "—"
+                      )}
+                    </td>
                     <td className="px-3 py-2 text-right">
                       <Link
                         href={`/planned-events?editPlanned=${r.id}`}

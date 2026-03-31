@@ -136,6 +136,8 @@ export function IncomeInvoicesClient() {
   const [projects, setProjects] = useState<ProjectOption[]>([]);
   /** Po ręcznej zmianie planowanej daty wpływu — nie nadpisuj przy zmianie terminu płatności. */
   const plannedIncomeManualRef = useRef(false);
+  /** Po utworzeniu faktury z zdarzenia planowanego — wysłane w POST, potem czyszczone. */
+  const sourcePlannedEventIdRef = useRef<string | null>(null);
   const [amountEntryMode, setAmountEntryMode] = useState<AmountEntryMode>("net");
 
   const [filterDraft, setFilterDraft] = useState({
@@ -242,10 +244,12 @@ export function IncomeInvoicesClient() {
     setOpen(false);
     setFormError(null);
     setPayOpen(false);
+    sourcePlannedEventIdRef.current = null;
   }
 
   function openNew() {
     plannedIncomeManualRef.current = false;
+    sourcePlannedEventIdRef.current = null;
     setAmountEntryMode("net");
     setEditing(emptyDraft());
     setFormError(null);
@@ -298,33 +302,107 @@ export function IncomeInvoicesClient() {
   const openEditRef = useRef(openEdit);
   openEditRef.current = openEdit;
 
+  const stripInvoiceDeepLinkParams = {
+    editIncome: null as string | null,
+    new: null as string | null,
+    projectId: null as string | null,
+    clientName: null as string | null,
+    projectName: null as string | null,
+    projectCode: null as string | null,
+    convertPlannedEventId: null as string | null,
+  };
+
   const listQs = merged.toString();
   useEffect(() => {
     const m = new URLSearchParams(listQs);
     const editIncome = m.get("editIncome");
     const wantNew = m.get("new") === "1";
+    const convertPlanned = m.get("convertPlannedEventId")?.trim() || null;
     const prefillPid = m.get("projectId")?.trim() || null;
-    if (!editIncome && !wantNew) return;
+    const prefillClient = m.get("clientName")?.trim() || "";
+    const prefillProjectName = m.get("projectName")?.trim() || "";
+    const prefillProjectCode = m.get("projectCode")?.trim() || "";
+    if (!editIncome && !wantNew && !convertPlanned) return;
     let cancelled = false;
     void (async () => {
       if (editIncome) {
         const r = await fetch(`/api/income-invoices/${editIncome}`);
         const j = await r.json();
         if (cancelled) return;
-        setParams({ editIncome: null, new: null, projectId: null });
         if (r.ok) openEditRef.current(j as Row);
+        queueMicrotask(() => setParams(stripInvoiceDeepLinkParams));
+        return;
+      }
+      if (convertPlanned) {
+        const r = await fetch(`/api/planned-events/${convertPlanned}`);
+        const ev = await r.json();
+        if (cancelled) return;
+        if (!r.ok || ev.status !== "PLANNED" || ev.type !== "INCOME") {
+          alert("Nie można utworzyć faktury z tego zdarzenia (wymagane: status „Zaplanowane”, typ przychód).");
+          queueMicrotask(() => setParams(stripInvoiceDeepLinkParams));
+          return;
+        }
+        let contractor = prefillClient;
+        if (!contractor && ev.projectId) {
+          const pr = await fetch(`/api/projects/${ev.projectId}`);
+          const pj = await pr.json();
+          if (pr.ok && pj?.clientName) contractor = String(pj.clientName).trim();
+        }
+        plannedIncomeManualRef.current = false;
+        setAmountEntryMode("net");
+        const pd = isoToDateInputValue(ev.plannedDate);
+        const net = String(ev.amount ?? "0");
+        const rate = 23 as VatRatePct;
+        const a = amountsFromNetRate(net, rate);
+        const d: Draft = {
+          ...emptyDraft(),
+          invoiceNumber: `ZPL-${ev.id.slice(0, 10)}`,
+          contractor,
+          description: ev.title ? `Z planu: ${ev.title}` : "",
+          netAmount: net,
+          vatAmount: a.vatAmount,
+          grossAmount: a.grossAmount,
+          vatRate: rate,
+          issueDate: pd,
+          paymentDueDate: pd,
+          plannedIncomeDate: pd,
+          projectId: ev.projectId || prefillPid || null,
+          incomeCategoryId: ev.incomeCategoryId || null,
+        };
+        {
+          let desc = ev.title ? `Z planu: ${ev.title}` : "";
+          if (prefillProjectName || prefillProjectCode) {
+            const extra = [prefillProjectName && `Projekt: ${prefillProjectName}`, prefillProjectCode && `Numer zlecenia: ${prefillProjectCode}`]
+              .filter(Boolean)
+              .join(" · ");
+            if (extra) desc = desc ? `${desc} · ${extra}` : extra;
+          }
+          d.description = desc;
+        }
+        sourcePlannedEventIdRef.current = ev.id;
+        setEditing(d);
+        setFormError(null);
+        setOpen(true);
+        queueMicrotask(() => setParams(stripInvoiceDeepLinkParams));
         return;
       }
       if (wantNew) {
         if (cancelled) return;
-        setParams({ editIncome: null, new: null, projectId: null });
         plannedIncomeManualRef.current = false;
         setAmountEntryMode("net");
         const d = emptyDraft();
         if (prefillPid) d.projectId = prefillPid;
+        if (prefillClient) d.contractor = prefillClient;
+        if (prefillProjectName || prefillProjectCode) {
+          const parts = [prefillProjectName && `Projekt: ${prefillProjectName}`, prefillProjectCode && `Numer zlecenia: ${prefillProjectCode}`].filter(
+            Boolean,
+          ) as string[];
+          if (parts.length) d.description = parts.join(" · ");
+        }
         setEditing(d);
         setFormError(null);
         setOpen(true);
+        queueMicrotask(() => setParams(stripInvoiceDeepLinkParams));
       }
     })();
     return () => {
@@ -459,6 +537,8 @@ export function IncomeInvoicesClient() {
         : {};
     const projectIdPayload = editing.projectId?.trim() || null;
 
+    const url = editing.id ? `/api/income-invoices/${editing.id}` : "/api/income-invoices";
+    const method = editing.id ? "PATCH" : "POST";
     const body = {
       invoiceNumber: editing.invoiceNumber,
       contractor: editing.contractor,
@@ -476,9 +556,10 @@ export function IncomeInvoicesClient() {
       projectId: projectIdPayload,
       incomeCategoryId: editing.incomeCategoryId || null,
       ...recurringPatch,
+      ...(method === "POST" && sourcePlannedEventIdRef.current
+        ? { sourcePlannedEventId: sourcePlannedEventIdRef.current }
+        : {}),
     };
-    const url = editing.id ? `/api/income-invoices/${editing.id}` : "/api/income-invoices";
-    const method = editing.id ? "PATCH" : "POST";
     try {
       const res = await fetch(url, {
         method,

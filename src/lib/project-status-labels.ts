@@ -16,7 +16,7 @@ export type ProjectSettlementValue = (typeof PROJECT_SETTLEMENT_VALUES)[number];
 const LIFECYCLE_LABELS: Record<ProjectLifecycleValue, string> = {
   NEW: "Nowy",
   IN_PROGRESS: "W trakcie",
-  FOR_HANDOFF: "Odbioru",
+  FOR_HANDOFF: "W trakcie odbioru",
   COMPLETED: "Zakończony",
 };
 

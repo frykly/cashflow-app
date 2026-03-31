@@ -83,6 +83,7 @@ model IncomeInvoice {
   isGeneratedFromRecurring  Boolean  @default(false)
   isRecurringDetached       Boolean  @default(false)
   sourceRecurringTemplate   RecurringTemplate? @relation("RecurringGeneratedIncome", fields: [sourceRecurringTemplateId], references: [id], onDelete: SetNull)
+  linkedFromPlannedEvent    PlannedFinancialEvent? @relation("PlannedConvertedToIncome")
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt
 
@@ -129,6 +130,7 @@ model CostInvoice {
   isGeneratedFromRecurring  Boolean  @default(false)
   isRecurringDetached       Boolean  @default(false)
   sourceRecurringTemplate   RecurringTemplate? @relation("RecurringGeneratedCost", fields: [sourceRecurringTemplateId], references: [id], onDelete: SetNull)
+  linkedFromPlannedEvent    PlannedFinancialEvent? @relation("PlannedConvertedToCost")
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt
 
@@ -182,7 +184,8 @@ model PlannedFinancialEvent {
   // amountVat: część VAT (0 = legacy)
   amountVat           Decimal            @default(0)
   plannedDate         DateTime
-  status              String // PLANNED | DONE | CANCELLED
+  /// PLANNED | DONE | CANCELLED | CONVERTED (CONVERTED ustawiane przy konwersji na fakturę)
+  status              String
   notes               String             @default("")
   projectName         String?
   projectId           String?
@@ -191,6 +194,11 @@ model PlannedFinancialEvent {
   expenseCategoryId   String?
   incomeCategory      IncomeCategory?    @relation("PlannedIncomeCategory", fields: [incomeCategoryId], references: [id], onDelete: SetNull)
   expenseCategory     ExpenseCategory?   @relation("PlannedExpenseCategory", fields: [expenseCategoryId], references: [id], onDelete: SetNull)
+  convertedToIncomeInvoiceId String?    @unique
+  convertedToCostInvoiceId   String?    @unique
+  convertedAt         DateTime?
+  convertedToIncomeInvoice IncomeInvoice? @relation("PlannedConvertedToIncome", fields: [convertedToIncomeInvoiceId], references: [id], onDelete: SetNull)
+  convertedToCostInvoice   CostInvoice?   @relation("PlannedConvertedToCost", fields: [convertedToCostInvoiceId], references: [id], onDelete: SetNull)
   createdAt           DateTime           @default(now())
   updatedAt           DateTime           @updatedAt
 

@@ -12,7 +12,13 @@ export async function GET(_req: Request, ctx: Ctx) {
   const { id } = await ctx.params;
   const row = await prisma.plannedFinancialEvent.findUnique({
     where: { id },
-    include: { incomeCategory: true, expenseCategory: true, project: true },
+    include: {
+      incomeCategory: true,
+      expenseCategory: true,
+      project: true,
+      convertedToIncomeInvoice: { select: { id: true, invoiceNumber: true } },
+      convertedToCostInvoice: { select: { id: true, documentNumber: true } },
+    },
   });
   if (!row) return jsonError("Nie znaleziono", 404);
   return jsonData(row);
@@ -30,6 +36,9 @@ export async function PATCH(req: Request, ctx: Ctx) {
     const data = plannedEventUpdateSchema.parse(body);
     const existing = await prisma.plannedFinancialEvent.findUnique({ where: { id } });
     if (!existing) return jsonError("Nie znaleziono", 404);
+    if (existing.status === "CONVERTED") {
+      return jsonError("Zdarzenie skonwertowane na fakturę — edycja jest zablokowana.", 409);
+    }
 
     const nextType = data.type ?? existing.type;
     const incomeCategoryId =

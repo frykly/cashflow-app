@@ -142,6 +142,7 @@ export function CostInvoicesClient() {
   const [supplierSuggestions, setSupplierSuggestions] = useState<string[]>([]);
   const [projects, setProjects] = useState<ProjectOption[]>([]);
   const plannedPaymentManualRef = useRef(false);
+  const sourcePlannedEventIdRef = useRef<string | null>(null);
   const [amountEntryMode, setAmountEntryMode] = useState<AmountEntryMode>("net");
   /** Netto 0, brutto = VAT — np. płatność samego VAT z konta VAT. */
   const [vatOnlyPayment, setVatOnlyPayment] = useState(false);
@@ -250,10 +251,12 @@ export function CostInvoicesClient() {
     setOpen(false);
     setFormError(null);
     setPayOpen(false);
+    sourcePlannedEventIdRef.current = null;
   }
 
   function openNew() {
     plannedPaymentManualRef.current = false;
+    sourcePlannedEventIdRef.current = null;
     setAmountEntryMode("net");
     setVatOnlyPayment(false);
     setEditing(emptyDraft());
@@ -312,34 +315,109 @@ export function CostInvoicesClient() {
   const openEditRef = useRef(openEdit);
   openEditRef.current = openEdit;
 
+  const stripCostDeepLinkParams = {
+    editCost: null as string | null,
+    new: null as string | null,
+    projectId: null as string | null,
+    clientName: null as string | null,
+    projectName: null as string | null,
+    projectCode: null as string | null,
+    convertPlannedEventId: null as string | null,
+  };
+
   const listQs = merged.toString();
   useEffect(() => {
     const m = new URLSearchParams(listQs);
     const editCost = m.get("editCost");
     const wantNew = m.get("new") === "1";
+    const convertPlanned = m.get("convertPlannedEventId")?.trim() || null;
     const prefillPid = m.get("projectId")?.trim() || null;
-    if (!editCost && !wantNew) return;
+    const prefillClient = m.get("clientName")?.trim() || "";
+    const prefillProjectName = m.get("projectName")?.trim() || "";
+    const prefillProjectCode = m.get("projectCode")?.trim() || "";
+    if (!editCost && !wantNew && !convertPlanned) return;
     let cancelled = false;
     void (async () => {
       if (editCost) {
         const r = await fetch(`/api/cost-invoices/${editCost}`);
         const j = await r.json();
         if (cancelled) return;
-        setParams({ editCost: null, new: null, projectId: null });
         if (r.ok) openEditRef.current(j as Row);
+        queueMicrotask(() => setParams(stripCostDeepLinkParams));
+        return;
+      }
+      if (convertPlanned) {
+        const r = await fetch(`/api/planned-events/${convertPlanned}`);
+        const ev = await r.json();
+        if (cancelled) return;
+        if (!r.ok || ev.status !== "PLANNED" || ev.type !== "EXPENSE") {
+          alert("Nie można utworzyć faktury z tego zdarzenia (wymagane: status „Zaplanowane”, typ wydatek).");
+          queueMicrotask(() => setParams(stripCostDeepLinkParams));
+          return;
+        }
+        let supplier = prefillClient;
+        if (!supplier && ev.projectId) {
+          const pr = await fetch(`/api/projects/${ev.projectId}`);
+          const pj = await pr.json();
+          if (pr.ok && pj?.clientName) supplier = String(pj.clientName).trim();
+        }
+        plannedPaymentManualRef.current = false;
+        setAmountEntryMode("net");
+        setVatOnlyPayment(false);
+        const pd = isoToDateInputValue(ev.plannedDate);
+        const net = String(ev.amount ?? "0");
+        const rate = 23 as VatRatePct;
+        const a = amountsFromNetRate(net, rate);
+        const d: Draft = {
+          ...emptyDraft(),
+          documentNumber: `ZPL-${ev.id.slice(0, 10)}`,
+          supplier,
+          description: ev.title ? `Z planu: ${ev.title}` : "",
+          netAmount: net,
+          vatAmount: a.vatAmount,
+          grossAmount: a.grossAmount,
+          vatRate: rate,
+          documentDate: pd,
+          paymentDueDate: pd,
+          plannedPaymentDate: pd,
+          projectId: ev.projectId || prefillPid || null,
+          expenseCategoryId: ev.expenseCategoryId || null,
+        };
+        {
+          let desc = ev.title ? `Z planu: ${ev.title}` : "";
+          if (prefillProjectName || prefillProjectCode) {
+            const extra = [prefillProjectName && `Projekt: ${prefillProjectName}`, prefillProjectCode && `Numer zlecenia: ${prefillProjectCode}`]
+              .filter(Boolean)
+              .join(" · ");
+            if (extra) desc = desc ? `${desc} · ${extra}` : extra;
+          }
+          d.description = desc;
+        }
+        sourcePlannedEventIdRef.current = ev.id;
+        setEditing(d);
+        setFormError(null);
+        setOpen(true);
+        queueMicrotask(() => setParams(stripCostDeepLinkParams));
         return;
       }
       if (wantNew) {
         if (cancelled) return;
-        setParams({ editCost: null, new: null, projectId: null });
         plannedPaymentManualRef.current = false;
         setAmountEntryMode("net");
         setVatOnlyPayment(false);
         const d = emptyDraft();
         if (prefillPid) d.projectId = prefillPid;
+        if (prefillClient) d.supplier = prefillClient;
+        if (prefillProjectName || prefillProjectCode) {
+          const parts = [prefillProjectName && `Projekt: ${prefillProjectName}`, prefillProjectCode && `Numer zlecenia: ${prefillProjectCode}`].filter(
+            Boolean,
+          ) as string[];
+          if (parts.length) d.description = parts.join(" · ");
+        }
         setEditing(d);
         setFormError(null);
         setOpen(true);
+        queueMicrotask(() => setParams(stripCostDeepLinkParams));
       }
     })();
     return () => {
@@ -476,6 +554,13 @@ export function CostInvoicesClient() {
         : {};
     const projectIdPayload = editing.projectId?.trim() || null;
 
+    const url = editing.id ? `/api/cost-invoices/${editing.id}` : "/api/cost-invoices";
+    const method = editing.id ? "PATCH" : "POST";
+    const postExtra =
+      method === "POST" && sourcePlannedEventIdRef.current
+        ? { sourcePlannedEventId: sourcePlannedEventIdRef.current }
+        : {};
+
     const body = vatOnlyPayment
       ? {
           documentNumber: editing.documentNumber,
@@ -497,6 +582,7 @@ export function CostInvoicesClient() {
           projectId: projectIdPayload,
           expenseCategoryId: editing.expenseCategoryId || null,
           ...recurringPatch,
+          ...postExtra,
         }
       : {
           documentNumber: editing.documentNumber,
@@ -516,9 +602,8 @@ export function CostInvoicesClient() {
           projectId: projectIdPayload,
           expenseCategoryId: editing.expenseCategoryId || null,
           ...recurringPatch,
+          ...postExtra,
         };
-    const url = editing.id ? `/api/cost-invoices/${editing.id}` : "/api/cost-invoices";
-    const method = editing.id ? "PATCH" : "POST";
     try {
       const res = await fetch(url, {
         method,

@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
+import { NameAutocomplete } from "@/components/NameAutocomplete";
 import { Alert, Badge, Button, Field, Input, Modal, Select, Spinner, Textarea } from "@/components/ui";
 import { readApiErrorBody } from "@/lib/api-client";
 import { isoToDateInputValue } from "@/lib/date-input";
@@ -76,6 +77,7 @@ export function ProjectsClient() {
   const [editing, setEditing] = useState<Draft>(emptyDraft());
   const [formError, setFormError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [contractorSuggestions, setContractorSuggestions] = useState<string[]>([]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -101,6 +103,14 @@ export function ProjectsClient() {
   useEffect(() => {
     load();
   }, [load]);
+
+  useEffect(() => {
+    if (!open) return;
+    void fetch("/api/income-invoices/suggestions")
+      .then((r) => r.json())
+      .then((j: { names?: string[] }) => setContractorSuggestions(Array.isArray(j?.names) ? j.names : []))
+      .catch(() => setContractorSuggestions([]));
+  }, [open]);
 
   useEffect(() => {
     const edit = searchParams.get("edit");
@@ -248,7 +258,7 @@ export function ProjectsClient() {
           <thead className="border-b border-zinc-200 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900">
             <tr>
               <th className="px-3 py-2.5 font-semibold">Nazwa / szczegóły</th>
-              <th className="px-3 py-2.5 font-semibold">Kod</th>
+              <th className="px-3 py-2.5 font-semibold">Numer zlecenia</th>
               <th className="px-3 py-2.5 font-semibold">Klient</th>
               <th className="px-3 py-2.5 font-semibold">Status</th>
               <th className="px-3 py-2.5 text-right font-semibold">Akcje</th>
@@ -310,13 +320,16 @@ export function ProjectsClient() {
           <Field label="Nazwa">
             <Input value={editing.name} onChange={(e) => setEditing({ ...editing, name: e.target.value })} required disabled={saving} />
           </Field>
-          <Field label="Kod (opcjonalnie)">
+          <Field label="Numer zlecenia (opcjonalnie)">
             <Input value={editing.code ?? ""} onChange={(e) => setEditing({ ...editing, code: e.target.value || null })} disabled={saving} />
           </Field>
-          <Field label="Klient (opcjonalnie)">
-            <Input
+          <Field label="Klient (opcjonalnie) — jak na fakturach przychodowych">
+            <NameAutocomplete
+              listId="project-client-suggestions"
+              suggestions={contractorSuggestions}
               value={editing.clientName ?? ""}
               onChange={(e) => setEditing({ ...editing, clientName: e.target.value || null })}
+              placeholder="Wybierz z listy lub wpisz nową nazwę"
               disabled={saving}
             />
           </Field>
