@@ -1,9 +1,21 @@
 import { prisma } from "@/lib/db";
 import { jsonData } from "@/lib/api/json-response";
 import { jsonError } from "@/lib/api/errors";
+import { healBankTransactionLinks } from "@/lib/bank-import/heal-links";
 import { z } from "zod";
 
-const statuses = z.enum(["NEW", "MATCHED", "IGNORED", "CREATED", "TRANSFER"]);
+const statuses = z.enum([
+  "NEW",
+  "MATCHED",
+  "LINKED_COST",
+  "LINKED_INCOME",
+  "TRANSFER",
+  "VAT_TOPUP",
+  "IGNORED",
+  "DUPLICATE",
+  "BROKEN_LINK",
+  "CREATED",
+]);
 
 const patchSchema = z.object({
   status: statuses,
@@ -23,9 +35,14 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
   const existing = await prisma.bankTransaction.findUnique({ where: { id } });
   if (!existing) return jsonError("Nie znaleziono transakcji", 404);
 
+  let normalized = parsed.data.status;
+  if (normalized === "CREATED") normalized = "LINKED_COST";
+
   const updated = await prisma.bankTransaction.update({
     where: { id },
-    data: { status: parsed.data.status },
+    data: { status: normalized },
   });
-  return jsonData(updated);
+  await healBankTransactionLinks(prisma, updated.importId);
+  const healed = await prisma.bankTransaction.findUnique({ where: { id } });
+  return jsonData(healed ?? updated);
 }

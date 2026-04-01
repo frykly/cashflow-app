@@ -225,10 +225,14 @@ model BankTransaction {
   counterpartyName    String?
   counterpartyAccount String?
   accountType         String // MAIN | VAT
-  status              String // NEW | MATCHED | IGNORED | CREATED | TRANSFER
+  /// NEW | MATCHED | LINKED_COST | LINKED_INCOME | TRANSFER | VAT_TOPUP | IGNORED | DUPLICATE | BROKEN_LINK | CREATED (legacy)
+  status              String
   createdAt           DateTime   @default(now())
   matchedInvoiceId    String?
+  linkedCostInvoiceId String?
   createdCostId       String?
+  /// Unikalny fingerprint wiersza — deduplikacja przy imporcie (null = legacy)
+  dedupeKey           String?    @unique
 
   @@index([importId])
   @@index([status])

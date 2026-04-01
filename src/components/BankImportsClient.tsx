@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import { readApiError } from "@/lib/api-client";
 import { safeFormatDate } from "@/lib/format";
@@ -13,6 +14,7 @@ type ImportRow = {
 };
 
 export function BankImportsClient() {
+  const router = useRouter();
   const [rows, setRows] = useState<ImportRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
@@ -35,9 +37,10 @@ export function BankImportsClient() {
 
   async function onUpload(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
+    const formEl = e.currentTarget;
     setUploadMsg(null);
     setError(null);
-    const fd = new FormData(e.currentTarget);
+    const fd = new FormData(formEl);
     setUploading(true);
     try {
       const res = await fetch("/api/bank-import", { method: "POST", body: fd });
@@ -47,19 +50,22 @@ export function BankImportsClient() {
         return;
       }
       const n = typeof data?.transactionCount === "number" ? data.transactionCount : 0;
+      const skipped = typeof data?.skippedDuplicates === "number" ? data.skippedDuplicates : 0;
       const pe = data?.parseErrors as { line: number; message: string }[] | undefined;
       const fmt = data?.format === "ipko-biznes" ? "iPKO Biznes" : null;
       const fmtHint = fmt ? `Wykryto format ${fmt}. ` : "";
+      const dupHint = skipped > 0 ? ` Pominięto ${skipped} duplikatów (już w systemie).` : "";
       const errLines =
         pe?.length ?
           ` Pominięte lub błędne wiersze (${pe.length}): ${pe
             .slice(0, 5)
-            .map((e) => `wiersz ${e.line}: ${e.message}`)
+            .map((x) => `wiersz ${x.line}: ${x.message}`)
             .join("; ")}${pe.length > 5 ? "…" : ""}.`
         : "";
-      setUploadMsg(`${fmtHint}Zaimportowano ${n} transakcji.${errLines}`);
-      e.currentTarget.reset();
+      setUploadMsg(`${fmtHint}Zaimportowano ${n} transakcji.${dupHint}${errLines}`);
       await load();
+      router.refresh();
+      formEl?.reset?.();
     } finally {
       setUploading(false);
     }

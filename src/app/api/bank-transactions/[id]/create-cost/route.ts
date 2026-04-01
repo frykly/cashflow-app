@@ -7,15 +7,30 @@ import { ensureClosingCostPaymentIfFullySettled } from "@/lib/cashflow/invoice-a
 import { syncCostInvoiceStatus } from "@/lib/invoice-status-sync";
 import { resolveProjectFields } from "@/lib/project-persist";
 import type { VatRatePct } from "@/lib/vat-rate";
+import { healBankTransactionLinks } from "@/lib/bank-import/heal-links";
 
 export async function POST(_req: Request, ctx: { params: Promise<{ id: string }> }) {
   const { id } = await ctx.params;
 
   const tx = await prisma.bankTransaction.findUnique({ where: { id } });
   if (!tx) return jsonError("Nie znaleziono transakcji", 404);
-  if (tx.createdCostId) return jsonError("Koszt został już utworzony dla tej transakcji", 409);
 
-  const absGrosze = Math.abs(tx.amount);
+  await healBankTransactionLinks(prisma, tx.importId);
+  const fresh = await prisma.bankTransaction.findUnique({ where: { id } });
+  if (!fresh) return jsonError("Nie znaleziono transakcji", 404);
+
+  if (fresh.linkedCostInvoiceId) {
+    return jsonError("Transakcja jest już powiązana z istniejącą fakturą kosztową — użyj „Cofnij powiązanie”.", 409);
+  }
+  if (fresh.createdCostId) {
+    const existing = await prisma.costInvoice.findUnique({ where: { id: fresh.createdCostId } });
+    if (existing) return jsonError("Koszt został już utworzony dla tej transakcji", 409);
+  }
+  if (["VAT_TOPUP", "DUPLICATE", "IGNORED"].includes(fresh.status)) {
+    return jsonError("Ten status nie pozwala na utworzenie kosztu z tej transakcji.", 400);
+  }
+
+  const absGrosze = Math.abs(fresh.amount);
   if (absGrosze === 0) return jsonError("Kwota 0 — nie można utworzyć kosztu", 400);
 
   const grossPln = new Decimal(absGrosze).div(100);
@@ -30,11 +45,11 @@ export async function POST(_req: Request, ctx: { params: Promise<{ id: string }>
   const { net, vat, gross, storedVatRate } = resolved.amounts;
   const pf = await resolveProjectFields(prisma, null);
 
-  const docDate = tx.bookingDate;
-  const supplier = (tx.counterpartyName?.trim() || "Wyciąg bankowy").slice(0, 500);
-  const description = tx.description.trim().slice(0, 2000);
+  const docDate = fresh.bookingDate;
+  const supplier = (fresh.counterpartyName?.trim() || "Wyciąg bankowy").slice(0, 500);
+  const description = fresh.description.trim().slice(0, 2000);
 
-  const documentNumber = `BANK-${tx.id.slice(0, 12)}`;
+  const documentNumber = `BANK-${fresh.id.slice(0, 12)}`;
 
   const row = await prisma.$transaction(async (trx) => {
     const cost = await trx.costInvoice.create({
@@ -52,7 +67,7 @@ export async function POST(_req: Request, ctx: { params: Promise<{ id: string }>
         status: "PLANOWANA",
         paid: false,
         actualPaymentDate: null,
-        paymentSource: tx.accountType === "VAT" ? "VAT" : "MAIN",
+        paymentSource: fresh.accountType === "VAT" ? "VAT" : "MAIN",
         notes: "",
         projectId: pf.projectId,
         projectName: pf.projectName,
@@ -61,10 +76,11 @@ export async function POST(_req: Request, ctx: { params: Promise<{ id: string }>
     });
 
     const bankRow = await trx.bankTransaction.update({
-      where: { id: tx.id },
+      where: { id: fresh.id },
       data: {
-        status: "CREATED",
+        status: "LINKED_COST",
         createdCostId: cost.id,
+        linkedCostInvoiceId: null,
       },
     });
 

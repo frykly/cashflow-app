@@ -2,6 +2,7 @@ import { prisma } from "@/lib/db";
 import { jsonData } from "@/lib/api/json-response";
 import { jsonError } from "@/lib/api/errors";
 import { parseBankStatementCsv } from "@/lib/bank-import/parse-csv";
+import { computeBankTransactionDedupeKey } from "@/lib/bank-import/dedupe-key";
 
 const accountTypes = new Set(["MAIN", "VAT"]);
 
@@ -34,21 +35,71 @@ export async function POST(req: Request) {
     return jsonError(msg);
   }
 
+  const keys = rows.map((r) =>
+    computeBankTransactionDedupeKey({
+      accountType,
+      bookingDate: r.bookingDate,
+      amountGrosze: r.amountGrosze,
+      description: r.description,
+    }),
+  );
+  const uniqueKeys = [...new Set(keys)];
+  const existingRows = await prisma.bankTransaction.findMany({
+    where: { dedupeKey: { in: uniqueKeys } },
+    select: { dedupeKey: true },
+  });
+  const taken = new Set(existingRows.map((e) => e.dedupeKey).filter(Boolean) as string[]);
+
+  const createPayload: {
+    bookingDate: Date;
+    valueDate: Date | null;
+    amount: number;
+    currency: string;
+    description: string;
+    counterpartyName: string | null;
+    counterpartyAccount: string | null;
+    accountType: string;
+    status: string;
+    dedupeKey: string;
+  }[] = [];
+
+  let skippedDuplicates = 0;
+  const seenInFile = new Set<string>();
+
+  for (let i = 0; i < rows.length; i++) {
+    const r = rows[i];
+    const key = keys[i];
+    if (taken.has(key) || seenInFile.has(key)) {
+      skippedDuplicates += 1;
+      continue;
+    }
+    seenInFile.add(key);
+    createPayload.push({
+      bookingDate: r.bookingDate,
+      valueDate: r.valueDate ?? null,
+      amount: r.amountGrosze,
+      currency: r.currency ?? currency,
+      description: r.description,
+      counterpartyName: r.counterpartyName ?? null,
+      counterpartyAccount: r.counterpartyAccount ?? null,
+      accountType,
+      status: "NEW",
+      dedupeKey: key,
+    });
+  }
+
+  if (createPayload.length === 0) {
+    return jsonError(
+      `Wszystkie wiersze (${rows.length}) są duplikatami już obecnymi w systemie (ten sam fingerprint).`,
+      400,
+    );
+  }
+
   const created = await prisma.bankImport.create({
     data: {
       fileName,
       transactions: {
-        create: rows.map((r) => ({
-          bookingDate: r.bookingDate,
-          valueDate: r.valueDate ?? null,
-          amount: r.amountGrosze,
-          currency: r.currency ?? currency,
-          description: r.description,
-          counterpartyName: r.counterpartyName ?? null,
-          counterpartyAccount: r.counterpartyAccount ?? null,
-          accountType,
-          status: "NEW",
-        })),
+        create: createPayload,
       },
     },
   });
@@ -56,7 +107,8 @@ export async function POST(req: Request) {
   return jsonData(
     {
       import: created,
-      transactionCount: rows.length,
+      transactionCount: createPayload.length,
+      skippedDuplicates,
       parseErrors: errors,
       format,
     },

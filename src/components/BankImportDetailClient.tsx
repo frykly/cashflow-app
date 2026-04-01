@@ -1,10 +1,12 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import { readApiError } from "@/lib/api-client";
 import { formatPlnFromGrosze } from "@/lib/bank-import/format-pln";
 import { safeFormatDate } from "@/lib/format";
+import { BankTransactionMatchModal } from "@/components/BankTransactionMatchModal";
 
 type Tx = {
   id: string;
@@ -13,6 +15,8 @@ type Tx = {
   currency: string;
   description: string;
   status: string;
+  matchedInvoiceId: string | null;
+  linkedCostInvoiceId: string | null;
   createdCostId: string | null;
 };
 
@@ -26,15 +30,33 @@ type Detail = {
 const statusClass: Record<string, string> = {
   NEW: "bg-zinc-100 text-zinc-800 dark:bg-zinc-800 dark:text-zinc-200",
   MATCHED: "bg-emerald-100 text-emerald-900 dark:bg-emerald-950 dark:text-emerald-200",
-  IGNORED: "bg-zinc-200 text-zinc-600 dark:bg-zinc-700 dark:text-zinc-300",
+  LINKED_COST: "bg-blue-100 text-blue-900 dark:bg-blue-950 dark:text-blue-200",
+  LINKED_INCOME: "bg-cyan-100 text-cyan-900 dark:bg-cyan-950 dark:text-cyan-200",
   CREATED: "bg-blue-100 text-blue-900 dark:bg-blue-950 dark:text-blue-200",
+  IGNORED: "bg-zinc-200 text-zinc-600 dark:bg-zinc-700 dark:text-zinc-300",
   TRANSFER: "bg-violet-100 text-violet-900 dark:bg-violet-950 dark:text-violet-200",
+  VAT_TOPUP: "bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-200",
+  DUPLICATE: "bg-orange-100 text-orange-900 dark:bg-orange-950 dark:text-orange-200",
+  BROKEN_LINK: "bg-rose-100 text-rose-900 dark:bg-rose-950 dark:text-rose-200",
 };
 
+function canCreateCost(t: Tx): boolean {
+  if (t.linkedCostInvoiceId) return false;
+  if (t.status === "LINKED_COST" && t.createdCostId) return false;
+  if (["VAT_TOPUP", "DUPLICATE", "IGNORED"].includes(t.status)) return false;
+  return true;
+}
+
+function showMatchButton(t: Tx): boolean {
+  return !["DUPLICATE", "IGNORED"].includes(t.status);
+}
+
 export function BankImportDetailClient({ importId }: { importId: string }) {
+  const router = useRouter();
   const [data, setData] = useState<Detail | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [matchTxId, setMatchTxId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setError(null);
@@ -50,7 +72,12 @@ export function BankImportDetailClient({ importId }: { importId: string }) {
     void load();
   }, [load]);
 
-  async function setStatus(id: string, status: Tx["status"]) {
+  async function afterMutation() {
+    await load();
+    router.refresh();
+  }
+
+  async function setStatus(id: string, status: string) {
     setBusyId(id);
     setError(null);
     try {
@@ -63,7 +90,22 @@ export function BankImportDetailClient({ importId }: { importId: string }) {
         setError(await readApiError(res));
         return;
       }
-      await load();
+      await afterMutation();
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function unlink(id: string) {
+    setBusyId(id);
+    setError(null);
+    try {
+      const res = await fetch(`/api/bank-transactions/${id}/unlink`, { method: "POST" });
+      if (!res.ok) {
+        setError(await readApiError(res));
+        return;
+      }
+      await afterMutation();
     } finally {
       setBusyId(null);
     }
@@ -78,7 +120,7 @@ export function BankImportDetailClient({ importId }: { importId: string }) {
         setError(await readApiError(res));
         return;
       }
-      await load();
+      await afterMutation();
     } finally {
       setBusyId(null);
     }
@@ -98,6 +140,13 @@ export function BankImportDetailClient({ importId }: { importId: string }) {
 
   return (
     <div className="space-y-6">
+      <BankTransactionMatchModal
+        transactionId={matchTxId ?? ""}
+        open={matchTxId !== null}
+        onClose={() => setMatchTxId(null)}
+        onLinked={() => void afterMutation()}
+      />
+
       <div className="flex flex-wrap items-baseline gap-4">
         <Link href="/bank-imports" className="text-sm text-blue-600 hover:underline dark:text-blue-400">
           ← Importy
@@ -117,7 +166,7 @@ export function BankImportDetailClient({ importId }: { importId: string }) {
       ) : null}
 
       <div className="overflow-x-auto rounded-lg border border-zinc-200 dark:border-zinc-800">
-        <table className="w-full min-w-[720px] text-left text-sm">
+        <table className="w-full min-w-[780px] text-left text-sm">
           <thead className="border-b border-zinc-200 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900/80">
             <tr>
               <th className="px-2 py-2 font-medium">Data</th>
@@ -131,6 +180,7 @@ export function BankImportDetailClient({ importId }: { importId: string }) {
             {data.transactions.map((t) => {
               const b = busyId === t.id;
               const sc = statusClass[t.status] ?? statusClass.NEW;
+              const createOk = canCreateCost(t);
               return (
                 <tr key={t.id} className="border-b border-zinc-100 align-top dark:border-zinc-800/80">
                   <td className="px-2 py-2 whitespace-nowrap">{safeFormatDate(t.bookingDate)}</td>
@@ -142,14 +192,41 @@ export function BankImportDetailClient({ importId }: { importId: string }) {
                     <span className={`inline-block rounded px-2 py-0.5 text-xs font-medium ${sc}`}>{t.status}</span>
                   </td>
                   <td className="px-2 py-2">
-                    <div className="flex flex-wrap gap-1">
+                    <div className="flex max-w-[420px] flex-wrap gap-1">
+                      {showMatchButton(t) ? (
+                        <button
+                          type="button"
+                          disabled={b}
+                          onClick={() => setMatchTxId(t.id)}
+                          className="rounded border border-emerald-600 bg-white px-2 py-1 text-xs text-emerald-900 hover:bg-emerald-50 disabled:opacity-50 dark:border-emerald-700 dark:bg-zinc-950 dark:text-emerald-200 dark:hover:bg-emerald-950/40"
+                        >
+                          Dopasuj do dokumentu
+                        </button>
+                      ) : null}
+                      <button
+                        type="button"
+                        disabled={b || !createOk}
+                        onClick={() => void createCost(t.id)}
+                        className="rounded border border-blue-300 bg-white px-2 py-1 text-xs text-blue-900 hover:bg-blue-50 disabled:opacity-50 dark:border-blue-800 dark:bg-zinc-950 dark:text-blue-200 dark:hover:bg-blue-950/40"
+                        title={!createOk ? "Powiązanie z kosztem już istnieje lub status blokuje" : undefined}
+                      >
+                        Utwórz koszt
+                      </button>
                       <button
                         type="button"
                         disabled={b}
-                        onClick={() => void setStatus(t.id, "MATCHED")}
-                        className="rounded border border-emerald-300 bg-white px-2 py-1 text-xs text-emerald-900 hover:bg-emerald-50 disabled:opacity-50 dark:border-emerald-800 dark:bg-zinc-950 dark:text-emerald-200 dark:hover:bg-emerald-950/40"
+                        onClick={() => void setStatus(t.id, "TRANSFER")}
+                        className="rounded border border-violet-300 bg-white px-2 py-1 text-xs text-violet-900 hover:bg-violet-50 disabled:opacity-50 dark:border-violet-800 dark:bg-zinc-950 dark:text-violet-200 dark:hover:bg-violet-950/40"
                       >
-                        Dopasowane
+                        Transfer
+                      </button>
+                      <button
+                        type="button"
+                        disabled={b}
+                        onClick={() => void setStatus(t.id, "VAT_TOPUP")}
+                        className="rounded border border-amber-400 bg-white px-2 py-1 text-xs text-amber-950 hover:bg-amber-50 disabled:opacity-50 dark:border-amber-700 dark:bg-zinc-950 dark:text-amber-100 dark:hover:bg-amber-950/40"
+                      >
+                        Zasil VAT
                       </button>
                       <button
                         type="button"
@@ -162,26 +239,27 @@ export function BankImportDetailClient({ importId }: { importId: string }) {
                       <button
                         type="button"
                         disabled={b}
-                        onClick={() => void setStatus(t.id, "TRANSFER")}
-                        className="rounded border border-violet-300 bg-white px-2 py-1 text-xs text-violet-900 hover:bg-violet-50 disabled:opacity-50 dark:border-violet-800 dark:bg-zinc-950 dark:text-violet-200 dark:hover:bg-violet-950/40"
+                        onClick={() => void unlink(t.id)}
+                        className="rounded border border-rose-300 bg-white px-2 py-1 text-xs text-rose-900 hover:bg-rose-50 disabled:opacity-50 dark:border-rose-800 dark:bg-zinc-950 dark:text-rose-200 dark:hover:bg-rose-950/40"
                       >
-                        Transfer
+                        Cofnij
                       </button>
-                      <button
-                        type="button"
-                        disabled={b || !!t.createdCostId}
-                        onClick={() => void createCost(t.id)}
-                        className="rounded border border-blue-300 bg-white px-2 py-1 text-xs text-blue-900 hover:bg-blue-50 disabled:opacity-50 dark:border-blue-800 dark:bg-zinc-950 dark:text-blue-200 dark:hover:bg-blue-950/40"
-                      >
-                        Koszt
-                      </button>
-                      {t.createdCostId ? (
+                      {t.matchedInvoiceId ? (
                         <Link
-                          href="/cost-invoices"
-                          title={t.createdCostId}
+                          href="/income-invoices"
+                          title={t.matchedInvoiceId}
                           className="inline-flex items-center rounded px-2 py-1 text-xs text-blue-600 hover:underline dark:text-blue-400"
                         >
-                          Lista kosztów
+                          Przychód
+                        </Link>
+                      ) : null}
+                      {t.createdCostId || t.linkedCostInvoiceId ? (
+                        <Link
+                          href="/cost-invoices"
+                          title={[t.createdCostId, t.linkedCostInvoiceId].filter(Boolean).join(" ")}
+                          className="inline-flex items-center rounded px-2 py-1 text-xs text-blue-600 hover:underline dark:text-blue-400"
+                        >
+                          Koszty
                         </Link>
                       ) : null}
                     </div>
