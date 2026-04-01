@@ -240,6 +240,8 @@ model BankTransaction {
   createdCostId       String?
   /// Unikalny fingerprint wiersza — deduplikacja przy imporcie (null = legacy)
   dedupeKey           String?    @unique
+  /// Surowy materiał wejściowy do fingerprintu (np. pełne „Dane operacji” iPKO) — diagnostyka; tylko nowe importy
+  dedupeInputText     String?
 
   @@index([importId])
   @@index([status])
