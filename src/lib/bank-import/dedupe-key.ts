@@ -28,18 +28,20 @@ export function computeLegacyBankTransactionDedupeKey(params: {
 }
 
 /**
- * Nowszy fingerprint: dodaje kontrahenta i fragment rachunku, żeby nie mylić dwóch przelewów
- * tego samego dnia o podobnym tytule do różnych odbiorców.
+ * Fingerprint bieżący: materiał deduplikacji = pełne „Dane operacji” (iPKO) lub pełny opis wiersza,
+ * a nie skrócony tytuł wyświetlany w UI — dwa przelewy z tym samym tytułem, ale innymi szczegółami w polu banku,
+ * dostają różne klucze. Dodatkowo kontrahent i rachunek (jeśli są w CSV).
  */
 export function computeBankTransactionDedupeKey(params: {
   accountType: string;
   bookingDate: Date;
   amountGrosze: number;
-  description: string;
+  dedupeMaterial: string;
   counterpartyName?: string | null;
   counterpartyAccount?: string | null;
 }): string {
   const day = params.bookingDate.toISOString().slice(0, 10);
-  const raw = `${params.accountType}|${day}|${params.amountGrosze}|${normDesc(params.description)}|${normParty(params.counterpartyName)}|${normAccount(params.counterpartyAccount)}`;
+  const mat = normDesc(params.dedupeMaterial);
+  const raw = `${params.accountType}|${day}|${params.amountGrosze}|${mat}|${normParty(params.counterpartyName)}|${normAccount(params.counterpartyAccount)}`;
   return createHash("sha256").update(raw, "utf8").digest("hex");
 }

@@ -59,6 +59,7 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
     bookingDate: tx.bookingDate,
     amount: tx.amount,
     description: tx.description,
+    dedupeInputText: tx.dedupeInputText,
     counterpartyName: tx.counterpartyName,
     counterpartyAccount: tx.counterpartyAccount,
     dedupeKey: tx.dedupeKey,

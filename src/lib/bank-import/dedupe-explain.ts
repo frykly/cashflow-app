@@ -8,6 +8,8 @@ export type BankTxDedupeExplainInput = {
   bookingDate: Date;
   amount: number;
   description: string;
+  /** Pełny materiał użyty przy imporcie do fingerprintu (iPKO); jeśli brak — starszy rekord. */
+  dedupeInputText: string | null;
   counterpartyName: string | null;
   counterpartyAccount: string | null;
   dedupeKey: string | null;
@@ -23,11 +25,12 @@ export function explainBankTransactionDedupe(tx: BankTxDedupeExplainInput): {
   hint: string;
 } {
   const amountGrosze = tx.amount;
+  const material = tx.dedupeInputText?.trim() || tx.description;
   const fingerprintNew = computeBankTransactionDedupeKey({
     accountType: tx.accountType,
     bookingDate: tx.bookingDate,
     amountGrosze,
-    description: tx.description,
+    dedupeMaterial: material,
     counterpartyName: tx.counterpartyName,
     counterpartyAccount: tx.counterpartyAccount,
   });
@@ -47,7 +50,7 @@ export function explainBankTransactionDedupe(tx: BankTxDedupeExplainInput): {
 
   const hint =
     matchesStored === "new" ?
-      "Klucz zawiera konto, datę księgowania, kwotę, opis oraz kontrahenta i rachunek — mniej fałszywych duplikatów przy tym samym tytule."
+      "Klucz liczy się z pełnego materiału operacji z banku (np. „Dane operacji” iPKO), daty, kwoty, kontrahenta i rachunku — nie ze skróconego tytułu w tabeli."
     : matchesStored === "legacy" ?
       "Starszy zapis — fingerprint bez kontrahenta. Nowe importy używają wersji rozszerzonej."
     : matchesStored === "unknown" ?

@@ -3,6 +3,8 @@ import { parse } from "csv-parse/sync";
 export type BankCsvFormat = "simple" | "ipko-biznes";
 
 export type ParsedBankRow = {
+  /** Numer wiersza w pliku CSV (do diagnostyki importu). */
+  sourceLine: number;
   bookingDate: Date;
   valueDate?: Date;
   /** Kwota w groszach (ujemna = wydatek). */
@@ -10,6 +12,11 @@ export type ParsedBankRow = {
   description: string;
   counterpartyName?: string;
   counterpartyAccount?: string;
+  /**
+   * Pełny materiał do fingerprintu deduplikacji — NIE skrócony tytuł z UI.
+   * iPKO: całe „Dane operacji” + typ + opcjonalny numer referencyjny / id operacji.
+   */
+  dedupeRawMaterial: string;
   /** Z wiersza CSV (np. iPKO); jeśli brak — użyć domyślnej z importu. */
   currency?: string;
 };
@@ -62,6 +69,8 @@ function buildIpkoColumnMap(headers: string[]): Map<number, string> | null {
     else if (k === "waluta") {
       if (walutaSeq === 0) map.set(i, "currency");
       walutaSeq += 1;
+    } else if (k === "id operacji" || k.includes("identyfikator operacji") || k === "numer referencyjny" || k.includes("numer referencyjny")) {
+      map.set(i, "operationRef");
     }
   });
   if (![...map.values()].includes("date") || ![...map.values()].includes("amount")) return null;
@@ -84,6 +93,7 @@ function mapHeader(h: string): string | null {
   if (/^(kontrahent|counterparty|odbiorca|nadawca|nazwa kontrahenta)$/.test(k)) return "counterparty";
   if (/^(rachunek|account|nr rachunku|iban)$/.test(k)) return "account";
   if (k === "waluta") return "currency";
+  if (k === "id operacji" || k.includes("identyfikator operacji") || k === "numer referencyjny" || k.includes("numer referencyjny")) return "operationRef";
   return null;
 }
 
@@ -307,13 +317,27 @@ export function parseBankStatementCsv(text: string): ParseBankStatementResult {
       counterpartyAccount = byField.get("account") || undefined;
     }
 
+    const operationRef = byField.get("operationRef")?.trim() ?? "";
+    let dedupeRawMaterial: string;
+    if (format === "ipko-biznes") {
+      dedupeRawMaterial = [daneOperacji, typOperacji ?? "", operationRef].filter(Boolean).join("\u001e").slice(0, 12000);
+    } else {
+      dedupeRawMaterial = [descSimple.trim(), byField.get("counterparty")?.trim() ?? "", byField.get("account")?.trim() ?? "", operationRef]
+        .filter(Boolean)
+        .join("\u001e")
+        .slice(0, 12000);
+      if (!dedupeRawMaterial) dedupeRawMaterial = descSimple.trim() || "(brak opisu)";
+    }
+
     const row: ParsedBankRow = {
+      sourceLine: lineNum,
       bookingDate,
       valueDate,
       amountGrosze: toGrosze(pln),
       description,
       counterpartyName,
       counterpartyAccount,
+      dedupeRawMaterial,
     };
     if (currencyCell) row.currency = currencyCell;
     rows.push(row);

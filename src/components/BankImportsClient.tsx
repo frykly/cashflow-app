@@ -60,7 +60,7 @@ export function BankImportsClient() {
       const pe = data?.parseErrors as { line: number; message: string }[] | undefined;
       const fmt = data?.format === "ipko-biznes" ? "iPKO Biznes" : null;
       const fmtHint = fmt ? `Wykryto format ${fmt}. ` : "";
-      const dupHint = skipped > 0 ? ` Pominięto ${skipped} duplikatów (już w systemie).` : "";
+      const dupHint = skipped > 0 && !data?.message ? ` Pominięto ${skipped} duplikatów.` : "";
       const errLines =
         pe?.length ?
           ` Pominięte lub błędne wiersze (${pe.length}): ${pe
@@ -68,7 +68,12 @@ export function BankImportsClient() {
             .map((x) => `wiersz ${x.line}: ${x.message}`)
             .join("; ")}${pe.length > 5 ? "…" : ""}.`
         : "";
-      setUploadMsg(`${fmtHint}Zaimportowano ${n} transakcji.${dupHint}${errLines}`);
+      const apiMsg = typeof data?.message === "string" && data.message.trim() ? data.message.trim() : null;
+      const summary =
+        apiMsg ?
+          `${fmtHint}${apiMsg}`
+        : `${fmtHint}Zaimportowano ${n} transakcji.${dupHint}`;
+      setUploadMsg(`${summary}${errLines}`);
       await load();
       router.refresh();
       formEl?.reset?.();
