@@ -1,8 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Alert, Button, Field, Input, Modal, Select, Spinner, Textarea } from "@/components/ui";
 import { readApiErrorBody } from "@/lib/api-client";
+import {
+  isExpenseCategoryBankFeesLike,
+  looksLikeBankFeeDescription,
+  suggestBankFeeCategoryId,
+} from "@/lib/bank-import/bank-fee-heuristic";
 import { inferDocumentNumberFromBankText } from "@/lib/bank-import/parse-document-number";
 
 type ExpCat = { id: string; name: string; slug: string };
@@ -80,9 +85,14 @@ export function CreateCostFromBankModal({ transactionId, open, onClose, onCreate
 
         const cats = rCat.ok ? ((await rCat.json()) as ExpCat[]) : [];
         const projs = rProj.ok ? ((await rProj.json()) as Proj[]) : [];
+        const catList = Array.isArray(cats) ? cats : [];
         if (!cancelled) {
-          setCategories(Array.isArray(cats) ? cats : []);
+          setCategories(catList);
           setProjects(Array.isArray(projs) ? projs : []);
+          if (looksLikeBankFeeDescription(txJson.description)) {
+            const sug = suggestBankFeeCategoryId(catList);
+            if (sug) setExpenseCategoryId(sug);
+          }
         }
       } catch (e) {
         if (!cancelled) setErr(e instanceof Error ? e.message : "Błąd wczytywania");
@@ -134,6 +144,13 @@ export function CreateCostFromBankModal({ transactionId, open, onClose, onCreate
 
   const grossPln = tx ? (Math.abs(tx.amount) / 100).toFixed(2) : "—";
 
+  const selectedCategory = useMemo(
+    () => categories.find((c) => c.id === expenseCategoryId) ?? null,
+    [categories, expenseCategoryId],
+  );
+  const bankFeeSupplierOptional =
+    (selectedCategory && isExpenseCategoryBankFeesLike(selectedCategory)) || looksLikeBankFeeDescription(description);
+
   return (
     <Modal open={open} title="Utwórz koszt z transakcji bankowej" onClose={handleClose} size="lg">
       {loading ? (
@@ -161,8 +178,20 @@ export function CreateCostFromBankModal({ transactionId, open, onClose, onCreate
                 required
               />
             </Field>
-            <Field label="Dostawca">
-              <Input value={supplier} onChange={(e) => setSupplier(e.target.value)} disabled={saving} required />
+            <Field
+              label={
+                bankFeeSupplierOptional ?
+                  "Dostawca (opcjonalnie przy opłatach bankowych — zostaw puste, zapiszemy „Bank (opłata lub prowizja)”) "
+                : "Dostawca"
+              }
+            >
+              <Input
+                value={supplier}
+                onChange={(e) => setSupplier(e.target.value)}
+                disabled={saving}
+                required={!bankFeeSupplierOptional}
+                placeholder={bankFeeSupplierOptional ? "np. nazwa dostawcy lub zostaw puste" : undefined}
+              />
             </Field>
           </div>
 

@@ -9,17 +9,30 @@ import {
 
 const accountTypes = new Set(["MAIN", "VAT"]);
 
+function preview(s: string, max = 160): string {
+  const t = s.trim();
+  if (t.length <= max) return t;
+  return `${t.slice(0, max)}…`;
+}
+
 export type BankImportSkippedDetail = {
   csvLine: number;
   reason: "existing_in_database" | "duplicate_within_file";
-  /** Który fingerprint zadziałał przy dopasowaniu do bazy */
   matchedKeyKind: "new" | "legacy" | null;
   fingerprintNew: string;
   fingerprintLegacy: string;
-  /** Przy istniejącym rekordzie w bazie */
+  amountGrosze: number;
+  descriptionPreview: string;
+  dedupeMaterialPreview: string;
+  counterpartyPreview: string | null;
+  /** Krótki opis decyzji (diagnostyka) */
+  decisionNote?: string;
+  /** Przy dopasowaniu do rekordu z dedupeInputText w bazie — czy materiał jest identyczny */
+  materialIdenticalToStored?: boolean;
+  /** Skrót zapisane dedupeInputText w bazie (przy kolizji legacy) */
+  storedDedupeInputPreview?: string;
   matchedTransactionId?: string;
   matchedImportId?: string;
-  /** Przy duplikacie w obrębie pliku — pierwszy wiersz z tym samym fingerprintem */
   duplicateOfCsvLine?: number;
 };
 
@@ -96,8 +109,14 @@ export async function POST(req: Request) {
 
   let skippedDuplicates = 0;
   const skippedDetails: BankImportSkippedDetail[] = [];
-  /** Tylko fingerprint „nowy” — legacy jest zbyt szeroki do wykrywania duplikatów w pliku */
   const seenNewKeyInFile = new Map<string, number>();
+
+  const basePreview = (r: (typeof rows)[0]) => ({
+    amountGrosze: r.amountGrosze,
+    descriptionPreview: preview(r.description, 200),
+    dedupeMaterialPreview: preview(r.dedupeRawMaterial, 220),
+    counterpartyPreview: r.counterpartyName ?? r.counterpartyAccount ?? null,
+  });
 
   for (let i = 0; i < rows.length; i++) {
     const r = rows[i]!;
@@ -105,21 +124,63 @@ export async function POST(req: Request) {
     const legacy = keysLegacy[i]!;
 
     const existingByNew = byDedupeKey.get(key);
-    const existingByLegacy = byDedupeKey.get(legacy);
-    const existing = existingByNew ?? existingByLegacy;
 
-    if (existing) {
+    if (existingByNew) {
       skippedDuplicates += 1;
       skippedDetails.push({
         csvLine: r.sourceLine,
         reason: "existing_in_database",
-        matchedKeyKind: existingByNew ? "new" : "legacy",
+        matchedKeyKind: "new",
         fingerprintNew: key,
         fingerprintLegacy: legacy,
-        matchedTransactionId: existing.id,
-        matchedImportId: existing.importId,
+        ...basePreview(r),
+        decisionNote: "Ten sam fingerprint „nowy” co istniejący rekord w bazie.",
+        materialIdenticalToStored: true,
+        matchedTransactionId: existingByNew.id,
+        matchedImportId: existingByNew.importId,
       });
       continue;
+    }
+
+    const existingByLegacy = byDedupeKey.get(legacy);
+    if (existingByLegacy) {
+      const st = await prisma.bankTransaction.findUnique({
+        where: { id: existingByLegacy.id },
+        select: {
+          id: true,
+          importId: true,
+          dedupeKey: true,
+          dedupeInputText: true,
+        },
+      });
+      if (!st) {
+        /* nietypowe — traktuj jak brak kolizji */
+      } else {
+        const sameMaterial =
+          st.dedupeInputText != null && st.dedupeInputText === r.dedupeRawMaterial;
+        const oldRowLegacyOnly = !st.dedupeInputText && st.dedupeKey === legacy;
+
+        if (sameMaterial || oldRowLegacyOnly) {
+          skippedDuplicates += 1;
+          skippedDetails.push({
+            csvLine: r.sourceLine,
+            reason: "existing_in_database",
+            matchedKeyKind: "legacy",
+            fingerprintNew: key,
+            fingerprintLegacy: legacy,
+            ...basePreview(r),
+            decisionNote: sameMaterial
+              ? "Fingerprint legacy zgadza się z rekordem w bazie; zapisany materiał deduplikacji (dedupeInputText) jest identyczny z tym wierszem CSV."
+              : "Starszy rekord w bazie (tylko klucz legacy, bez zapisanego pełnego materiału) — uznano za ten sam przelew.",
+            materialIdenticalToStored: sameMaterial,
+            storedDedupeInputPreview: st.dedupeInputText ? preview(st.dedupeInputText, 220) : undefined,
+            matchedTransactionId: st.id,
+            matchedImportId: st.importId,
+          });
+          continue;
+        }
+        /* Kolizja tylko legacy: w bazie jest inny pełny materiał niż w CSV — to NIE ten sam przelew → importuj */
+      }
     }
 
     const firstLineSameNew = seenNewKeyInFile.get(key);
@@ -131,6 +192,8 @@ export async function POST(req: Request) {
         matchedKeyKind: "new",
         fingerprintNew: key,
         fingerprintLegacy: legacy,
+        ...basePreview(r),
+        decisionNote: "Drugi wiersz w pliku z tym samym fingerprintem „nowy” co wcześniej w tym pliku.",
         duplicateOfCsvLine: firstLineSameNew,
       });
       continue;

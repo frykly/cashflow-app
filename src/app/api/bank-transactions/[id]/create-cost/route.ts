@@ -9,6 +9,7 @@ import type { VatRatePct } from "@/lib/vat-rate";
 import { healBankTransactionLinks } from "@/lib/bank-import/heal-links";
 import { assertCostLinkSign, BANK_COST_PAYMENT_NOTE } from "@/lib/bank-import/payment-from-bank";
 import { inferDocumentNumberFromBankText } from "@/lib/bank-import/parse-document-number";
+import { isExpenseCategoryBankFeesLike, looksLikeBankFeeDescription } from "@/lib/bank-import/bank-fee-heuristic";
 import { z } from "zod";
 
 const createCostBodySchema = z.object({
@@ -77,15 +78,28 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
   const inferredDoc = inferDocumentNumberFromBankText(fresh.description);
   const docInput = b.documentNumber?.trim();
   const documentNumber = (docInput || inferredDoc || `BANK-${fresh.id.slice(0, 12)}`).slice(0, 120);
-
-  const supplier = (b.supplier?.trim() || fresh.counterpartyName?.trim() || "Wyciąg bankowy").slice(0, 500);
   const description = (b.description?.trim() ?? fresh.description.trim()).slice(0, 2000);
 
   let expenseCategoryId: string | null = b.expenseCategoryId ?? null;
+  let categoryRow: { id: string; name: string; slug: string } | null = null;
   if (expenseCategoryId) {
-    const cat = await prisma.expenseCategory.findUnique({ where: { id: expenseCategoryId }, select: { id: true } });
+    const cat = await prisma.expenseCategory.findUnique({
+      where: { id: expenseCategoryId },
+      select: { id: true, name: true, slug: true },
+    });
     if (!cat) return jsonError("Nie znaleziono kategorii kosztu", 400);
+    categoryRow = cat;
   }
+
+  const descForHeur = (b.description?.trim() ?? fresh.description).trim();
+  const bankFeeContext =
+    (categoryRow && isExpenseCategoryBankFeesLike(categoryRow)) || looksLikeBankFeeDescription(descForHeur);
+
+  const supplierTrim = b.supplier?.trim() ?? "";
+  const supplier = (
+    supplierTrim ||
+    (bankFeeContext ? "Bank (opłata lub prowizja)" : fresh.counterpartyName?.trim() || "Wyciąg bankowy")
+  ).slice(0, 500);
 
   let pf: { projectId: string | null; projectName: string | null };
   try {
