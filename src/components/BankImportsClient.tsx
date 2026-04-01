@@ -22,13 +22,19 @@ export function BankImportsClient() {
 
   const load = useCallback(async () => {
     setError(null);
-    const res = await fetch("/api/bank-imports");
-    if (!res.ok) {
-      setError(await readApiError(res));
-      return;
+    try {
+      const res = await fetch("/api/bank-imports");
+      if (!res.ok) {
+        setError(await readApiError(res));
+        setRows([]);
+        return;
+      }
+      const data = (await res.json()) as ImportRow[];
+      setRows(data);
+    } catch {
+      setError("Błąd sieci");
+      setRows([]);
     }
-    const data = (await res.json()) as ImportRow[];
-    setRows(data);
   }, []);
 
   useEffect(() => {

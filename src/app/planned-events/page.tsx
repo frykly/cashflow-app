@@ -1,10 +1,11 @@
-import { Suspense } from "react";
 import { PlannedEventsClient } from "@/components/PlannedEventsClient";
+import { serializeSearchParamsRecord } from "@/lib/serialize-search-params";
 
-export default function PlannedEventsPage() {
-  return (
-    <Suspense fallback={<div className="p-6 text-zinc-500">Ładowanie…</div>}>
-      <PlannedEventsClient />
-    </Suspense>
-  );
+export default async function PlannedEventsPage({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
+  const sp = await searchParams;
+  return <PlannedEventsClient initialQueryString={serializeSearchParamsRecord(sp)} />;
 }

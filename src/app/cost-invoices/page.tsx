@@ -1,10 +1,11 @@
-import { Suspense } from "react";
 import { CostInvoicesClient } from "@/components/CostInvoicesClient";
+import { serializeSearchParamsRecord } from "@/lib/serialize-search-params";
 
-export default function CostInvoicesPage() {
-  return (
-    <Suspense fallback={<div className="p-6 text-zinc-500">Ładowanie…</div>}>
-      <CostInvoicesClient />
-    </Suspense>
-  );
+export default async function CostInvoicesPage({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
+  const sp = await searchParams;
+  return <CostInvoicesClient initialQueryString={serializeSearchParamsRecord(sp)} />;
 }

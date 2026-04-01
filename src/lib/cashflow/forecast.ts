@@ -362,16 +362,6 @@ export function endBalanceAfterDay(
   return { main: mainEnd, vat: vatEnd };
 }
 
-function startOfDayBalance(
-  movementsByDay: Map<string, CashflowMovement[]>,
-  settings: AppSettings | null,
-  dayKeyStr: string,
-  costById: Map<string, CostInvoice>,
-): { main: number; vat: number } {
-  const prev = previousCalendarDay(dayKeyStr);
-  return endBalanceAfterDay(movementsByDay, settings, prev, costById);
-}
-
 export function buildDailyForecast(
   movements: CashflowMovement[],
   settings: AppSettings | null,
@@ -384,6 +374,11 @@ export function buildDailyForecast(
   const toK = dayKey(startOfDay(to));
   const rows: ForecastDayRow[] = [];
 
+  /** Saldo na koniec dnia przed pierwszym dniem okna — jeden pełny przebieg historii. */
+  const beforeFirst = endBalanceAfterDay(movementsByDay, settings, previousCalendarDay(fromK), costById);
+  let carryMain = beforeFirst.main;
+  let carryVat = beforeFirst.vat;
+
   let cursor = startOfDay(from);
   while (!isBefore(startOfDay(to), cursor)) {
     const k = dayKey(cursor);
@@ -391,7 +386,8 @@ export function buildDailyForecast(
 
     const rawDayMoves = movementsByDay.get(k) ?? [];
 
-    const { main: mainStart, vat: vatStart } = startOfDayBalance(movementsByDay, settings, k, costById);
+    const mainStart = carryMain;
+    const vatStart = carryVat;
 
     const {
       mainEnd,
@@ -402,6 +398,9 @@ export function buildDailyForecast(
       vatInflows,
       vatOutflows,
     } = resolveDayMovements(mainStart, vatStart, rawDayMoves, costById);
+
+    carryMain = mainEnd;
+    carryVat = vatEnd;
 
     rows.push({
       dayKey: k,

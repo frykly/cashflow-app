@@ -1,7 +1,7 @@
 "use client";
 
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { useCallback, useMemo } from "react";
+import { usePathname, useRouter } from "next/navigation";
+import { useCallback, useEffect, useState } from "react";
 
 const LIST_DEFAULTS: Record<"income" | "cost" | "planned", Record<string, string>> = {
   income: { sort: "plannedIncomeDate", order: "asc" },
@@ -19,39 +19,50 @@ function mergeWithDefaults(sp: URLSearchParams, defaults: Record<string, string>
 
 /**
  * Synchronizacja listy z query params; domyślne sort/order dopisywane do zapytania API.
+ * `initialQueryString` pochodzi ze strony serwerowej — unika `useSearchParams()` (Suspense / wieczny fallback).
  */
-export function useListQuery(which: "income" | "cost" | "planned") {
+export function useListQuery(
+  which: "income" | "cost" | "planned",
+  initialQueryString: string,
+) {
   const defaults = LIST_DEFAULTS[which];
-  const sp = useSearchParams();
   const router = useRouter();
   const pathname = usePathname();
 
-  const merged = useMemo(() => mergeWithDefaults(sp, defaults), [sp, defaults]);
+  const [merged, setMerged] = useState(() =>
+    mergeWithDefaults(new URLSearchParams(initialQueryString), defaults),
+  );
+
+  useEffect(() => {
+    setMerged(mergeWithDefaults(new URLSearchParams(initialQueryString), defaults));
+  }, [initialQueryString, defaults]);
 
   const queryString = merged.toString();
 
   const setParam = useCallback(
     (key: string, value: string | null) => {
-      const m = mergeWithDefaults(sp, defaults);
+      const m = mergeWithDefaults(new URLSearchParams(merged.toString()), defaults);
       if (value === null || value === "") m.delete(key);
       else m.set(key, value);
       const s = m.toString();
       router.replace(s ? `${pathname}?${s}` : pathname);
+      setMerged(m);
     },
-    [sp, router, pathname, defaults],
+    [merged, router, pathname, defaults],
   );
 
   const setParams = useCallback(
     (updates: Record<string, string | null>) => {
-      const m = mergeWithDefaults(sp, defaults);
+      const m = mergeWithDefaults(new URLSearchParams(merged.toString()), defaults);
       for (const [key, value] of Object.entries(updates)) {
         if (value === null || value === "") m.delete(key);
         else m.set(key, value);
       }
       const s = m.toString();
       router.replace(s ? `${pathname}?${s}` : pathname);
+      setMerged(m);
     },
-    [sp, router, pathname, defaults],
+    [merged, router, pathname, defaults],
   );
 
   return { queryString, setParam, setParams, merged };

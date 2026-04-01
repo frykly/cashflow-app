@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter, usePathname, useSearchParams } from "next/navigation";
+import { useRouter, usePathname } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import { NameAutocomplete } from "@/components/NameAutocomplete";
 import { Alert, Badge, Button, Field, Input, Modal, Select, Spinner, Textarea } from "@/components/ui";
@@ -64,10 +64,9 @@ function emptyDraft(): Draft {
   };
 }
 
-export function ProjectsClient() {
+export function ProjectsClient({ initialEditId = null }: { initialEditId?: string | null }) {
   const router = useRouter();
   const pathname = usePathname();
-  const searchParams = useSearchParams();
   const [rows, setRows] = useState<Row[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -113,14 +112,14 @@ export function ProjectsClient() {
   }, [open]);
 
   useEffect(() => {
-    const edit = searchParams.get("edit");
+    const edit = initialEditId;
     if (!edit) return;
     let cancelled = false;
     (async () => {
       const r = await fetch(`/api/projects/${edit}`);
       const j = await r.json();
       if (cancelled) return;
-      const m = new URLSearchParams(searchParams.toString());
+      const m = new URLSearchParams(typeof window !== "undefined" ? window.location.search : "");
       m.delete("edit");
       router.replace(m.toString() ? `${pathname}?${m}` : pathname, { scroll: false });
       if (!r.ok) return;
@@ -130,7 +129,7 @@ export function ProjectsClient() {
     return () => {
       cancelled = true;
     };
-  }, [searchParams, pathname, router]);
+  }, [initialEditId, pathname, router]);
 
   function closeModal() {
     setOpen(false);

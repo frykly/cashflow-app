@@ -118,8 +118,8 @@ const DATE_FIELD_OPTIONS = [
 
 type Cat = { id: string; name: string; slug: string };
 
-export function IncomeInvoicesClient() {
-  const { queryString, setParam, setParams, merged } = useListQuery("income");
+export function IncomeInvoicesClient({ initialQueryString = "" }: { initialQueryString?: string }) {
+  const { queryString, setParam, setParams, merged } = useListQuery("income", initialQueryString);
   const [rows, setRows] = useState<Row[]>([]);
   const [listLoading, setListLoading] = useState(true);
   const [open, setOpen] = useState(false);

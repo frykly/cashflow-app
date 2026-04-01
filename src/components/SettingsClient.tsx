@@ -13,6 +13,14 @@ type Row = {
   effectiveFrom: string;
 };
 
+function defaultRow(): Row {
+  return {
+    mainOpeningBalance: "0",
+    vatOpeningBalance: "0",
+    effectiveFrom: new Date().toISOString().slice(0, 10),
+  };
+}
+
 export function SettingsClient() {
   const [row, setRow] = useState<Row | null>(null);
   const [loading, setLoading] = useState(true);
@@ -21,20 +29,18 @@ export function SettingsClient() {
 
   useEffect(() => {
     fetch("/api/settings")
-      .then((r) => (r.ok ? r.json() : null))
+      .then((r) => (r.ok ? r.json() : Promise.resolve(null)))
       .then((j) => {
-        if (j)
+        if (j && typeof j === "object")
           setRow({
             mainOpeningBalance: String(j.mainOpeningBalance),
             vatOpeningBalance: String(j.vatOpeningBalance),
             effectiveFrom: isoToDateInputValue(j.effectiveFrom),
           });
-        else
-          setRow({
-            mainOpeningBalance: "0",
-            vatOpeningBalance: "0",
-            effectiveFrom: new Date().toISOString().slice(0, 10),
-          });
+        else setRow(defaultRow());
+      })
+      .catch(() => {
+        setRow(defaultRow());
       })
       .finally(() => setLoading(false));
   }, []);
@@ -78,7 +84,7 @@ export function SettingsClient() {
     }
   }
 
-  if (loading || !row) {
+  if (loading) {
     return (
       <div className="flex items-center gap-3 text-zinc-500">
         <Spinner className="!size-5" />
@@ -86,6 +92,8 @@ export function SettingsClient() {
       </div>
     );
   }
+
+  if (!row) return null;
 
   return (
     <div className="max-w-lg space-y-6">

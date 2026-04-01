@@ -95,8 +95,8 @@ function formatPlannedAmountCell(r: Row): string {
   return formatMoney(main);
 }
 
-export function PlannedEventsClient() {
-  const { queryString, setParam, setParams, merged } = useListQuery("planned");
+export function PlannedEventsClient({ initialQueryString = "" }: { initialQueryString?: string }) {
+  const { queryString, setParam, setParams, merged } = useListQuery("planned", initialQueryString);
   const [rows, setRows] = useState<Row[]>([]);
   const [listLoading, setListLoading] = useState(true);
   const [open, setOpen] = useState(false);
