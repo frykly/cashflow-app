@@ -21,6 +21,7 @@ export function BankTransactionMatchModal({ transactionId, open, onClose, onLink
   const [error, setError] = useState<string | null>(null);
   const [costs, setCosts] = useState<CostS[]>([]);
   const [incomes, setIncomes] = useState<IncS[]>([]);
+  const [preferPrimaryDocument, setPreferPrimaryDocument] = useState<"income" | "cost">("income");
   const [manualCost, setManualCost] = useState("");
   const [manualIncome, setManualIncome] = useState("");
   const [busy, setBusy] = useState(false);
@@ -36,10 +37,13 @@ export function BankTransactionMatchModal({ transactionId, open, onClose, onLink
         return;
       }
       const data = (await res.json()) as {
-        suggestions: { costs: CostS[]; incomes: IncS[] };
+        suggestions: { costs: CostS[]; incomes: IncS[]; preferPrimaryDocument?: "income" | "cost" };
       };
       setCosts(data.suggestions.costs ?? []);
       setIncomes(data.suggestions.incomes ?? []);
+      if (data.suggestions.preferPrimaryDocument) {
+        setPreferPrimaryDocument(data.suggestions.preferPrimaryDocument);
+      }
     } finally {
       setLoading(false);
     }
@@ -106,6 +110,67 @@ export function BankTransactionMatchModal({ transactionId, open, onClose, onLink
 
   if (!open) return null;
 
+  const hint =
+    preferPrimaryDocument === "income" ?
+      "Kwota dodatnia: najpierw sugerujemy przychody; ujemna transakcja → koszty."
+    : "Kwota ujemna: najpierw sugerujemy koszty; dodatnia transakcja → przychody.";
+
+  const incomeSection = (
+    <div>
+      <h3 className="mb-2 text-sm font-medium text-zinc-800 dark:text-zinc-200">Faktury przychodu</h3>
+      {incomes.length === 0 ? (
+        <p className="text-xs text-zinc-500">Brak oczywistych dopasowań w oknie dat.</p>
+      ) : (
+        <ul className="max-h-40 space-y-1 overflow-y-auto text-sm">
+          {incomes.map((c) => (
+            <li key={c.id} className="flex flex-wrap items-center justify-between gap-2 border-b border-zinc-100 py-1 dark:border-zinc-800">
+              <span className="text-zinc-700 dark:text-zinc-300">
+                {c.invoiceNumber} · {c.contractor} · {safeFormatDate(c.issueDate)} · {c.grossAmount} PLN
+                <span className="ml-1 text-xs text-zinc-400">({c.score})</span>
+              </span>
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => void linkIncome(c.id)}
+                className="shrink-0 rounded border border-emerald-600 px-2 py-0.5 text-xs text-emerald-800 hover:bg-emerald-50 disabled:opacity-50 dark:border-emerald-700 dark:text-emerald-200 dark:hover:bg-emerald-950/40"
+              >
+                Połącz + wpłata
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+
+  const costSection = (
+    <div>
+      <h3 className="mb-2 text-sm font-medium text-zinc-800 dark:text-zinc-200">Faktury kosztowe</h3>
+      {costs.length === 0 ? (
+        <p className="text-xs text-zinc-500">Brak oczywistych dopasowań w oknie dat.</p>
+      ) : (
+        <ul className="max-h-40 space-y-1 overflow-y-auto text-sm">
+          {costs.map((c) => (
+            <li key={c.id} className="flex flex-wrap items-center justify-between gap-2 border-b border-zinc-100 py-1 dark:border-zinc-800">
+              <span className="text-zinc-700 dark:text-zinc-300">
+                {c.documentNumber} · {c.supplier} · {safeFormatDate(c.documentDate)} · {c.grossAmount} PLN
+                <span className="ml-1 text-xs text-zinc-400">({c.score})</span>
+              </span>
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => void linkCost(c.id)}
+                className="shrink-0 rounded border border-emerald-600 px-2 py-0.5 text-xs text-emerald-800 hover:bg-emerald-50 disabled:opacity-50 dark:border-emerald-700 dark:text-emerald-200 dark:hover:bg-emerald-950/40"
+              >
+                Połącz + płatność
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" role="dialog">
       <div className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-lg border border-zinc-200 bg-white p-4 shadow-lg dark:border-zinc-700 dark:bg-zinc-900">
@@ -119,9 +184,11 @@ export function BankTransactionMatchModal({ transactionId, open, onClose, onLink
             Zamknij
           </button>
         </div>
-        <p className="mb-3 text-sm text-zinc-600 dark:text-zinc-400">
-          Sugestie są heurystyczne (kwota, data, opis). Żadne dopasowanie nie jest zapisywane bez Twojego potwierdzenia.
+        <p className="mb-2 text-sm text-zinc-600 dark:text-zinc-400">
+          Po potwierdzeniu zostanie utworzony <strong className="font-medium">realny zapis płatności</strong> na fakturze (wpłata
+          / wypłata), zgodny z kwotą i datą z wyciągu.
         </p>
+        <p className="mb-3 text-xs text-zinc-500 dark:text-zinc-400">{hint}</p>
 
         {error ? (
           <p className="mb-3 rounded border border-red-200 bg-red-50 px-2 py-1.5 text-sm text-red-800 dark:border-red-900 dark:bg-red-950/40 dark:text-red-200">
@@ -133,56 +200,16 @@ export function BankTransactionMatchModal({ transactionId, open, onClose, onLink
           <p className="text-sm text-zinc-500">Ładowanie sugestii…</p>
         ) : (
           <div className="space-y-4">
-            <div>
-              <h3 className="mb-2 text-sm font-medium text-zinc-800 dark:text-zinc-200">Faktury kosztowe (sugestie)</h3>
-              {costs.length === 0 ? (
-                <p className="text-xs text-zinc-500">Brak oczywistych dopasowań w oknie dat.</p>
-              ) : (
-                <ul className="max-h-40 space-y-1 overflow-y-auto text-sm">
-                  {costs.map((c) => (
-                    <li key={c.id} className="flex flex-wrap items-center justify-between gap-2 border-b border-zinc-100 py-1 dark:border-zinc-800">
-                      <span className="text-zinc-700 dark:text-zinc-300">
-                        {c.documentNumber} · {c.supplier} · {safeFormatDate(c.documentDate)} · {c.grossAmount} PLN
-                        <span className="ml-1 text-xs text-zinc-400">({c.score})</span>
-                      </span>
-                      <button
-                        type="button"
-                        disabled={busy}
-                        onClick={() => void linkCost(c.id)}
-                        className="shrink-0 rounded border border-emerald-600 px-2 py-0.5 text-xs text-emerald-800 hover:bg-emerald-50 disabled:opacity-50 dark:border-emerald-700 dark:text-emerald-200 dark:hover:bg-emerald-950/40"
-                      >
-                        Połącz
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
-            <div>
-              <h3 className="mb-2 text-sm font-medium text-zinc-800 dark:text-zinc-200">Faktury przychodu (sugestie)</h3>
-              {incomes.length === 0 ? (
-                <p className="text-xs text-zinc-500">Brak oczywistych dopasowań w oknie dat.</p>
-              ) : (
-                <ul className="max-h-40 space-y-1 overflow-y-auto text-sm">
-                  {incomes.map((c) => (
-                    <li key={c.id} className="flex flex-wrap items-center justify-between gap-2 border-b border-zinc-100 py-1 dark:border-zinc-800">
-                      <span className="text-zinc-700 dark:text-zinc-300">
-                        {c.invoiceNumber} · {c.contractor} · {safeFormatDate(c.issueDate)} · {c.grossAmount} PLN
-                        <span className="ml-1 text-xs text-zinc-400">({c.score})</span>
-                      </span>
-                      <button
-                        type="button"
-                        disabled={busy}
-                        onClick={() => void linkIncome(c.id)}
-                        className="shrink-0 rounded border border-emerald-600 px-2 py-0.5 text-xs text-emerald-800 hover:bg-emerald-50 disabled:opacity-50 dark:border-emerald-700 dark:text-emerald-200 dark:hover:bg-emerald-950/40"
-                      >
-                        Połącz
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
+            {preferPrimaryDocument === "income" ?
+              <>
+                {incomeSection}
+                {costSection}
+              </>
+            : <>
+                {costSection}
+                {incomeSection}
+              </>
+            }
             <div className="rounded border border-zinc-200 p-3 dark:border-zinc-700">
               <h3 className="mb-2 text-sm font-medium text-zinc-800 dark:text-zinc-200">Ręcznie (ID z systemu)</h3>
               <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
@@ -195,7 +222,7 @@ export function BankTransactionMatchModal({ transactionId, open, onClose, onLink
                       setManualIncome("");
                     }}
                     className="mt-0.5 w-full rounded border border-zinc-300 px-2 py-1 font-mono text-xs dark:border-zinc-600 dark:bg-zinc-950"
-                    placeholder="np. clxxxxxxxx"
+                    placeholder="tylko przy kwocie ujemnej"
                   />
                 </label>
                 <label className="flex-1 text-xs">
@@ -207,7 +234,7 @@ export function BankTransactionMatchModal({ transactionId, open, onClose, onLink
                       setManualCost("");
                     }}
                     className="mt-0.5 w-full rounded border border-zinc-300 px-2 py-1 font-mono text-xs dark:border-zinc-600 dark:bg-zinc-950"
-                    placeholder="np. clxxxxxxxx"
+                    placeholder="tylko przy kwocie dodatniej"
                   />
                 </label>
                 <button

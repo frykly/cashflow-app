@@ -107,11 +107,16 @@ export function scoreIncomeMatch(
   return score;
 }
 
+/** Dla transakcji dodatniej obniżamy ranking kosztów (nadwyżka przychodu); przy ujemnej — odwrotnie. */
+const DEMOTE_FACTOR = 0.12;
+
 export function rankCosts(
   tx: { amount: number; bookingDate: Date; description: string },
   list: (CostInvoice & { score?: number })[],
   take = 15,
+  opts?: { demote?: boolean },
 ): CostSuggestion[] {
+  const mul = opts?.demote ? DEMOTE_FACTOR : 1;
   const scored = list
     .map((inv) => ({
       id: inv.id,
@@ -119,7 +124,7 @@ export function rankCosts(
       supplier: inv.supplier,
       grossAmount: inv.grossAmount.toString(),
       documentDate: inv.documentDate.toISOString(),
-      score: scoreCostMatch(tx, inv),
+      score: Math.round(scoreCostMatch(tx, inv) * mul * 100) / 100,
     }))
     .sort((a, b) => b.score - a.score);
   return scored.slice(0, take);
@@ -129,7 +134,9 @@ export function rankIncomes(
   tx: { amount: number; bookingDate: Date; description: string },
   list: IncomeInvoice[],
   take = 15,
+  opts?: { demote?: boolean },
 ): IncomeSuggestion[] {
+  const mul = opts?.demote ? DEMOTE_FACTOR : 1;
   const scored = list
     .map((inv) => ({
       id: inv.id,
@@ -137,7 +144,7 @@ export function rankIncomes(
       contractor: inv.contractor,
       grossAmount: inv.grossAmount.toString(),
       issueDate: inv.issueDate.toISOString(),
-      score: scoreIncomeMatch(tx, inv),
+      score: Math.round(scoreIncomeMatch(tx, inv) * mul * 100) / 100,
     }))
     .sort((a, b) => b.score - a.score);
   return scored.slice(0, take);

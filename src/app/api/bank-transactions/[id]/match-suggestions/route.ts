@@ -15,7 +15,7 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
   const end = new Date(tx.bookingDate);
   end.setDate(end.getDate() + RANGE_DAYS);
 
-  const [costs, incomes] = await Promise.all([
+  const [costRows, incomeRows] = await Promise.all([
     prisma.costInvoice.findMany({
       where: { documentDate: { gte: start, lte: end } },
       orderBy: { documentDate: "desc" },
@@ -34,6 +34,8 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
     description: tx.description,
   };
 
+  const preferPrimaryDocument = tx.amount > 0 ? "income" : "cost";
+
   return jsonData({
     transaction: {
       id: tx.id,
@@ -44,8 +46,9 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
       status: tx.status,
     },
     suggestions: {
-      costs: rankCosts(t, costs),
-      incomes: rankIncomes(t, incomes),
+      costs: rankCosts(t, costRows, 15, { demote: preferPrimaryDocument === "income" }),
+      incomes: rankIncomes(t, incomeRows, 15, { demote: preferPrimaryDocument === "cost" }),
+      preferPrimaryDocument,
     },
   });
 }

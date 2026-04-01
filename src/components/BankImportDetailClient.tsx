@@ -194,25 +194,14 @@ export function BankImportDetailClient({ importId }: { importId: string }) {
                   <td className="px-2 py-2">
                     <div className="flex max-w-[420px] flex-wrap gap-1">
                       {showMatchButton(t) ? (
-                        <>
-                          <button
-                            type="button"
-                            disabled={b}
-                            onClick={() => setMatchTxId(t.id)}
-                            className="rounded border border-emerald-600 bg-white px-2 py-1 text-xs text-emerald-900 hover:bg-emerald-50 disabled:opacity-50 dark:border-emerald-700 dark:bg-zinc-950 dark:text-emerald-200 dark:hover:bg-emerald-950/40"
-                          >
-                            Dopasuj do dokumentu
-                          </button>
-                          <button
-                            type="button"
-                            disabled={b}
-                            onClick={() => void setStatus(t.id, "MATCHED")}
-                            className="rounded border border-emerald-300 bg-white px-2 py-1 text-xs text-emerald-800 hover:bg-emerald-50 disabled:opacity-50 dark:border-emerald-800 dark:bg-zinc-950 dark:text-emerald-200 dark:hover:bg-emerald-950/40"
-                            title="Uzgadnienie bez powiązania z konkretnym dokumentem w systemie"
-                          >
-                            Dopasowane ręcznie
-                          </button>
-                        </>
+                        <button
+                          type="button"
+                          disabled={b}
+                          onClick={() => setMatchTxId(t.id)}
+                          className="rounded border border-emerald-600 bg-white px-2 py-1 text-xs text-emerald-900 hover:bg-emerald-50 disabled:opacity-50 dark:border-emerald-700 dark:bg-zinc-950 dark:text-emerald-200 dark:hover:bg-emerald-950/40"
+                        >
+                          Dopasuj do dokumentu
+                        </button>
                       ) : null}
                       <button
                         type="button"

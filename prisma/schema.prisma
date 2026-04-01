@@ -93,13 +93,17 @@ model IncomeInvoice {
 }
 
 model IncomeInvoicePayment {
-  id              String        @id @default(cuid())
-  incomeInvoiceId String
-  incomeInvoice   IncomeInvoice @relation(fields: [incomeInvoiceId], references: [id], onDelete: Cascade)
-  amountGross     Decimal
-  paymentDate     DateTime
-  notes           String        @default("")
-  createdAt       DateTime      @default(now())
+  id                 String           @id @default(cuid())
+  incomeInvoiceId    String
+  incomeInvoice      IncomeInvoice    @relation(fields: [incomeInvoiceId], references: [id], onDelete: Cascade)
+  amountGross        Decimal
+  paymentDate        DateTime
+  notes              String           @default("")
+  /// Powiązanie z wierszem importu bankowego (jedna płatność na transakcję)
+  bankTransactionId  String?          @unique
+  createdAt          DateTime         @default(now())
+
+  @@index([bankTransactionId])
 }
 
 model CostInvoice {
@@ -140,13 +144,16 @@ model CostInvoice {
 }
 
 model CostInvoicePayment {
-  id            String      @id @default(cuid())
-  costInvoiceId String
-  costInvoice   CostInvoice @relation(fields: [costInvoiceId], references: [id], onDelete: Cascade)
-  amountGross   Decimal
-  paymentDate   DateTime
-  notes         String      @default("")
-  createdAt     DateTime    @default(now())
+  id                 String      @id @default(cuid())
+  costInvoiceId      String
+  costInvoice        CostInvoice @relation(fields: [costInvoiceId], references: [id], onDelete: Cascade)
+  amountGross        Decimal
+  paymentDate        DateTime
+  notes              String      @default("")
+  bankTransactionId  String?     @unique
+  createdAt          DateTime    @default(now())
+
+  @@index([bankTransactionId])
 }
 
 model RecurringTemplate {
