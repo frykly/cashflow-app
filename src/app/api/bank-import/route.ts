@@ -5,6 +5,7 @@ import { parseBankStatementCsv } from "@/lib/bank-import/parse-csv";
 import {
   computeBankTransactionDedupeKey,
   computeLegacyBankTransactionDedupeKey,
+  legacyOnlyStrongDuplicate,
 } from "@/lib/bank-import/dedupe-key";
 
 const accountTypes = new Set(["MAIN", "VAT"]);
@@ -151,6 +152,9 @@ export async function POST(req: Request) {
           importId: true,
           dedupeKey: true,
           dedupeInputText: true,
+          description: true,
+          counterpartyName: true,
+          counterpartyAccount: true,
         },
       });
       if (!st) {
@@ -158,9 +162,8 @@ export async function POST(req: Request) {
       } else {
         const sameMaterial =
           st.dedupeInputText != null && st.dedupeInputText === r.dedupeRawMaterial;
-        const oldRowLegacyOnly = !st.dedupeInputText && st.dedupeKey === legacy;
 
-        if (sameMaterial || oldRowLegacyOnly) {
+        if (sameMaterial) {
           skippedDuplicates += 1;
           skippedDetails.push({
             csvLine: r.sourceLine,
@@ -169,17 +172,39 @@ export async function POST(req: Request) {
             fingerprintNew: key,
             fingerprintLegacy: legacy,
             ...basePreview(r),
-            decisionNote: sameMaterial
-              ? "Fingerprint legacy zgadza się z rekordem w bazie; zapisany materiał deduplikacji (dedupeInputText) jest identyczny z tym wierszem CSV."
-              : "Starszy rekord w bazie (tylko klucz legacy, bez zapisanego pełnego materiału) — uznano za ten sam przelew.",
-            materialIdenticalToStored: sameMaterial,
+            decisionNote:
+              "Fingerprint legacy zgadza się z rekordem w bazie; zapisany materiał deduplikacji (dedupeInputText) jest identyczny z tym wierszem CSV.",
+            materialIdenticalToStored: true,
             storedDedupeInputPreview: st.dedupeInputText ? preview(st.dedupeInputText, 220) : undefined,
             matchedTransactionId: st.id,
             matchedImportId: st.importId,
           });
           continue;
         }
-        /* Kolizja tylko legacy: w bazie jest inny pełny materiał niż w CSV — to NIE ten sam przelew → importuj */
+
+        const legacyOnlyOld = !st.dedupeInputText && st.dedupeKey === legacy;
+        if (legacyOnlyOld) {
+          if (legacyOnlyStrongDuplicate({ row: r, stored: st })) {
+            skippedDuplicates += 1;
+            skippedDetails.push({
+              csvLine: r.sourceLine,
+              reason: "existing_in_database",
+              matchedKeyKind: "legacy",
+              fingerprintNew: key,
+              fingerprintLegacy: legacy,
+              ...basePreview(r),
+              decisionNote:
+                "Kolizja legacy — rekord w bazie bez dedupeInputText: zgodny kontrahent, rachunek oraz materiał z zapisanym opisem — uznano za duplikat.",
+              materialIdenticalToStored: false,
+              storedDedupeInputPreview: preview(st.description, 220),
+              matchedTransactionId: st.id,
+              matchedImportId: st.importId,
+            });
+            continue;
+          }
+          /* Słaba kolizja legacy (np. inny kontrahent / rachunek / pełny materiał) — importuj jako osobną transakcję. */
+        }
+        /* Rekord z dedupeInputText różnym od CSV albo słaba kolizja legacy-only — importuj */
       }
     }
 

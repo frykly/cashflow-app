@@ -13,6 +13,41 @@ function normAccount(s: string | null | undefined): string {
 }
 
 /**
+ * Kolizja tylko po legacy: stary rekord bez dedupeInputText — czy uznać za ten sam przelew co wiersz CSV.
+ *
+ * Blokada importu tylko przy „mocnym” dopasowaniu: ten sam kontrahent i rachunek oraz materiał zgodny
+ * z tym, co mamy w bazie (opis = jedyny zapis pełnego tekstu przy starych importach).
+ *
+ * Jeśli różni się kontrahent, rachunek albo pełny materiał względem zapisu — zwraca false (importuj).
+ */
+export function legacyOnlyStrongDuplicate(params: {
+  row: {
+    dedupeRawMaterial: string;
+    description: string;
+    counterpartyName?: string | null;
+    counterpartyAccount?: string | null;
+  };
+  stored: {
+    description: string;
+    counterpartyName: string | null;
+    counterpartyAccount: string | null;
+  };
+}): boolean {
+  const { row, stored } = params;
+  if (normParty(row.counterpartyName) !== normParty(stored.counterpartyName)) return false;
+  if (normAccount(row.counterpartyAccount) !== normAccount(stored.counterpartyAccount)) return false;
+
+  const mat = normDesc(row.dedupeRawMaterial);
+  const stDesc = normDesc(stored.description);
+  if (mat === stDesc) return true;
+
+  const short = normDesc(row.description);
+  if (mat === short && short === stDesc) return true;
+
+  return false;
+}
+
+/**
  * Legacy: data + kwota + opis + konto (bez kontrahenta) — zgodność z istniejącymi wierszami w DB.
  */
 export function computeLegacyBankTransactionDedupeKey(params: {
