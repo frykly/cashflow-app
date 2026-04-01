@@ -9,6 +9,7 @@ const links = [
   { href: "/projects", label: "Projekty" },
   { href: "/income-invoices", label: "Przychody" },
   { href: "/cost-invoices", label: "Koszty" },
+  { href: "/bank-imports", label: "Import bankowy" },
   { href: "/planned-events", label: "Zdarzenia" },
   { href: "/recurring", label: "Reguły cykliczne" },
   { href: "/settings", label: "Ustawienia" },

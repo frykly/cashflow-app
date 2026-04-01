@@ -204,3 +204,32 @@ model PlannedFinancialEvent {
 
   @@index([projectId])
 }
+
+/// Import wyciągu bankowego (CSV) — warstwa uzgodnień, bez wpływu na cashflow.
+model BankImport {
+  id           String            @id @default(cuid())
+  fileName     String
+  createdAt    DateTime          @default(now())
+  transactions BankTransaction[]
+}
+
+model BankTransaction {
+  id                  String     @id @default(cuid())
+  importId            String
+  import              BankImport @relation(fields: [importId], references: [id], onDelete: Cascade)
+  bookingDate         DateTime
+  valueDate           DateTime?
+  amount              Int // grosze
+  currency            String
+  description         String
+  counterpartyName    String?
+  counterpartyAccount String?
+  accountType         String // MAIN | VAT
+  status              String // NEW | MATCHED | IGNORED | CREATED | TRANSFER
+  createdAt           DateTime   @default(now())
+  matchedInvoiceId    String?
+  createdCostId       String?
+
+  @@index([importId])
+  @@index([status])
+}
