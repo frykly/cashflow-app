@@ -2,7 +2,10 @@ import { prisma } from "@/lib/db";
 import { jsonData } from "@/lib/api/json-response";
 import { jsonError } from "@/lib/api/errors";
 import { parseBankStatementCsv } from "@/lib/bank-import/parse-csv";
-import { computeBankTransactionDedupeKey } from "@/lib/bank-import/dedupe-key";
+import {
+  computeBankTransactionDedupeKey,
+  computeLegacyBankTransactionDedupeKey,
+} from "@/lib/bank-import/dedupe-key";
 
 const accountTypes = new Set(["MAIN", "VAT"]);
 
@@ -35,17 +38,27 @@ export async function POST(req: Request) {
     return jsonError(msg);
   }
 
-  const keys = rows.map((r) =>
+  const keysNew = rows.map((r) =>
     computeBankTransactionDedupeKey({
+      accountType,
+      bookingDate: r.bookingDate,
+      amountGrosze: r.amountGrosze,
+      description: r.description,
+      counterpartyName: r.counterpartyName,
+      counterpartyAccount: r.counterpartyAccount,
+    }),
+  );
+  const keysLegacy = rows.map((r) =>
+    computeLegacyBankTransactionDedupeKey({
       accountType,
       bookingDate: r.bookingDate,
       amountGrosze: r.amountGrosze,
       description: r.description,
     }),
   );
-  const uniqueKeys = [...new Set(keys)];
+  const lookupKeys = [...new Set([...keysNew, ...keysLegacy])];
   const existingRows = await prisma.bankTransaction.findMany({
-    where: { dedupeKey: { in: uniqueKeys } },
+    where: { dedupeKey: { in: lookupKeys } },
     select: { dedupeKey: true },
   });
   const taken = new Set(existingRows.map((e) => e.dedupeKey).filter(Boolean) as string[]);
@@ -68,12 +81,14 @@ export async function POST(req: Request) {
 
   for (let i = 0; i < rows.length; i++) {
     const r = rows[i];
-    const key = keys[i];
-    if (taken.has(key) || seenInFile.has(key)) {
+    const key = keysNew[i]!;
+    const legacy = keysLegacy[i]!;
+    if (taken.has(key) || taken.has(legacy) || seenInFile.has(key) || seenInFile.has(legacy)) {
       skippedDuplicates += 1;
       continue;
     }
     seenInFile.add(key);
+    seenInFile.add(legacy);
     createPayload.push({
       bookingDate: r.bookingDate,
       valueDate: r.valueDate ?? null,

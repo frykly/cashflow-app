@@ -681,6 +681,7 @@ export function CostInvoicesClient({ initialQueryString = "" }: { initialQuerySt
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-6">
           <Field label="Szukaj (nr, dostawca, opis, projekt)">
             <Input
+              className="w-full min-w-0"
               value={filterDraft.q}
               onChange={(e) => setFilterDraft((d) => ({ ...d, q: e.target.value }))}
               placeholder="np. FV/1, dostawca lub projekt"

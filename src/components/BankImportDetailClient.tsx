@@ -7,6 +7,7 @@ import { readApiError } from "@/lib/api-client";
 import { formatPlnFromGrosze } from "@/lib/bank-import/format-pln";
 import { safeFormatDate } from "@/lib/format";
 import { BankTransactionMatchModal } from "@/components/BankTransactionMatchModal";
+import { CreateCostFromBankModal } from "@/components/CreateCostFromBankModal";
 
 type Tx = {
   id: string;
@@ -57,6 +58,7 @@ export function BankImportDetailClient({ importId }: { importId: string }) {
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [matchTxId, setMatchTxId] = useState<string | null>(null);
+  const [costModalTxId, setCostModalTxId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setError(null);
@@ -111,21 +113,6 @@ export function BankImportDetailClient({ importId }: { importId: string }) {
     }
   }
 
-  async function createCost(id: string) {
-    setBusyId(id);
-    setError(null);
-    try {
-      const res = await fetch(`/api/bank-transactions/${id}/create-cost`, { method: "POST" });
-      if (!res.ok) {
-        setError(await readApiError(res));
-        return;
-      }
-      await afterMutation();
-    } finally {
-      setBusyId(null);
-    }
-  }
-
   if (!data && !error) {
     return <p className="text-zinc-500">Ładowanie…</p>;
   }
@@ -145,6 +132,13 @@ export function BankImportDetailClient({ importId }: { importId: string }) {
         open={matchTxId !== null}
         onClose={() => setMatchTxId(null)}
         onLinked={() => void afterMutation()}
+      />
+
+      <CreateCostFromBankModal
+        transactionId={costModalTxId}
+        open={costModalTxId !== null}
+        onClose={() => setCostModalTxId(null)}
+        onCreated={() => void afterMutation()}
       />
 
       <div className="flex flex-wrap items-baseline gap-4">
@@ -173,7 +167,7 @@ export function BankImportDetailClient({ importId }: { importId: string }) {
               <th className="px-2 py-2 font-medium">Opis</th>
               <th className="px-2 py-2 font-medium">Kwota</th>
               <th className="px-2 py-2 font-medium">Status</th>
-              <th className="px-2 py-2 font-medium">Akcje</th>
+              <th className="px-2 py-2 font-medium">Szczegóły / akcje</th>
             </tr>
           </thead>
           <tbody>
@@ -193,6 +187,12 @@ export function BankImportDetailClient({ importId }: { importId: string }) {
                   </td>
                   <td className="px-2 py-2">
                     <div className="flex max-w-[420px] flex-wrap gap-1">
+                      <Link
+                        href={`/bank-imports/${importId}/transactions/${t.id}`}
+                        className="rounded border border-zinc-300 bg-white px-2 py-1 text-xs text-zinc-800 hover:bg-zinc-50 dark:border-zinc-600 dark:bg-zinc-950 dark:text-zinc-200 dark:hover:bg-zinc-900"
+                      >
+                        Szczegóły
+                      </Link>
                       {showMatchButton(t) ? (
                         <button
                           type="button"
@@ -206,11 +206,11 @@ export function BankImportDetailClient({ importId }: { importId: string }) {
                       <button
                         type="button"
                         disabled={b || !createOk}
-                        onClick={() => void createCost(t.id)}
+                        onClick={() => setCostModalTxId(t.id)}
                         className="rounded border border-blue-300 bg-white px-2 py-1 text-xs text-blue-900 hover:bg-blue-50 disabled:opacity-50 dark:border-blue-800 dark:bg-zinc-950 dark:text-blue-200 dark:hover:bg-blue-950/40"
                         title={!createOk ? "Powiązanie z kosztem już istnieje lub status blokuje" : undefined}
                       >
-                        Utwórz koszt
+                        Utwórz koszt…
                       </button>
                       <button
                         type="button"

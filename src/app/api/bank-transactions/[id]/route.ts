@@ -2,7 +2,79 @@ import { prisma } from "@/lib/db";
 import { jsonData } from "@/lib/api/json-response";
 import { jsonError } from "@/lib/api/errors";
 import { healBankTransactionLinks } from "@/lib/bank-import/heal-links";
+import { explainBankTransactionDedupe } from "@/lib/bank-import/dedupe-explain";
 import { z } from "zod";
+
+export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> }) {
+  const { id } = await ctx.params;
+
+  const existing = await prisma.bankTransaction.findUnique({ where: { id }, select: { importId: true } });
+  if (!existing) return jsonError("Nie znaleziono transakcji", 404);
+  await healBankTransactionLinks(prisma, existing.importId);
+
+  const tx = await prisma.bankTransaction.findUnique({
+    where: { id },
+    include: {
+      import: { select: { id: true, fileName: true, createdAt: true } },
+    },
+  });
+  if (!tx) return jsonError("Nie znaleziono transakcji", 404);
+
+  const payment = await prisma.costInvoicePayment.findFirst({
+    where: { bankTransactionId: id },
+    select: {
+      id: true,
+      amountGross: true,
+      costInvoiceId: true,
+      costInvoice: { select: { id: true, documentNumber: true, supplier: true } },
+    },
+  });
+
+  const linkedCost =
+    tx.linkedCostInvoiceId ?
+      await prisma.costInvoice.findUnique({
+        where: { id: tx.linkedCostInvoiceId },
+        select: { id: true, documentNumber: true, supplier: true },
+      })
+    : null;
+
+  const matchedIncome =
+    tx.matchedInvoiceId ?
+      await prisma.incomeInvoice.findUnique({
+        where: { id: tx.matchedInvoiceId },
+        select: { id: true, invoiceNumber: true, contractor: true },
+      })
+    : null;
+
+  const createdCost =
+    tx.createdCostId ?
+      await prisma.costInvoice.findUnique({
+        where: { id: tx.createdCostId },
+        select: { id: true, documentNumber: true, supplier: true },
+      })
+    : null;
+
+  const dedupe = explainBankTransactionDedupe({
+    accountType: tx.accountType,
+    bookingDate: tx.bookingDate,
+    amount: tx.amount,
+    description: tx.description,
+    counterpartyName: tx.counterpartyName,
+    counterpartyAccount: tx.counterpartyAccount,
+    dedupeKey: tx.dedupeKey,
+  });
+
+  return jsonData({
+    ...tx,
+    dedupe,
+    links: {
+      payment,
+      linkedCost,
+      matchedIncome,
+      createdCost,
+    },
+  });
+}
 
 const statuses = z.enum([
   "NEW",

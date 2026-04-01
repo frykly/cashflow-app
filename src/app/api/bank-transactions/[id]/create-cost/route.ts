@@ -8,9 +8,30 @@ import { resolveProjectFields } from "@/lib/project-persist";
 import type { VatRatePct } from "@/lib/vat-rate";
 import { healBankTransactionLinks } from "@/lib/bank-import/heal-links";
 import { assertCostLinkSign, BANK_COST_PAYMENT_NOTE } from "@/lib/bank-import/payment-from-bank";
+import { inferDocumentNumberFromBankText } from "@/lib/bank-import/parse-document-number";
+import { z } from "zod";
 
-export async function POST(_req: Request, ctx: { params: Promise<{ id: string }> }) {
+const createCostBodySchema = z.object({
+  documentNumber: z.string().max(120).optional().nullable(),
+  supplier: z.string().max(500).optional().nullable(),
+  description: z.string().max(2000).optional().nullable(),
+  expenseCategoryId: z.string().uuid().optional().nullable(),
+  projectId: z.string().min(1).optional().nullable(),
+});
+
+export async function POST(req: Request, ctx: { params: Promise<{ id: string }> }) {
   const { id: bankTxId } = await ctx.params;
+
+  let bodyRaw: unknown = {};
+  try {
+    const t = await req.text();
+    if (t.trim()) bodyRaw = JSON.parse(t) as unknown;
+  } catch {
+    return jsonError("Nieprawidłowy JSON", 400);
+  }
+
+  const parsedBody = createCostBodySchema.safeParse(bodyRaw);
+  if (!parsedBody.success) return jsonError("Nieprawidłowe pola formularza", 422);
 
   const tx = await prisma.bankTransaction.findUnique({ where: { id: bankTxId } });
   if (!tx) return jsonError("Nie znaleziono transakcji", 404);
@@ -51,13 +72,30 @@ export async function POST(_req: Request, ctx: { params: Promise<{ id: string }>
   if (!resolved.ok) return jsonError(resolved.message);
 
   const { net, vat, gross, storedVatRate } = resolved.amounts;
-  const pf = await resolveProjectFields(prisma, null);
+
+  const b = parsedBody.data;
+  const inferredDoc = inferDocumentNumberFromBankText(fresh.description);
+  const docInput = b.documentNumber?.trim();
+  const documentNumber = (docInput || inferredDoc || `BANK-${fresh.id.slice(0, 12)}`).slice(0, 120);
+
+  const supplier = (b.supplier?.trim() || fresh.counterpartyName?.trim() || "Wyciąg bankowy").slice(0, 500);
+  const description = (b.description?.trim() ?? fresh.description.trim()).slice(0, 2000);
+
+  let expenseCategoryId: string | null = b.expenseCategoryId ?? null;
+  if (expenseCategoryId) {
+    const cat = await prisma.expenseCategory.findUnique({ where: { id: expenseCategoryId }, select: { id: true } });
+    if (!cat) return jsonError("Nie znaleziono kategorii kosztu", 400);
+  }
+
+  let pf: { projectId: string | null; projectName: string | null };
+  try {
+    const pid = b.projectId?.trim() || null;
+    pf = await resolveProjectFields(prisma, pid);
+  } catch {
+    return jsonError("Nieprawidłowy projekt", 400);
+  }
 
   const docDate = fresh.bookingDate;
-  const supplier = (fresh.counterpartyName?.trim() || "Wyciąg bankowy").slice(0, 500);
-  const description = fresh.description.trim().slice(0, 2000);
-
-  const documentNumber = `BANK-${fresh.id.slice(0, 12)}`;
 
   const row = await prisma.$transaction(async (trx) => {
     const cost = await trx.costInvoice.create({
@@ -79,7 +117,7 @@ export async function POST(_req: Request, ctx: { params: Promise<{ id: string }>
         notes: "",
         projectId: pf.projectId,
         projectName: pf.projectName,
-        expenseCategoryId: null,
+        expenseCategoryId,
       },
     });
 
