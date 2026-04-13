@@ -84,8 +84,23 @@ export function buildCostWhere(sp: URLSearchParams): Prisma.CostInvoiceWhereInpu
   const projectId = sp.get("projectId")?.trim();
   if (projectId) filters.push({ projectId });
 
-  const categoryId = sp.get("categoryId")?.trim();
-  if (categoryId) filters.push({ expenseCategoryId: categoryId });
+  const uncategorized = sp.get("uncategorized") === "1";
+  if (uncategorized) {
+    filters.push({ expenseCategoryId: null });
+  } else {
+    const catsParam = sp.get("categories")?.trim();
+    const legacyCat = sp.get("categoryId")?.trim();
+    const ids = catsParam
+      ? catsParam
+          .split(",")
+          .map((x) => x.trim())
+          .filter(Boolean)
+      : legacyCat
+        ? [legacyCat]
+        : [];
+    if (ids.length === 1) filters.push({ expenseCategoryId: ids[0]! });
+    else if (ids.length > 1) filters.push({ expenseCategoryId: { in: ids } });
+  }
 
   const dateField = sp.get("dateField") ?? "plannedPaymentDate";
   const allowed = new Set(["plannedPaymentDate", "documentDate", "paymentDueDate"]);
@@ -113,30 +128,6 @@ export function buildCostWhere(sp: URLSearchParams): Prisma.CostInvoiceWhereInpu
   const recurringSource = sp.get("recurringSource")?.trim();
   if (recurringSource === "manual") filters.push({ isGeneratedFromRecurring: false });
   if (recurringSource === "generated") filters.push({ isGeneratedFromRecurring: true });
-
-  const costView = sp.get("costView")?.trim();
-  if (costView === "project") filters.push({ projectId: { not: null } });
-  if (costView === "operational") filters.push({ projectId: null });
-  if (costView === "uncategorized") filters.push({ expenseCategoryId: null });
-  if (costView === "bank") {
-    filters.push({
-      OR: [
-        { payments: { some: { bankTransactionId: { not: null } } } },
-        {
-          expenseCategory: {
-            OR: [{ slug: { contains: "bank" } }, { name: { contains: "Bank" } }, { name: { contains: "opłat" } }],
-          },
-        },
-      ],
-    });
-  }
-  if (costView === "overdue") {
-    const today = startOfDay(new Date());
-    filters.push({
-      paid: false,
-      OR: [{ plannedPaymentDate: { lt: today } }, { paymentDueDate: { lt: today } }],
-    });
-  }
 
   return filters.length ? { AND: filters } : {};
 }

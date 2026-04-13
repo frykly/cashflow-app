@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { usePathname, useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ProjectSearchPicker } from "@/components/ProjectSearchPicker";
 import { Alert, Badge, Button, Field, Input, Modal, Select, Spinner, Textarea } from "@/components/ui";
@@ -19,6 +20,14 @@ import { DueDateOffsetControls } from "@/components/DueDateOffsetControls";
 import { normalizeDecimalInput } from "@/lib/decimal-input";
 import { isStoredVatOnlyCost } from "@/lib/validation/is-vat-only-cost";
 import { projectDisplayLabel } from "@/lib/project-display";
+import {
+  addSavedCostListView,
+  loadLastCostListQuery,
+  loadSavedCostListViews,
+  removeSavedCostListView,
+  saveLastCostListQuery,
+  type SavedCostListView,
+} from "@/lib/cost-invoices-list-storage";
 
 type PayPick = Pick<CostInvoicePayment, "amountGross">;
 
@@ -137,18 +146,33 @@ const DATE_FIELD_OPTIONS = [
   { value: "documentDate", label: "Data dokumentu" },
 ];
 
-const COST_VIEW_PRESETS: { key: string; label: string }[] = [
-  { key: "", label: "Wszystkie" },
-  { key: "project", label: "Projektowe" },
-  { key: "operational", label: "Operacyjne" },
-  { key: "bank", label: "Bankowe i opłaty" },
-  { key: "uncategorized", label: "Bez kategorii" },
-  { key: "overdue", label: "Po terminie" },
+/** Tylko obiektywne presety (bez heurystyk kategorii). */
+const COST_QUICK_PRESETS = [
+  { id: "all" as const, label: "Wszystkie" },
+  { id: "uncategorized" as const, label: "Bez kategorii" },
+  { id: "overdue" as const, label: "Po terminie" },
 ];
+
+function costListFiltersEmptyForQuickAll(m: URLSearchParams): boolean {
+  return (
+    !m.get("q")?.trim() &&
+    !m.get("status")?.trim() &&
+    !m.get("categories")?.trim() &&
+    !m.get("categoryId")?.trim() &&
+    m.get("uncategorized") !== "1" &&
+    m.get("overdue") !== "1" &&
+    !m.get("recurringSource")?.trim() &&
+    !m.get("projectId")?.trim() &&
+    !m.get("dateFrom")?.trim() &&
+    !m.get("dateTo")?.trim()
+  );
+}
 
 type Cat = { id: string; name: string; slug: string; isActive?: boolean };
 
 export function CostInvoicesClient({ initialQueryString = "" }: { initialQueryString?: string }) {
+  const router = useRouter();
+  const pathname = usePathname();
   const { queryString, setParam, setParams, merged } = useListQuery("cost", initialQueryString);
   const [rows, setRows] = useState<Row[]>([]);
   const [listLoading, setListLoading] = useState(true);
@@ -173,31 +197,65 @@ export function CostInvoicesClient({ initialQueryString = "" }: { initialQuerySt
   const [filterDraft, setFilterDraft] = useState({
     q: "",
     status: "",
-    categoryId: "",
+    categoryIds: [] as string[],
+    uncategorizedOnly: false,
     recurringSource: "",
     projectId: "",
     dateFrom: "",
     dateTo: "",
     dateField: "plannedPaymentDate",
     overdueOnly: false,
-    costView: "",
   });
+
+  const [savedViews, setSavedViews] = useState<SavedCostListView[]>([]);
+  const persistReadyRef = useRef(false);
+  const restoredRef = useRef(false);
+
+  useEffect(() => {
+    setSavedViews(loadSavedCostListViews());
+  }, []);
+
+  useEffect(() => {
+    if (restoredRef.current) return;
+    restoredRef.current = true;
+    if (initialQueryString.trim().length > 0) return;
+    const last = loadLastCostListQuery();
+    if (!last?.trim()) return;
+    router.replace(`${pathname}?${last}`);
+  }, [initialQueryString, pathname, router]);
 
   useEffect(() => {
     const m = new URLSearchParams(queryString);
-    const cv = m.get("costView") ?? "";
+    const catsRaw = m.get("categories")?.trim();
+    const legacy = m.get("categoryId")?.trim();
+    const categoryIds = catsRaw
+      ? catsRaw
+          .split(",")
+          .map((x) => x.trim())
+          .filter(Boolean)
+      : legacy
+        ? [legacy]
+        : [];
     setFilterDraft({
       q: m.get("q") ?? "",
       status: m.get("status") ?? "",
-      categoryId: m.get("categoryId") ?? "",
+      categoryIds,
+      uncategorizedOnly: m.get("uncategorized") === "1",
       recurringSource: m.get("recurringSource") ?? "",
       projectId: m.get("projectId") ?? "",
       dateFrom: m.get("dateFrom") ?? "",
       dateTo: m.get("dateTo") ?? "",
       dateField: m.get("dateField") || "plannedPaymentDate",
-      overdueOnly: m.get("overdue") === "1" || cv === "overdue",
-      costView: cv,
+      overdueOnly: m.get("overdue") === "1",
     });
+  }, [queryString]);
+
+  useEffect(() => {
+    if (!persistReadyRef.current) {
+      persistReadyRef.current = true;
+      return;
+    }
+    saveLastCostListQuery(queryString);
   }, [queryString]);
 
   useEffect(() => {
@@ -243,18 +301,22 @@ export function CostInvoicesClient({ initialQueryString = "" }: { initialQuerySt
   }, [load]);
 
   function applyFilters() {
-    const cv = filterDraft.costView.trim();
     setParams({
       q: filterDraft.q.trim() || null,
       status: filterDraft.status || null,
-      categoryId: filterDraft.categoryId || null,
+      categories:
+        filterDraft.uncategorizedOnly ? null
+        : filterDraft.categoryIds.length > 0 ?
+          filterDraft.categoryIds.join(",")
+        : null,
+      categoryId: null,
+      uncategorized: filterDraft.uncategorizedOnly ? "1" : null,
       recurringSource: filterDraft.recurringSource || null,
       projectId: filterDraft.projectId || null,
       dateFrom: filterDraft.dateFrom || null,
       dateTo: filterDraft.dateTo || null,
       dateField: filterDraft.dateField,
-      overdue: filterDraft.overdueOnly && cv !== "overdue" ? "1" : null,
-      costView: cv || null,
+      overdue: filterDraft.overdueOnly ? "1" : null,
     });
   }
 
@@ -262,24 +324,49 @@ export function CostInvoicesClient({ initialQueryString = "" }: { initialQuerySt
     setParams({
       q: null,
       status: null,
+      categories: null,
       categoryId: null,
+      uncategorized: null,
       recurringSource: null,
       projectId: null,
       dateFrom: null,
       dateTo: null,
       dateField: null,
       overdue: null,
-      costView: null,
     });
   }
 
-  function applyCostPreset(key: string) {
-    setFilterDraft((d) => ({ ...d, costView: key, overdueOnly: key === "overdue" ? true : d.overdueOnly }));
-    if (key === "overdue") {
-      setParams({ costView: "overdue", overdue: null });
-    } else {
-      setParams({ costView: key || null });
+  function applyQuickPreset(id: "all" | "uncategorized" | "overdue") {
+    if (id === "all") {
+      clearFilters();
+      return;
     }
+    if (id === "uncategorized") {
+      setParams({
+        uncategorized: "1",
+        categories: null,
+        categoryId: null,
+      });
+      return;
+    }
+    setParams({ overdue: "1" });
+  }
+
+  function saveCurrentView() {
+    const name = window.prompt("Nazwa widoku (np. miesiąc + kategorie):");
+    if (name == null || !name.trim()) return;
+    addSavedCostListView(name.trim(), queryString);
+    setSavedViews(loadSavedCostListViews());
+  }
+
+  function loadSavedView(v: SavedCostListView) {
+    router.replace(`${pathname}?${v.query}`);
+  }
+
+  function deleteSavedView(id: string) {
+    if (!confirm("Usunąć zapisany widok z tej przeglądarki?")) return;
+    removeSavedCostListView(id);
+    setSavedViews(loadSavedCostListViews());
   }
 
   const categoriesForForm = useMemo(() => {
@@ -679,6 +766,7 @@ export function CostInvoicesClient({ initialQueryString = "" }: { initialQuerySt
   }
 
   const overdueFilterActive = merged.get("overdue") === "1";
+  const quickAllActive = costListFiltersEmptyForQuickAll(merged);
 
   return (
     <div className="space-y-6">
@@ -713,14 +801,16 @@ export function CostInvoicesClient({ initialQueryString = "" }: { initialQuerySt
         <div className="mb-3">
           <p className="mb-2 text-xs font-medium uppercase tracking-wide text-zinc-500">Szybki widok</p>
           <div className="flex flex-wrap gap-2">
-            {COST_VIEW_PRESETS.map((p) => {
+            {COST_QUICK_PRESETS.map((p) => {
               const active =
-                p.key === "" ? !merged.get("costView") : merged.get("costView") === p.key;
+                p.id === "all" ? quickAllActive
+                : p.id === "uncategorized" ? merged.get("uncategorized") === "1"
+                : merged.get("overdue") === "1";
               return (
                 <button
-                  key={p.key || "all"}
+                  key={p.id}
                   type="button"
-                  onClick={() => applyCostPreset(p.key)}
+                  onClick={() => applyQuickPreset(p.id)}
                   disabled={listLoading}
                   className={`rounded-full border px-3 py-1.5 text-xs font-medium transition-colors disabled:opacity-50 ${
                     active
@@ -732,6 +822,54 @@ export function CostInvoicesClient({ initialQueryString = "" }: { initialQuerySt
                 </button>
               );
             })}
+          </div>
+        </div>
+
+        <div className="mb-4 flex flex-wrap items-end gap-3 rounded-lg border border-dashed border-zinc-300 bg-white/60 px-3 py-2 dark:border-zinc-600 dark:bg-zinc-950/40">
+          <div className="min-w-[200px] flex-1">
+            <label className="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-400">Moje widoki (ta przeglądarka)</label>
+            <div className="flex flex-wrap gap-2">
+              <Select
+                className="w-full min-w-[180px]"
+                value=""
+                onChange={(e) => {
+                  const id = e.target.value;
+                  const v = savedViews.find((x) => x.id === id);
+                  if (v) loadSavedView(v);
+                  e.target.value = "";
+                }}
+                disabled={listLoading || savedViews.length === 0}
+              >
+                <option value="">{savedViews.length ? "Wczytaj widok…" : "Brak zapisanych widoków"}</option>
+                {savedViews.map((v) => (
+                  <option key={v.id} value={v.id}>
+                    {v.name}
+                  </option>
+                ))}
+              </Select>
+              <Button type="button" variant="secondary" className="!py-1.5 !text-xs" onClick={saveCurrentView} disabled={listLoading}>
+                Zapisz bieżący widok
+              </Button>
+            </div>
+            {savedViews.length > 0 ? (
+              <ul className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs text-zinc-500">
+                {savedViews.map((v) => (
+                  <li key={v.id} className="inline-flex items-center gap-1">
+                    <button type="button" className="text-blue-600 underline dark:text-blue-400" onClick={() => loadSavedView(v)}>
+                      {v.name}
+                    </button>
+                    <button
+                      type="button"
+                      className="text-red-600 dark:text-red-400"
+                      title="Usuń widok"
+                      onClick={() => deleteSavedView(v.id)}
+                    >
+                      ×
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            ) : null}
           </div>
         </div>
         <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
@@ -786,20 +924,54 @@ export function CostInvoicesClient({ initialQueryString = "" }: { initialQuerySt
               <option value="ZAPLACONA">Zapłacona</option>
             </Select>
           </Field>
-          <Field label="Kategoria">
-            <Select
-              value={filterDraft.categoryId}
-              onChange={(e) => setFilterDraft((d) => ({ ...d, categoryId: e.target.value }))}
-              disabled={listLoading}
-            >
-              <option value="">(wszystkie)</option>
-              {categories.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name}
-                </option>
-              ))}
-            </Select>
-          </Field>
+          <div className="sm:col-span-2 lg:col-span-2 xl:col-span-2">
+            <span className="mb-1 block text-sm font-medium text-zinc-700 dark:text-zinc-300">Kategorie</span>
+            <label className="mb-2 flex cursor-pointer items-center gap-2 text-sm text-zinc-700 dark:text-zinc-300">
+              <input
+                type="checkbox"
+                className="size-4 rounded border-zinc-300"
+                checked={filterDraft.uncategorizedOnly}
+                onChange={(e) =>
+                  setFilterDraft((d) => ({
+                    ...d,
+                    uncategorizedOnly: e.target.checked,
+                    categoryIds: e.target.checked ? [] : d.categoryIds,
+                  }))
+                }
+                disabled={listLoading}
+              />
+              Tylko bez kategorii
+            </label>
+            <div className="max-h-36 overflow-y-auto rounded border border-zinc-300 bg-white px-2 py-1.5 dark:border-zinc-600 dark:bg-zinc-950">
+              {categories.length === 0 ? (
+                <p className="text-xs text-zinc-500">Brak kategorii — dodaj w Ustawieniach.</p>
+              ) : (
+                <div className="grid grid-cols-1 gap-0.5 sm:grid-cols-2">
+                  {categories.map((c) => (
+                    <label key={c.id} className="flex cursor-pointer items-center gap-2 py-0.5 text-xs">
+                      <input
+                        type="checkbox"
+                        className="size-3.5 rounded border-zinc-300"
+                        checked={filterDraft.categoryIds.includes(c.id)}
+                        disabled={listLoading || filterDraft.uncategorizedOnly}
+                        onChange={(e) => {
+                          const checked = e.target.checked;
+                          setFilterDraft((d) => {
+                            const next = new Set(d.categoryIds);
+                            if (checked) next.add(c.id);
+                            else next.delete(c.id);
+                            return { ...d, categoryIds: [...next], uncategorizedOnly: false };
+                          });
+                        }}
+                      />
+                      <span className={c.isActive === false ? "text-zinc-500" : ""}>{c.name}</span>
+                    </label>
+                  ))}
+                </div>
+              )}
+            </div>
+            <p className="mt-1 text-xs text-zinc-500">Zaznacz wiele kategorii i kliknij „Zastosuj”.</p>
+          </div>
           <Field label="Źródło wpisu">
             <Select
               value={filterDraft.recurringSource}
