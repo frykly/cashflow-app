@@ -159,7 +159,8 @@ export function ProjectDetailView({ data }: { data: ProjectDetailsResult }) {
       <section>
         <h2 className="mb-1 text-sm font-semibold text-zinc-800 dark:text-zinc-200">Plan / forecast projektu</h2>
         <p className="mb-3 text-xs text-zinc-500">
-          Pola planu na projekcie + aktywne zdarzenia planowane (status „Zaplanowane”). Skonwertowane zdarzenia nie są tu liczone.
+          Łączny plan (pole projektu + aktywne zdarzenia „Zaplanowane”) vs faktury. Forecast netto = (plan przychodu − faktyczny przychód) − (plan kosztu − faktyczny koszt) — pokazuje, ile zostało do
+          „domknięcia” względem planu przy już zaksięgowanych kwotach.
         </p>
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           <div className="rounded-lg border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-950">
@@ -195,7 +196,7 @@ export function ProjectDetailView({ data }: { data: ProjectDetailsResult }) {
             </p>
           </div>
           <div className="rounded-lg border border-indigo-200 bg-indigo-50/80 p-4 dark:border-indigo-900/40 dark:bg-indigo-950/40 sm:col-span-2 lg:col-span-3">
-            <p className="text-xs text-indigo-900 dark:text-indigo-200">Bilans planowany (forecast netto)</p>
+            <p className="text-xs text-indigo-900 dark:text-indigo-200">Forecast netto (pozostało vs plan)</p>
             <p className="mt-1 text-xl font-semibold tabular-nums text-indigo-950 dark:text-indigo-50">
               {formatMoney(forecast.forecastNet)}
             </p>
@@ -205,7 +206,9 @@ export function ProjectDetailView({ data }: { data: ProjectDetailsResult }) {
 
       <section>
         <h2 className="mb-1 text-sm font-semibold text-zinc-800 dark:text-zinc-200">Plan vs rzeczywistość</h2>
-        <p className="mb-3 text-xs text-zinc-500">Różnica: faktury minus łączny plan (pole + aktywne zdarzenia).</p>
+        <p className="mb-3 text-xs text-zinc-500">
+          Odchylenia faktur netto od łącznego planu. Ostatnia kolumna: wynik rzeczywisty minus początkowy bilans planowany (bez uwzględnienia odchyleń częściowych w forecast powyżej).
+        </p>
         <div className="grid gap-3 sm:grid-cols-3">
           <div className="rounded-lg border border-zinc-200 bg-white p-3 dark:border-zinc-800 dark:bg-zinc-950">
             <p className="text-xs text-zinc-500">Przychód: fakty − plan</p>
@@ -216,7 +219,7 @@ export function ProjectDetailView({ data }: { data: ProjectDetailsResult }) {
             <p className="mt-1 text-sm font-semibold tabular-nums">{formatMoney(progress.costActualVsPlanned)}</p>
           </div>
           <div className="rounded-lg border border-zinc-200 bg-white p-3 dark:border-zinc-800 dark:bg-zinc-950">
-            <p className="text-xs text-zinc-500">Wynik: rzeczywisty − forecast</p>
+            <p className="text-xs text-zinc-500">Wynik − początkowy plan bilansu</p>
             <p className="mt-1 text-sm font-semibold tabular-nums">{formatMoney(progress.netActualVsForecast)}</p>
           </div>
         </div>

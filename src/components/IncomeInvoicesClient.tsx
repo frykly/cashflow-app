@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ProjectSearchPicker } from "@/components/ProjectSearchPicker";
 import { Alert, Badge, Button, Field, Input, Modal, Select, Spinner, Textarea } from "@/components/ui";
@@ -119,6 +120,7 @@ const DATE_FIELD_OPTIONS = [
 type Cat = { id: string; name: string; slug: string };
 
 export function IncomeInvoicesClient({ initialQueryString = "" }: { initialQueryString?: string }) {
+  const router = useRouter();
   const { queryString, setParam, setParams, merged } = useListQuery("income", initialQueryString);
   const [rows, setRows] = useState<Row[]>([]);
   const [listLoading, setListLoading] = useState(true);
@@ -572,6 +574,10 @@ export function IncomeInvoicesClient({ initialQueryString = "" }: { initialQuery
         return;
       }
       closeModal();
+      if (method === "POST" && projectIdPayload) {
+        router.push(`/projects/${projectIdPayload}`);
+        return;
+      }
       load();
     } catch {
       setFormError("Błąd sieci");

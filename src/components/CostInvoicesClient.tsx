@@ -746,6 +746,10 @@ export function CostInvoicesClient({ initialQueryString = "" }: { initialQuerySt
         return;
       }
       closeModal();
+      if (method === "POST" && projectIdPayload) {
+        router.push(`/projects/${projectIdPayload}`);
+        return;
+      }
       load();
     } catch {
       setFormError("Błąd sieci");

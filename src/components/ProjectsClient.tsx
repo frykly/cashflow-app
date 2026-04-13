@@ -6,15 +6,18 @@ import { useCallback, useEffect, useState } from "react";
 import { NameAutocomplete } from "@/components/NameAutocomplete";
 import { Alert, Badge, Button, Field, Input, Modal, Select, Spinner, Textarea } from "@/components/ui";
 import { readApiErrorBody } from "@/lib/api-client";
+import { decToNumber } from "@/lib/cashflow/money";
 import { isoToDateInputValue } from "@/lib/date-input";
 import { normalizeDecimalInput } from "@/lib/decimal-input";
-import { toIsoOrNull } from "@/lib/format";
+import { formatMoney, toIsoOrNull } from "@/lib/format";
 import {
   PROJECT_LIFECYCLE_VALUES,
   PROJECT_SETTLEMENT_VALUES,
   projectLifecycleLabel,
   projectSettlementLabel,
 } from "@/lib/project-status-labels";
+
+type SortKey = "code" | "name" | "clientName" | "plannedRevenueNet" | "plannedCostNet" | "paidTotal" | "actualResult";
 
 type Row = {
   id: string;
@@ -31,6 +34,9 @@ type Row = {
   endDate?: string | null;
   createdAt: string;
   updatedAt: string;
+  /** Tylko na liście z `/api/projects`; pojedynczy GET może ich nie mieć */
+  paidTotalGross?: number;
+  actualResultNet?: number | null;
 };
 
 type Draft = {
@@ -64,28 +70,45 @@ function emptyDraft(): Draft {
   };
 }
 
+function moneyCell(v: unknown): string {
+  if (v == null || v === "") return "—";
+  return formatMoney(decToNumber(v as string | number));
+}
+
 export function ProjectsClient({ initialEditId = null }: { initialEditId?: string | null }) {
   const router = useRouter();
   const pathname = usePathname();
   const [rows, setRows] = useState<Row[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [q, setQ] = useState("");
+  const [searchInput, setSearchInput] = useState("");
+  const [qDebounced, setQDebounced] = useState("");
   const [activeFilter, setActiveFilter] = useState<"" | "1" | "0">("");
+  const [includeSettled, setIncludeSettled] = useState(false);
+  const [sortKey, setSortKey] = useState<SortKey>("name");
+  const [sortOrder, setSortOrder] = useState<"asc" | "desc">("asc");
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<Draft>(emptyDraft());
   const [formError, setFormError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [contractorSuggestions, setContractorSuggestions] = useState<string[]>([]);
 
+  useEffect(() => {
+    const t = window.setTimeout(() => setQDebounced(searchInput.trim()), 280);
+    return () => window.clearTimeout(t);
+  }, [searchInput]);
+
   const load = useCallback(async () => {
     setLoading(true);
     setLoadError(null);
     try {
       const sp = new URLSearchParams();
-      if (q.trim()) sp.set("q", q.trim());
+      if (qDebounced) sp.set("q", qDebounced);
       if (activeFilter === "1") sp.set("active", "true");
       if (activeFilter === "0") sp.set("active", "false");
+      if (includeSettled) sp.set("includeSettled", "1");
+      sp.set("sort", sortKey);
+      sp.set("order", sortOrder);
       const qs = sp.toString();
       const r = await fetch(`/api/projects${qs ? `?${qs}` : ""}`);
       const j = await r.json();
@@ -97,11 +120,39 @@ export function ProjectsClient({ initialEditId = null }: { initialEditId?: strin
     } finally {
       setLoading(false);
     }
-  }, [q, activeFilter]);
+  }, [qDebounced, activeFilter, includeSettled, sortKey, sortOrder]);
 
   useEffect(() => {
     load();
   }, [load]);
+
+  function sortIndicator(order: "asc" | "desc") {
+    return order === "asc" ? " ↑" : " ↓";
+  }
+
+  function clickSort(key: SortKey) {
+    if (sortKey === key) setSortOrder((o) => (o === "asc" ? "desc" : "asc"));
+    else {
+      setSortKey(key);
+      setSortOrder("asc");
+    }
+  }
+
+  function headerBtn(label: string, key: SortKey) {
+    const active = sortKey === key;
+    return (
+      <button
+        type="button"
+        className={`inline-flex items-center gap-0.5 font-semibold hover:text-zinc-950 dark:hover:text-zinc-50 ${
+          active ? "text-zinc-950 dark:text-zinc-50" : "text-zinc-700 dark:text-zinc-300"
+        }`}
+        onClick={() => clickSort(key)}
+      >
+        {label}
+        {active ? sortIndicator(sortOrder) : null}
+      </button>
+    );
+  }
 
   useEffect(() => {
     if (!open) return;
@@ -233,7 +284,12 @@ export function ProjectsClient({ initialEditId = null }: { initialEditId?: strin
       <div className="rounded-xl border border-zinc-200 bg-zinc-50/80 p-4 dark:border-zinc-800 dark:bg-zinc-900/40">
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           <Field label="Szukaj (nazwa, kod, klient)">
-            <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="np. budowa" disabled={loading} />
+            <Input
+              value={searchInput}
+              onChange={(e) => setSearchInput(e.target.value)}
+              placeholder="np. budowa"
+              autoComplete="off"
+            />
           </Field>
           <Field label="Status">
             <Select value={activeFilter} onChange={(e) => setActiveFilter(e.target.value as "" | "1" | "0")} disabled={loading}>
@@ -241,6 +297,17 @@ export function ProjectsClient({ initialEditId = null }: { initialEditId?: strin
               <option value="1">Aktywne</option>
               <option value="0">Nieaktywne</option>
             </Select>
+          </Field>
+          <Field label="Lista">
+            <label className="flex cursor-pointer items-center gap-2 text-sm text-zinc-700 dark:text-zinc-300">
+              <input
+                type="checkbox"
+                className="size-4 rounded border-zinc-300"
+                checked={includeSettled}
+                onChange={(e) => setIncludeSettled(e.target.checked)}
+              />
+              Pokaż zakończone i rozliczone
+            </label>
           </Field>
           <div className="flex items-end gap-2">
             <Button type="button" className="w-full sm:w-auto" onClick={() => load()} disabled={loading}>
@@ -253,12 +320,16 @@ export function ProjectsClient({ initialEditId = null }: { initialEditId?: strin
       {loadError && <Alert variant="error">{loadError}</Alert>}
 
       <div className="overflow-x-auto rounded-xl border border-zinc-200 shadow-sm dark:border-zinc-800">
-        <table className="w-full min-w-[720px] text-left text-sm">
+        <table className="w-full min-w-[960px] text-left text-sm">
           <thead className="border-b border-zinc-200 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900">
             <tr>
-              <th className="px-3 py-2.5 font-semibold">Nazwa / szczegóły</th>
-              <th className="px-3 py-2.5 font-semibold">Numer zlecenia</th>
-              <th className="px-3 py-2.5 font-semibold">Klient</th>
+              <th className="px-3 py-2.5">{headerBtn("Nazwa", "name")}</th>
+              <th className="px-3 py-2.5">{headerBtn("Numer zlecenia", "code")}</th>
+              <th className="px-3 py-2.5">{headerBtn("Klient", "clientName")}</th>
+              <th className="px-3 py-2.5 text-right">{headerBtn("Plan przychód", "plannedRevenueNet")}</th>
+              <th className="px-3 py-2.5 text-right">{headerBtn("Plan koszt", "plannedCostNet")}</th>
+              <th className="px-3 py-2.5 text-right">{headerBtn("Zapłacone", "paidTotal")}</th>
+              <th className="px-3 py-2.5 text-right">{headerBtn("Wynik rzecz.", "actualResult")}</th>
               <th className="px-3 py-2.5 font-semibold">Status</th>
               <th className="px-3 py-2.5 text-right font-semibold">Akcje</th>
             </tr>
@@ -266,14 +337,14 @@ export function ProjectsClient({ initialEditId = null }: { initialEditId?: strin
           <tbody className="divide-y divide-zinc-200 dark:divide-zinc-800">
             {loading && rows.length === 0 ? (
               <tr>
-                <td colSpan={5} className="px-3 py-12 text-center text-zinc-500">
+                <td colSpan={9} className="px-3 py-12 text-center text-zinc-500">
                   <Spinner className="mr-2 inline !size-5" />
                   Ładowanie…
                 </td>
               </tr>
             ) : rows.length === 0 ? (
               <tr>
-                <td colSpan={5} className="px-3 py-12 text-center text-zinc-500">
+                <td colSpan={9} className="px-3 py-12 text-center text-zinc-500">
                   Brak projektów. Użyj <strong>Dodaj projekt</strong>.
                 </td>
               </tr>
@@ -288,6 +359,14 @@ export function ProjectsClient({ initialEditId = null }: { initialEditId?: strin
                   <td className="px-3 py-2 text-zinc-600 dark:text-zinc-400">{r.code ?? "—"}</td>
                   <td className="max-w-[200px] truncate px-3 py-2 text-zinc-600 dark:text-zinc-400" title={r.clientName ?? undefined}>
                     {r.clientName ?? "—"}
+                  </td>
+                  <td className="px-3 py-2 text-right tabular-nums text-zinc-700 dark:text-zinc-300">{moneyCell(r.plannedRevenueNet)}</td>
+                  <td className="px-3 py-2 text-right tabular-nums text-zinc-700 dark:text-zinc-300">{moneyCell(r.plannedCostNet)}</td>
+                  <td className="px-3 py-2 text-right tabular-nums text-zinc-700 dark:text-zinc-300">
+                    {formatMoney(r.paidTotalGross ?? 0)}
+                  </td>
+                  <td className="px-3 py-2 text-right tabular-nums text-zinc-700 dark:text-zinc-300">
+                    {r.actualResultNet == null ? "—" : formatMoney(r.actualResultNet)}
                   </td>
                   <td className="px-3 py-2">
                     {r.isActive ? <Badge variant="success">Aktywny</Badge> : <Badge variant="muted">Nieaktywny</Badge>}

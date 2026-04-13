@@ -4,6 +4,10 @@ import { jsonError, zodErrorResponse } from "@/lib/api/errors";
 import { projectCreateSchema } from "@/lib/validation/schemas";
 import { ZodError } from "zod";
 import type { Prisma } from "@prisma/client";
+import {
+  listProjectsEnriched,
+  type ProjectListSortKey,
+} from "@/lib/projects/project-list-enriched";
 
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
@@ -38,27 +42,30 @@ export async function GET(req: Request) {
     return jsonData(rows);
   }
 
-  const q = searchParams.get("q")?.trim();
-  const active = searchParams.get("active")?.trim();
+  const q = searchParams.get("q")?.trim() ?? "";
+  const active = searchParams.get("active")?.trim() ?? "";
+  const includeSettled = searchParams.get("includeSettled") === "1";
+  const sortParam = searchParams.get("sort")?.trim() ?? "name";
+  const order = searchParams.get("order") === "desc" ? "desc" : "asc";
+  const SORT_KEYS: ProjectListSortKey[] = [
+    "code",
+    "name",
+    "clientName",
+    "plannedRevenueNet",
+    "plannedCostNet",
+    "paidTotal",
+    "actualResult",
+  ];
+  const sort: ProjectListSortKey = SORT_KEYS.includes(sortParam as ProjectListSortKey)
+    ? (sortParam as ProjectListSortKey)
+    : "name";
 
-  const filters: Prisma.ProjectWhereInput[] = [];
-  if (q) {
-    filters.push({
-      OR: [
-        { name: { contains: q } },
-        { code: { contains: q } },
-        { clientName: { contains: q } },
-      ],
-    });
-  }
-  if (active === "1" || active === "true") filters.push({ isActive: true });
-  if (active === "0" || active === "false") filters.push({ isActive: false });
-
-  const where = filters.length ? { AND: filters } : {};
-
-  const rows = await prisma.project.findMany({
-    where,
-    orderBy: [{ isActive: "desc" }, { name: "asc" }],
+  const rows = await listProjectsEnriched({
+    q: q || undefined,
+    active: active || undefined,
+    includeSettled,
+    sort,
+    order,
   });
   return jsonData(rows);
 }

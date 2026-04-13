@@ -19,9 +19,10 @@ export type ProjectDetailsResult = {
     plannedEventsExpenseNet: number;
     totalPlannedRevenue: number;
     totalPlannedCost: number;
+    /** (planPrzychód − faktyczny przychód) − (planKoszt − faktyczny koszt) — reszta do „domknięcia” względem planu. */
     forecastNet: number;
   };
-  /** Plan (z projektu + zdarzenia) vs wynik rzeczywisty z faktur. */
+  /** Odchylenia faktur vs łączny plan; trzeci wiersz = wynik rzeczywisty − początkowy bilans planowany. */
   progress: {
     revenueActualVsPlanned: number;
     costActualVsPlanned: number;
@@ -77,11 +78,13 @@ export async function getProjectDetails(projectId: string): Promise<ProjectDetai
   const manualPlannedCostNet = project.plannedCostNet != null ? decToNumber(project.plannedCostNet) : 0;
   const totalPlannedRevenue = manualPlannedRevenueNet + plannedEventsIncomeNet;
   const totalPlannedCost = manualPlannedCostNet + plannedEventsExpenseNet;
-  const forecastNet = totalPlannedRevenue - totalPlannedCost;
 
   const incomeNet = incomeSumRow._sum.netAmount != null ? decToNumber(incomeSumRow._sum.netAmount) : 0;
   const costNet = costSumRow._sum.netAmount != null ? decToNumber(costSumRow._sum.netAmount) : 0;
   const netResult = incomeNet - costNet;
+
+  /** Uwzględnia plan i faktyczne faktury — nie „gubi” już zaksięgowanych kosztów względem planu. */
+  const forecastNet = (totalPlannedRevenue - incomeNet) - (totalPlannedCost - costNet);
 
   const [incomeInvoices, costInvoices, plannedEvents] = await Promise.all([
     prisma.incomeInvoice.findMany({
@@ -125,7 +128,7 @@ export async function getProjectDetails(projectId: string): Promise<ProjectDetai
     progress: {
       revenueActualVsPlanned: incomeNet - totalPlannedRevenue,
       costActualVsPlanned: costNet - totalPlannedCost,
-      netActualVsForecast: netResult - forecastNet,
+      netActualVsForecast: netResult - (totalPlannedRevenue - totalPlannedCost),
     },
     incomeInvoices,
     costInvoices,
