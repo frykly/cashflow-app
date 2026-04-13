@@ -50,6 +50,8 @@ model ExpenseCategory {
   id                 String                  @id @default(cuid())
   name               String
   slug               String                  @unique
+  /// false = zarchiwizowana — ukryta przy nowych wpisach, widoczna przy starych rekordach
+  isActive           Boolean                 @default(true)
   invoices           CostInvoice[]
   plannedAsExpense   PlannedFinancialEvent[] @relation("PlannedExpenseCategory")
   recurringTemplates RecurringTemplate[]     @relation("RecurringExpenseCategory")

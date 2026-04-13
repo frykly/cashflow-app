@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ProjectSearchPicker } from "@/components/ProjectSearchPicker";
 import { Alert, Badge, Button, Field, Input, Modal, Select, Spinner, Textarea } from "@/components/ui";
 import { CrudToolbar } from "@/components/CrudToolbar";
@@ -81,7 +81,7 @@ const SORT_OPTIONS = [
   { value: "createdAt", label: "Data utworzenia" },
 ];
 
-type Cat = { id: string; name: string; slug: string };
+type Cat = { id: string; name: string; slug: string; isActive?: boolean };
 
 function categoryCell(r: Row): string {
   if (r.type === "INCOME") return r.incomeCategory?.name ?? "—";
@@ -108,6 +108,11 @@ export function PlannedEventsClient({ initialQueryString = "" }: { initialQueryS
   const [expenseCats, setExpenseCats] = useState<Cat[]>([]);
   const [importMsg, setImportMsg] = useState<string | null>(null);
   const [projects, setProjects] = useState<ProjectOption[]>([]);
+
+  const expenseCatsForForm = useMemo(() => {
+    const sel = editing.expenseCategoryId;
+    return expenseCats.filter((c) => c.isActive !== false || c.id === sel);
+  }, [expenseCats, editing.expenseCategoryId]);
 
   const [filterDraft, setFilterDraft] = useState({
     q: "",
@@ -731,9 +736,10 @@ export function PlannedEventsClient({ initialQueryString = "" }: { initialQueryS
                 disabled={saving || formLocked}
               >
                 <option value="">(brak)</option>
-                {expenseCats.map((c) => (
+                {expenseCatsForForm.map((c) => (
                   <option key={c.id} value={c.id}>
                     {c.name}
+                    {c.isActive === false ? " (zarchiwizowana)" : ""}
                   </option>
                 ))}
               </Select>

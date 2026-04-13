@@ -1,6 +1,6 @@
 import { prisma } from "@/lib/db";
 
-function slugifyBase(s: string): string {
+export function slugifyBase(s: string): string {
   const x = s
     .toLowerCase()
     .normalize("NFD")
@@ -29,6 +29,6 @@ export async function resolveExpenseCategoryByName(name: string | null | undefin
   const found = all.find((c) => c.name.toLowerCase() === n.toLowerCase());
   if (found) return found.id;
   const slug = `${slugifyBase(n)}-${Date.now().toString(36)}`;
-  const row = await prisma.expenseCategory.create({ data: { name: n, slug } });
+  const row = await prisma.expenseCategory.create({ data: { name: n, slug, isActive: true } });
   return row.id;
 }

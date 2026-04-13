@@ -78,7 +78,7 @@ function formatRecurringAmount(r: Row): string {
   return formatMoney(main);
 }
 
-type Cat = { id: string; name: string; slug: string };
+type Cat = { id: string; name: string; slug: string; isActive?: boolean };
 
 type GeneratedBlock = {
   templateType: string;
@@ -115,6 +115,11 @@ export function RecurringClient() {
   const [genUntilDate, setGenUntilDate] = useState(todayYmd());
   const [generatedBlock, setGeneratedBlock] = useState<GeneratedBlock | null>(null);
   const [rowToolBusy, setRowToolBusy] = useState<string | null>(null);
+
+  const expenseCatsForForm = useMemo(() => {
+    const sel = editing.expenseCategoryId;
+    return expenseCats.filter((c) => c.isActive !== false || c.id === sel);
+  }, [expenseCats, editing.expenseCategoryId]);
 
   useEffect(() => {
     Promise.all([
@@ -603,9 +608,10 @@ export function RecurringClient() {
                 disabled={saving}
               >
                 <option value="">(brak)</option>
-                {expenseCats.map((c) => (
+                {expenseCatsForForm.map((c) => (
                   <option key={c.id} value={c.id}>
                     {c.name}
+                    {c.isActive === false ? " (zarchiwizowana)" : ""}
                   </option>
                 ))}
               </Select>

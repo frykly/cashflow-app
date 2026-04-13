@@ -10,7 +10,7 @@ import {
 } from "@/lib/bank-import/bank-fee-heuristic";
 import { inferDocumentNumberFromBankText } from "@/lib/bank-import/parse-document-number";
 
-type ExpCat = { id: string; name: string; slug: string };
+type ExpCat = { id: string; name: string; slug: string; isActive?: boolean };
 type Proj = { id: string; name: string; isActive: boolean };
 
 type TxPayload = {
@@ -90,7 +90,7 @@ export function CreateCostFromBankModal({ transactionId, open, onClose, onCreate
           setCategories(catList);
           setProjects(Array.isArray(projs) ? projs : []);
           if (looksLikeBankFeeDescription(txJson.description)) {
-            const sug = suggestBankFeeCategoryId(catList);
+            const sug = suggestBankFeeCategoryId(catList.filter((c) => c.isActive !== false));
             if (sug) setExpenseCategoryId(sug);
           }
         }
@@ -151,6 +151,10 @@ export function CreateCostFromBankModal({ transactionId, open, onClose, onCreate
   const bankFeeSupplierOptional =
     (selectedCategory && isExpenseCategoryBankFeesLike(selectedCategory)) || looksLikeBankFeeDescription(description);
 
+  const categoriesForSelect = useMemo(() => {
+    return categories.filter((c) => c.isActive !== false || c.id === expenseCategoryId);
+  }, [categories, expenseCategoryId]);
+
   return (
     <Modal open={open} title="Utwórz koszt z transakcji bankowej" onClose={handleClose} size="lg">
       {loading ? (
@@ -198,9 +202,10 @@ export function CreateCostFromBankModal({ transactionId, open, onClose, onCreate
           <Field label="Kategoria kosztu">
             <Select value={expenseCategoryId} onChange={(e) => setExpenseCategoryId(e.target.value)} disabled={saving}>
               <option value="">(opcjonalnie — jak w liście kosztów)</option>
-              {categories.map((c) => (
+              {categoriesForSelect.map((c) => (
                 <option key={c.id} value={c.id}>
                   {c.name}
+                  {c.isActive === false ? " (zarchiwizowana)" : ""}
                 </option>
               ))}
             </Select>

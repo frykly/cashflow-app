@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ProjectSearchPicker } from "@/components/ProjectSearchPicker";
 import { Alert, Badge, Button, Field, Input, Modal, Select, Spinner, Textarea } from "@/components/ui";
 import { CrudToolbar } from "@/components/CrudToolbar";
@@ -43,7 +43,7 @@ type Row = {
   notes: string;
   expenseCategoryId?: string | null;
   expenseCategory?: { id: string; name: string; slug: string } | null;
-  payments?: { id: string; amountGross: string; paymentDate: string; notes: string }[];
+  payments?: { id: string; amountGross: string; paymentDate: string; notes: string; bankTransactionId?: string | null }[];
   isGeneratedFromRecurring?: boolean;
   isRecurringDetached?: boolean;
   projectId?: string | null;
@@ -98,6 +98,20 @@ function recurringSourceBadge(r: Row) {
   return <Badge variant="default">Cykliczne</Badge>;
 }
 
+function costEntrySourceBadge(r: Row) {
+  const bankLinked = r.payments?.some((p) => p.bankTransactionId);
+  return (
+    <span className="inline-flex flex-wrap items-center gap-1">
+      {bankLinked ? (
+        <span title="Powiązanie z płatnością z importu bankowego">
+          <Badge variant="default">Bank</Badge>
+        </span>
+      ) : null}
+      {recurringSourceBadge(r)}
+    </span>
+  );
+}
+
 function costRowOverdue(r: Row): boolean {
   const inv = r as unknown as CostInvoice;
   const pays = (r.payments ?? []) as unknown as PayPick[];
@@ -123,7 +137,16 @@ const DATE_FIELD_OPTIONS = [
   { value: "documentDate", label: "Data dokumentu" },
 ];
 
-type Cat = { id: string; name: string; slug: string };
+const COST_VIEW_PRESETS: { key: string; label: string }[] = [
+  { key: "", label: "Wszystkie" },
+  { key: "project", label: "Projektowe" },
+  { key: "operational", label: "Operacyjne" },
+  { key: "bank", label: "Bankowe i opłaty" },
+  { key: "uncategorized", label: "Bez kategorii" },
+  { key: "overdue", label: "Po terminie" },
+];
+
+type Cat = { id: string; name: string; slug: string; isActive?: boolean };
 
 export function CostInvoicesClient({ initialQueryString = "" }: { initialQueryString?: string }) {
   const { queryString, setParam, setParams, merged } = useListQuery("cost", initialQueryString);
@@ -157,10 +180,12 @@ export function CostInvoicesClient({ initialQueryString = "" }: { initialQuerySt
     dateTo: "",
     dateField: "plannedPaymentDate",
     overdueOnly: false,
+    costView: "",
   });
 
   useEffect(() => {
     const m = new URLSearchParams(queryString);
+    const cv = m.get("costView") ?? "";
     setFilterDraft({
       q: m.get("q") ?? "",
       status: m.get("status") ?? "",
@@ -170,7 +195,8 @@ export function CostInvoicesClient({ initialQueryString = "" }: { initialQuerySt
       dateFrom: m.get("dateFrom") ?? "",
       dateTo: m.get("dateTo") ?? "",
       dateField: m.get("dateField") || "plannedPaymentDate",
-      overdueOnly: m.get("overdue") === "1",
+      overdueOnly: m.get("overdue") === "1" || cv === "overdue",
+      costView: cv,
     });
   }, [queryString]);
 
@@ -217,6 +243,7 @@ export function CostInvoicesClient({ initialQueryString = "" }: { initialQuerySt
   }, [load]);
 
   function applyFilters() {
+    const cv = filterDraft.costView.trim();
     setParams({
       q: filterDraft.q.trim() || null,
       status: filterDraft.status || null,
@@ -226,7 +253,8 @@ export function CostInvoicesClient({ initialQueryString = "" }: { initialQuerySt
       dateFrom: filterDraft.dateFrom || null,
       dateTo: filterDraft.dateTo || null,
       dateField: filterDraft.dateField,
-      overdue: filterDraft.overdueOnly ? "1" : null,
+      overdue: filterDraft.overdueOnly && cv !== "overdue" ? "1" : null,
+      costView: cv || null,
     });
   }
 
@@ -241,8 +269,23 @@ export function CostInvoicesClient({ initialQueryString = "" }: { initialQuerySt
       dateTo: null,
       dateField: null,
       overdue: null,
+      costView: null,
     });
   }
+
+  function applyCostPreset(key: string) {
+    setFilterDraft((d) => ({ ...d, costView: key, overdueOnly: key === "overdue" ? true : d.overdueOnly }));
+    if (key === "overdue") {
+      setParams({ costView: "overdue", overdue: null });
+    } else {
+      setParams({ costView: key || null });
+    }
+  }
+
+  const categoriesForForm = useMemo(() => {
+    const sel = editing.expenseCategoryId;
+    return categories.filter((c) => c.isActive !== false || c.id === sel);
+  }, [categories, editing.expenseCategoryId]);
 
   const sort = merged.get("sort") ?? "plannedPaymentDate";
   const order = (merged.get("order") === "desc" ? "desc" : "asc") as "asc" | "desc";
@@ -667,6 +710,30 @@ export function CostInvoicesClient({ initialQueryString = "" }: { initialQuerySt
       </div>
 
       <div className="rounded-xl border border-zinc-200 bg-zinc-50/80 p-4 dark:border-zinc-800 dark:bg-zinc-900/40">
+        <div className="mb-3">
+          <p className="mb-2 text-xs font-medium uppercase tracking-wide text-zinc-500">Szybki widok</p>
+          <div className="flex flex-wrap gap-2">
+            {COST_VIEW_PRESETS.map((p) => {
+              const active =
+                p.key === "" ? !merged.get("costView") : merged.get("costView") === p.key;
+              return (
+                <button
+                  key={p.key || "all"}
+                  type="button"
+                  onClick={() => applyCostPreset(p.key)}
+                  disabled={listLoading}
+                  className={`rounded-full border px-3 py-1.5 text-xs font-medium transition-colors disabled:opacity-50 ${
+                    active
+                      ? "border-zinc-900 bg-zinc-900 text-white dark:border-zinc-100 dark:bg-zinc-100 dark:text-zinc-900"
+                      : "border-zinc-300 bg-white text-zinc-700 hover:bg-zinc-100 dark:border-zinc-600 dark:bg-zinc-950 dark:text-zinc-200 dark:hover:bg-zinc-900"
+                  }`}
+                >
+                  {p.label}
+                </button>
+              );
+            })}
+          </div>
+        </div>
         <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
           <span className="text-sm font-medium text-zinc-700 dark:text-zinc-300">Filtry i wyszukiwanie</span>
           <div className="flex flex-wrap gap-2">
@@ -896,7 +963,7 @@ export function CostInvoicesClient({ initialQueryString = "" }: { initialQuerySt
                         {overdue ? <Badge variant="warning">Po terminie</Badge> : null}
                       </span>
                     </td>
-                    <td className="whitespace-nowrap px-3 py-2">{recurringSourceBadge(r)}</td>
+                    <td className="whitespace-nowrap px-3 py-2">{costEntrySourceBadge(r)}</td>
                     <td className="max-w-[200px] truncate px-3 py-2" title={r.supplier}>
                       {r.supplier}
                     </td>
@@ -990,9 +1057,10 @@ export function CostInvoicesClient({ initialQueryString = "" }: { initialQuerySt
               disabled={saving}
             >
               <option value="">(brak)</option>
-              {categories.map((c) => (
+              {categoriesForForm.map((c) => (
                 <option key={c.id} value={c.id}>
                   {c.name}
+                  {c.isActive === false ? " (zarchiwizowana)" : ""}
                 </option>
               ))}
             </Select>

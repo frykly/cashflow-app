@@ -114,6 +114,30 @@ export function buildCostWhere(sp: URLSearchParams): Prisma.CostInvoiceWhereInpu
   if (recurringSource === "manual") filters.push({ isGeneratedFromRecurring: false });
   if (recurringSource === "generated") filters.push({ isGeneratedFromRecurring: true });
 
+  const costView = sp.get("costView")?.trim();
+  if (costView === "project") filters.push({ projectId: { not: null } });
+  if (costView === "operational") filters.push({ projectId: null });
+  if (costView === "uncategorized") filters.push({ expenseCategoryId: null });
+  if (costView === "bank") {
+    filters.push({
+      OR: [
+        { payments: { some: { bankTransactionId: { not: null } } } },
+        {
+          expenseCategory: {
+            OR: [{ slug: { contains: "bank" } }, { name: { contains: "Bank" } }, { name: { contains: "opłat" } }],
+          },
+        },
+      ],
+    });
+  }
+  if (costView === "overdue") {
+    const today = startOfDay(new Date());
+    filters.push({
+      paid: false,
+      OR: [{ plannedPaymentDate: { lt: today } }, { paymentDueDate: { lt: today } }],
+    });
+  }
+
   return filters.length ? { AND: filters } : {};
 }
 

@@ -6,6 +6,7 @@ import { toIsoOrNull } from "@/lib/format";
 import { isoToDateInputValue } from "@/lib/date-input";
 import { readApiErrorBody } from "@/lib/api-client";
 import { normalizeDecimalInput } from "@/lib/decimal-input";
+import { ExpenseCategoriesSettings } from "@/components/ExpenseCategoriesSettings";
 
 type Row = {
   mainOpeningBalance: string;
@@ -96,7 +97,7 @@ export function SettingsClient() {
   if (!row) return null;
 
   return (
-    <div className="max-w-lg space-y-6">
+    <div className="max-w-3xl space-y-10">
       <div>
         <h1 className="text-2xl font-semibold text-zinc-900 dark:text-zinc-50">Ustawienia</h1>
         <p className="mt-1 text-sm text-zinc-500">
@@ -149,6 +150,16 @@ export function SettingsClient() {
           )}
         </Button>
       </form>
+
+      <section className="rounded-xl border border-zinc-200 bg-white p-6 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
+        <h2 className="text-lg font-semibold text-zinc-900 dark:text-zinc-50">Kategorie kosztów</h2>
+        <p className="mt-1 text-sm text-zinc-500">
+          Lista używana przy fakturach kosztowych, imporcie bankowym i (tam gdzie dotyczy) w planie oraz cyklicznych.
+        </p>
+        <div className="mt-4">
+          <ExpenseCategoriesSettings />
+        </div>
+      </section>
     </div>
   );
 }
