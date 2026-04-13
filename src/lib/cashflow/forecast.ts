@@ -334,10 +334,21 @@ export function endBalanceAfterDay(
   const movKeys = [...movementsByDay.keys()].sort();
   const minMovK = movKeys[0] ?? null;
 
-  const candidates: string[] = [throughDayKey];
-  if (effK) candidates.push(effK);
-  if (minMovK) candidates.push(minMovK);
-  const walkStart = candidates.sort()[0]!;
+  /**
+   * Początek symulacji: najwcześniejszy dzień spośród pierwszego ruchu i effectiveFrom.
+   * Nie wolno brać min() razem z throughDayKey — gdy „dzień końcowy” salda jest wcześniejszy
+   * niż pierwszy ruch (np. saldo na 28.02 przy pierwszym ruchu w kwietniu), throughDay byłby
+   * najmniejszy i pętla obejmowałaby tylko ten dzień, pomijając całą wcześniejszą historię.
+   * Jeśli pierwszy istotny dzień jest po throughDayKey, zaczynamy od throughDayKey (jeden przebieg).
+   */
+  const metaDays = [effK, minMovK].filter((x): x is string => x != null).sort();
+  const earliestMeta = metaDays[0] ?? null;
+  const walkStart =
+    earliestMeta != null ?
+      earliestMeta <= throughDayKey ?
+        earliestMeta
+      : throughDayKey
+    : throughDayKey;
 
   const dayList = enumerateDayKeys(walkStart, throughDayKey);
 
@@ -374,6 +385,10 @@ export function buildDailyForecast(
   const toK = dayKey(startOfDay(to));
   const rows: ForecastDayRow[] = [];
 
+  /** Ten sam dzień co w endBalanceAfterDay — musi być spójny z `k === effK` w symulacji dzień po dniu. */
+  const effK = settings ? dayKey(settings.effectiveFrom) : null;
+  const effNextK = effK ? dayKey(addDays(parseDayKey(effK), 1)) : null;
+
   /** Saldo na koniec dnia przed pierwszym dniem okna — jeden pełny przebieg historii. */
   const beforeFirst = endBalanceAfterDay(movementsByDay, settings, previousCalendarDay(fromK), costById);
   let carryMain = beforeFirst.main;
@@ -386,8 +401,32 @@ export function buildDailyForecast(
 
     const rawDayMoves = movementsByDay.get(k) ?? [];
 
-    const mainStart = carryMain;
-    const vatStart = carryVat;
+    /**
+     * W dniu effectiveFrom saldo otwarcia = wartości z ustawień (jak w endBalanceAfterDay),
+     * a nie closing z poprzedniego dnia — inaczej wiersz tego dnia pokazywałby 0 lub błędny carry.
+     */
+    let mainStart: number;
+    let vatStart: number;
+    if (effK && k === effK) {
+      mainStart = decToNumber(settings!.mainOpeningBalance);
+      vatStart = decToNumber(settings!.vatOpeningBalance);
+    } else {
+      mainStart = carryMain;
+      vatStart = carryVat;
+    }
+
+    if (process.env.NODE_ENV === "development" && effK && (k === effK || k === effNextK)) {
+      const preMain = effK && k === effK ? carryMain : null;
+      const preVat = effK && k === effK ? carryVat : null;
+      // eslint-disable-next-line no-console -- tymczasowa diagnostyka effectiveFrom
+      console.log("[forecast buildDailyForecast]", {
+        effK,
+        dayKey: k,
+        carryBeforeDay: { main: preMain, vat: preVat },
+        openingAfterSettingsRule: { main: mainStart, vat: vatStart },
+        rawMoves: rawDayMoves.length,
+      });
+    }
 
     const {
       mainEnd,
@@ -401,6 +440,11 @@ export function buildDailyForecast(
 
     carryMain = mainEnd;
     carryVat = vatEnd;
+
+    if (process.env.NODE_ENV === "development" && effK && (k === effK || k === effNextK)) {
+      // eslint-disable-next-line no-console -- tymczasowa diagnostyka effectiveFrom
+      console.log("[forecast buildDailyForecast] closing", { dayKey: k, mainEnd, vatEnd });
+    }
 
     rows.push({
       dayKey: k,
