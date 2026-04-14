@@ -133,6 +133,58 @@ function costRowOverdue(r: Row): boolean {
   );
 }
 
+function CostListSubline({
+  r,
+  settled,
+  remaining,
+}: {
+  r: Row;
+  settled: number;
+  remaining: number;
+}) {
+  const plan = r.plannedPaymentDate ? formatDate(r.plannedPaymentDate) : "—";
+  const gross = formatMoney(Number(r.grossAmount));
+  const src = paymentSourceLabel(r.paymentSource);
+  const srcLong =
+    r.paymentSource === "VAT_THEN_MAIN"
+      ? "Najpierw konto VAT, potem MAIN (wg ustawień dokumentu)"
+      : r.paymentSource === "MAIN"
+        ? "Płatność z konta MAIN"
+        : "Płatność z konta VAT";
+  const note = [r.description?.trim(), r.notes?.trim()].filter(Boolean).join(" — ");
+  return (
+    <p className="mt-1.5 flex flex-wrap items-baseline gap-x-1.5 gap-y-0.5 text-[11px] leading-snug text-zinc-500 dark:text-zinc-400">
+      <span title={`Planowana data zapłaty: ${plan}`}>Plan: {plan}</span>
+      <span className="text-zinc-400" aria-hidden>
+        ·
+      </span>
+      <span title={srcLong}>Płatność: {src}</span>
+      <span className="text-zinc-400" aria-hidden>
+        ·
+      </span>
+      <span title="Kwota brutto dokumentu">Brutto: {gross}</span>
+      <span className="text-zinc-400" aria-hidden>
+        ·
+      </span>
+      <span title="Suma zarejestrowanych zapłat brutto">Zapłac.: {formatMoney(settled)}</span>
+      <span className="text-zinc-400" aria-hidden>
+        ·
+      </span>
+      <span title="Pozostało do rozliczenia brutto">Zostało: {formatMoney(remaining)}</span>
+      {note ? (
+        <>
+          <span className="text-zinc-400" aria-hidden>
+            ·
+          </span>
+          <span className="line-clamp-2 min-w-0 max-w-full break-words" title={note}>
+            {note}
+          </span>
+        </>
+      ) : null}
+    </p>
+  );
+}
+
 const SORT_OPTIONS = [
   { value: "plannedPaymentDate", label: "Plan. zapłata" },
   { value: "paymentDueDate", label: "Termin płatności" },
@@ -830,11 +882,11 @@ export function CostInvoicesClient({ initialQueryString = "" }: { initialQuerySt
         </div>
 
         <div className="mb-4 flex flex-wrap items-end gap-3 rounded-lg border border-dashed border-zinc-300 bg-white/60 px-3 py-2 dark:border-zinc-600 dark:bg-zinc-950/40">
-          <div className="min-w-[200px] flex-1">
+          <div className="min-w-0 flex-1 basis-[min(100%,12rem)]">
             <label className="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-400">Moje widoki (ta przeglądarka)</label>
             <div className="flex flex-wrap gap-2">
               <Select
-                className="w-full min-w-[180px]"
+                className="w-full min-w-0 sm:min-w-[12rem]"
                 value=""
                 onChange={(e) => {
                   const id = e.target.value;
@@ -1051,47 +1103,32 @@ export function CostInvoicesClient({ initialQueryString = "" }: { initialQuerySt
       {loadError && <Alert variant="error">{loadError}</Alert>}
 
       <div className="overflow-hidden rounded-xl border border-zinc-200 shadow-sm dark:border-zinc-800">
-        <div className="max-h-[min(70vh,56rem)] overflow-auto overscroll-x-contain">
-          <table className="w-full min-w-[1180px] border-separate border-spacing-0 text-left text-sm">
+        <div className="max-h-[min(70vh,56rem)] overflow-y-auto">
+          <table className="w-full table-fixed border-separate border-spacing-0 text-left text-sm">
             <thead className="border-b border-zinc-200 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900">
               <tr>
-                <th className="sticky top-0 z-20 border-b border-zinc-200 bg-zinc-50 px-3 py-2.5 font-semibold dark:border-zinc-800 dark:bg-zinc-900">
+                <th className="sticky top-0 z-20 w-[20%] border-b border-zinc-200 bg-zinc-50 px-2 py-2.5 pl-3 text-xs font-semibold uppercase tracking-wide text-zinc-600 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400">
                   Numer
                 </th>
-                <th className="sticky top-0 z-20 border-b border-zinc-200 bg-zinc-50 px-3 py-2.5 font-semibold dark:border-zinc-800 dark:bg-zinc-900">
+                <th className="sticky top-0 z-20 w-[8%] border-b border-zinc-200 bg-zinc-50 px-1 py-2.5 text-xs font-semibold uppercase tracking-wide text-zinc-600 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400">
                   Źródło
                 </th>
-                <th className="sticky top-0 z-20 border-b border-zinc-200 bg-zinc-50 px-3 py-2.5 font-semibold dark:border-zinc-800 dark:bg-zinc-900">
+                <th className="sticky top-0 z-20 w-[17%] border-b border-zinc-200 bg-zinc-50 px-2 py-2.5 text-xs font-semibold uppercase tracking-wide text-zinc-600 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400">
                   Dostawca
                 </th>
-                <th className="sticky top-0 z-20 border-b border-zinc-200 bg-zinc-50 px-3 py-2.5 font-semibold dark:border-zinc-800 dark:bg-zinc-900">
+                <th className="sticky top-0 z-20 w-[12%] border-b border-zinc-200 bg-zinc-50 px-1 py-2.5 text-xs font-semibold uppercase tracking-wide text-zinc-600 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400">
                   Kategoria
                 </th>
-                <th className="sticky top-0 z-20 border-b border-zinc-200 bg-zinc-50 px-3 py-2.5 font-semibold dark:border-zinc-800 dark:bg-zinc-900">
+                <th className="sticky top-0 z-20 w-[12%] border-b border-zinc-200 bg-zinc-50 px-1 py-2.5 text-xs font-semibold uppercase tracking-wide text-zinc-600 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400">
                   Projekt
                 </th>
-                <th className="sticky top-0 z-20 border-b border-zinc-200 bg-zinc-50 px-3 py-2.5 font-semibold dark:border-zinc-800 dark:bg-zinc-900">
+                <th className="sticky top-0 z-20 w-[9%] border-b border-zinc-200 bg-zinc-50 px-2 py-2.5 text-right text-xs font-semibold uppercase tracking-wide text-zinc-600 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400">
                   Netto
                 </th>
-                <th className="sticky top-0 z-20 border-b border-zinc-200 bg-zinc-50 px-3 py-2.5 font-semibold dark:border-zinc-800 dark:bg-zinc-900">
-                  Plan. zapłata
-                </th>
-                <th className="sticky top-0 z-20 border-b border-zinc-200 bg-zinc-50 px-3 py-2.5 font-semibold dark:border-zinc-800 dark:bg-zinc-900">
-                  Płatność
-                </th>
-                <th className="sticky top-0 z-20 border-b border-zinc-200 bg-zinc-50 px-3 py-2.5 font-semibold dark:border-zinc-800 dark:bg-zinc-900">
-                  Brutto
-                </th>
-                <th className="sticky top-0 z-20 border-b border-zinc-200 bg-zinc-50 px-3 py-2.5 font-semibold dark:border-zinc-800 dark:bg-zinc-900">
-                  Rozliczono
-                </th>
-                <th className="sticky top-0 z-20 border-b border-zinc-200 bg-zinc-50 px-3 py-2.5 font-semibold dark:border-zinc-800 dark:bg-zinc-900">
-                  Pozostało
-                </th>
-                <th className="sticky top-0 z-20 border-b border-zinc-200 bg-zinc-50 px-3 py-2.5 font-semibold dark:border-zinc-800 dark:bg-zinc-900">
+                <th className="sticky top-0 z-20 w-[12%] border-b border-zinc-200 bg-zinc-50 px-1 py-2.5 text-xs font-semibold uppercase tracking-wide text-zinc-600 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400">
                   Status
                 </th>
-                <th className="sticky top-0 right-0 z-30 border-b border-l border-zinc-200 bg-zinc-50 px-3 py-2.5 text-right font-semibold shadow-[-6px_0_8px_-6px_rgba(0,0,0,0.12)] dark:border-zinc-800 dark:bg-zinc-900 dark:shadow-[-6px_0_12px_-6px_rgba(0,0,0,0.4)]">
+                <th className="sticky top-0 z-20 w-[10%] border-b border-zinc-200 bg-zinc-50 px-2 py-2.5 pr-3 text-right text-xs font-semibold uppercase tracking-wide text-zinc-600 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400">
                   Akcje
                 </th>
               </tr>
@@ -1099,14 +1136,14 @@ export function CostInvoicesClient({ initialQueryString = "" }: { initialQuerySt
           <tbody className="divide-y divide-zinc-200 dark:divide-zinc-800">
             {listLoading && rows.length === 0 ? (
               <tr>
-                <td colSpan={13} className="px-3 py-12 text-center text-zinc-500">
+                <td colSpan={8} className="px-3 py-12 text-center text-zinc-500">
                   <Spinner className="mr-2 inline !size-5" />
                   Ładowanie…
                 </td>
               </tr>
             ) : rows.length === 0 ? (
               <tr>
-                <td colSpan={13} className="px-3 py-12 text-center text-zinc-500">
+                <td colSpan={8} className="px-3 py-12 text-center text-zinc-500">
                   Brak dokumentów kosztowych. Użyj <strong>Dodaj</strong>.
                 </td>
               </tr>
@@ -1129,65 +1166,59 @@ export function CostInvoicesClient({ initialQueryString = "" }: { initialQuerySt
                         openEdit(r);
                       }
                     }}
-                    className={`group cursor-pointer bg-white transition-colors hover:bg-zinc-50 dark:bg-zinc-950 dark:hover:bg-zinc-900/80 ${
+                    className={`group cursor-pointer bg-white align-top transition-colors hover:bg-zinc-50 dark:bg-zinc-950 dark:hover:bg-zinc-900/80 ${
                       overdue ? "border-l-4 border-amber-500 bg-amber-50/40 dark:bg-amber-950/20" : ""
                     }`}
                   >
-                    <td className="px-3 py-2 font-mono text-xs font-medium">
-                      <span className="inline-flex flex-wrap items-center gap-1">
-                        {r.documentNumber}
+                    <td className="min-w-0 px-2 py-2.5 pl-3">
+                      <span className="inline-flex flex-wrap items-center gap-1 font-mono text-xs font-medium text-zinc-900 dark:text-zinc-100">
+                        <span className="break-all">{r.documentNumber}</span>
                         {overdue ? <Badge variant="warning">Po terminie</Badge> : null}
                       </span>
+                      <CostListSubline r={r} settled={settled} remaining={remaining} />
                     </td>
-                    <td className="whitespace-nowrap px-3 py-2">{costEntrySourceBadge(r)}</td>
-                    <td className="max-w-[200px] truncate px-3 py-2" title={r.supplier}>
-                      {r.supplier}
+                    <td className="min-w-0 px-1 py-2.5">{costEntrySourceBadge(r)}</td>
+                    <td className="min-w-0 px-2 py-2.5 text-sm text-zinc-800 dark:text-zinc-200" title={r.supplier}>
+                      <span className="line-clamp-2 break-words">{r.supplier}</span>
                     </td>
-                    <td className="max-w-[140px] truncate px-3 py-2 text-zinc-600 dark:text-zinc-400" title={r.expenseCategory?.name}>
-                      {r.expenseCategory?.name ?? "—"}
+                    <td className="min-w-0 px-1 py-2.5 text-xs text-zinc-600 dark:text-zinc-400" title={r.expenseCategory?.name}>
+                      <span className="line-clamp-2 break-words">{r.expenseCategory?.name ?? "—"}</span>
                     </td>
                     <td
-                      className="max-w-[120px] truncate px-3 py-2 text-zinc-600 dark:text-zinc-400"
+                      className="min-w-0 px-1 py-2.5 text-xs text-zinc-600 dark:text-zinc-400"
                       title={projectDisplayLabel(r) || undefined}
                     >
-                      {projectDisplayLabel(r) || "—"}
+                      <span className="line-clamp-2 break-words">{projectDisplayLabel(r) || "—"}</span>
                     </td>
-                    <td className="px-3 py-2 tabular-nums">{formatMoney(Number(r.netAmount))}</td>
-                    <td className="whitespace-nowrap px-3 py-2">{formatDate(r.plannedPaymentDate)}</td>
-                    <td className="px-3 py-2 text-xs">{paymentSourceLabel(r.paymentSource)}</td>
-                    <td className="px-3 py-2 tabular-nums font-medium">{formatMoney(Number(r.grossAmount))}</td>
-                    <td className="px-3 py-2 tabular-nums text-zinc-700 dark:text-zinc-300">{formatMoney(settled)}</td>
-                    <td className="px-3 py-2 tabular-nums">{formatMoney(remaining)}</td>
-                    <td className="px-3 py-2">{statusBadge(r.status)}</td>
-                    <td
-                      className={`sticky right-0 z-10 border-l border-zinc-200 px-3 py-2 text-right whitespace-nowrap shadow-[-6px_0_8px_-6px_rgba(0,0,0,0.08)] transition-colors dark:border-zinc-800 dark:shadow-[-6px_0_12px_-6px_rgba(0,0,0,0.35)] ${
-                        overdue
-                          ? "bg-amber-50/95 group-hover:bg-amber-50 dark:bg-amber-950/50 dark:group-hover:bg-amber-950/40"
-                          : "bg-white group-hover:bg-zinc-50 dark:bg-zinc-950 dark:group-hover:bg-zinc-900/80"
-                      }`}
-                    >
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        className="!py-1 text-xs"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          openEdit(r);
-                        }}
-                      >
-                        Edytuj
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        className="!py-1 text-xs text-red-600 dark:text-red-400"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          remove(r.id);
-                        }}
-                      >
-                        Usuń
-                      </Button>
+                    <td className="px-2 py-2.5 text-right text-sm tabular-nums text-zinc-900 dark:text-zinc-100">
+                      {formatMoney(Number(r.netAmount))}
+                    </td>
+                    <td className="min-w-0 px-1 py-2.5">{statusBadge(r.status)}</td>
+                    <td className="px-2 py-2.5 pr-3 text-right align-top">
+                      <div className="flex flex-col items-end gap-0.5 sm:flex-row sm:flex-wrap sm:justify-end sm:gap-1">
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          className="!h-auto !py-0.5 !px-1.5 text-xs"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            openEdit(r);
+                          }}
+                        >
+                          Edytuj
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          className="!h-auto !py-0.5 !px-1.5 text-xs text-red-600 dark:text-red-400"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            remove(r.id);
+                          }}
+                        >
+                          Usuń
+                        </Button>
+                      </div>
                     </td>
                   </tr>
                 );
