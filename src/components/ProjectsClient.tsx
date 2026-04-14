@@ -86,6 +86,44 @@ function moneyCell(v: unknown): string {
   return formatMoney(decToNumber(v as string | number));
 }
 
+const SORT_OPTIONS: { value: SortKey; label: string }[] = [
+  { value: "name", label: "Nazwa" },
+  { value: "code", label: "Numer zlecenia" },
+  { value: "clientName", label: "Klient" },
+  { value: "lifecycleStatus", label: "Status realizacji" },
+  { value: "settlementStatus", label: "Status rozliczenia" },
+  { value: "plannedRevenueNet", label: "Planowany przychód" },
+  { value: "plannedCostNet", label: "Planowany koszt" },
+  { value: "paidTotal", label: "Zapłacone (łącznie brutto)" },
+  { value: "actualResult", label: "Wynik rzeczywisty" },
+];
+
+/** Plan / zapłacone pod nazwą — nie zajmują osobnych szerokich kolumn. */
+function ProjectPlanSubline({ r }: { r: Row }) {
+  const planP = moneyCell(r.plannedRevenueNet);
+  const planK = moneyCell(r.plannedCostNet);
+  const paid = formatMoney(r.paidTotalGross ?? 0);
+  return (
+    <p className="mt-1.5 flex flex-wrap items-baseline gap-x-1 gap-y-0.5 text-[11px] leading-snug text-zinc-500 dark:text-zinc-400">
+      <span title={`Planowany przychód netto: ${planP}`}>
+        Plan przych.: <span className="tabular-nums text-zinc-600 dark:text-zinc-300">{planP}</span>
+      </span>
+      <span className="text-zinc-400" aria-hidden>
+        ·
+      </span>
+      <span title={`Planowany koszt netto: ${planK}`}>
+        Plan koszt: <span className="tabular-nums text-zinc-600 dark:text-zinc-300">{planK}</span>
+      </span>
+      <span className="text-zinc-400" aria-hidden>
+        ·
+      </span>
+      <span title="Suma wpłat i zapłat (brutto) z faktur projektu">
+        Zapłacone: <span className="tabular-nums text-zinc-600 dark:text-zinc-300">{paid}</span>
+      </span>
+    </p>
+  );
+}
+
 export function ProjectsClient({ initialEditId = null }: { initialEditId?: string | null }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -136,34 +174,6 @@ export function ProjectsClient({ initialEditId = null }: { initialEditId?: strin
   useEffect(() => {
     load();
   }, [load]);
-
-  function sortIndicator(order: "asc" | "desc") {
-    return order === "asc" ? " ↑" : " ↓";
-  }
-
-  function clickSort(key: SortKey) {
-    if (sortKey === key) setSortOrder((o) => (o === "asc" ? "desc" : "asc"));
-    else {
-      setSortKey(key);
-      setSortOrder("asc");
-    }
-  }
-
-  function headerBtn(label: string, key: SortKey) {
-    const active = sortKey === key;
-    return (
-      <button
-        type="button"
-        className={`inline-flex items-center gap-0.5 font-semibold hover:text-zinc-950 dark:hover:text-zinc-50 ${
-          active ? "text-zinc-950 dark:text-zinc-50" : "text-zinc-700 dark:text-zinc-300"
-        }`}
-        onClick={() => clickSort(key)}
-      >
-        {label}
-        {active ? sortIndicator(sortOrder) : null}
-      </button>
-    );
-  }
 
   useEffect(() => {
     if (!open) return;
@@ -326,38 +336,79 @@ export function ProjectsClient({ initialEditId = null }: { initialEditId?: strin
             </Button>
           </div>
         </div>
+        <div className="mt-3 grid gap-3 border-t border-zinc-200 pt-3 sm:grid-cols-2 dark:border-zinc-700">
+          <Field label="Sortuj według">
+            <Select
+              value={sortKey}
+              onChange={(e) => setSortKey(e.target.value as SortKey)}
+              disabled={loading}
+            >
+              {SORT_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
+            </Select>
+          </Field>
+          <Field label="Kolejność">
+            <Select
+              value={sortOrder}
+              onChange={(e) => setSortOrder(e.target.value as "asc" | "desc")}
+              disabled={loading}
+            >
+              <option value="asc">Rosnąco</option>
+              <option value="desc">Malejąco</option>
+            </Select>
+          </Field>
+        </div>
       </div>
 
       {loadError && <Alert variant="error">{loadError}</Alert>}
 
-      <div className="overflow-x-auto rounded-xl border border-zinc-200 shadow-sm dark:border-zinc-800">
-        <table className="w-full min-w-[1100px] text-left text-sm">
+      <div className="w-full max-w-full rounded-xl border border-zinc-200 shadow-sm dark:border-zinc-800">
+        <table className="w-full table-fixed text-left text-sm">
           <thead className="border-b border-zinc-200 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900">
             <tr>
-              <th className="px-3 py-2.5">{headerBtn("Nazwa", "name")}</th>
-              <th className="px-3 py-2.5">{headerBtn("Numer zlecenia", "code")}</th>
-              <th className="px-3 py-2.5">{headerBtn("Klient", "clientName")}</th>
-              <th className="px-2 py-2.5">{headerBtn("Realizacja", "lifecycleStatus")}</th>
-              <th className="px-2 py-2.5">{headerBtn("Rozliczenie", "settlementStatus")}</th>
-              <th className="px-3 py-2.5 text-right">{headerBtn("Plan przychód", "plannedRevenueNet")}</th>
-              <th className="px-3 py-2.5 text-right">{headerBtn("Plan koszt", "plannedCostNet")}</th>
-              <th className="px-3 py-2.5 text-right">{headerBtn("Zapłacone", "paidTotal")}</th>
-              <th className="px-3 py-2.5 text-right">{headerBtn("Wynik rzecz.", "actualResult")}</th>
-              <th className="px-3 py-2.5 font-semibold">Aktywny</th>
-              <th className="px-3 py-2.5 text-right font-semibold">Akcje</th>
+              <th className="w-[26%] px-2 py-2.5 pl-3 text-xs font-semibold uppercase tracking-wide text-zinc-600 dark:text-zinc-400">
+                Projekt
+              </th>
+              <th className="w-[7%] px-1 py-2.5 text-xs font-semibold uppercase tracking-wide text-zinc-600 dark:text-zinc-400">
+                Kod
+              </th>
+              <th className="w-[13%] px-2 py-2.5 text-xs font-semibold uppercase tracking-wide text-zinc-600 dark:text-zinc-400">
+                Klient
+              </th>
+              <th className="w-[15%] px-1 py-2.5 text-xs font-semibold uppercase tracking-wide text-zinc-600 dark:text-zinc-400">
+                Realizacja
+              </th>
+              <th className="w-[15%] px-1 py-2.5 text-xs font-semibold uppercase tracking-wide text-zinc-600 dark:text-zinc-400">
+                Rozliczenie
+              </th>
+              <th
+                className="w-[9%] px-2 py-2.5 text-right text-xs font-semibold uppercase tracking-wide text-zinc-600 dark:text-zinc-400"
+                title="Wynik rzeczywisty (netto z faktur projektu)"
+              >
+                Wynik
+              </th>
+              <th className="w-[7%] px-1 py-2.5 text-xs font-semibold uppercase tracking-wide text-zinc-600 dark:text-zinc-400">
+                Aktywny
+              </th>
+              <th className="w-[8%] px-2 py-2.5 pr-3 text-right text-xs font-semibold uppercase tracking-wide text-zinc-600 dark:text-zinc-400">
+                Akcje
+              </th>
             </tr>
           </thead>
           <tbody className="divide-y divide-zinc-200 dark:divide-zinc-800">
             {loading && rows.length === 0 ? (
               <tr>
-                <td colSpan={11} className="px-3 py-12 text-center text-zinc-500">
+                <td colSpan={8} className="px-3 py-12 text-center text-zinc-500">
                   <Spinner className="mr-2 inline !size-5" />
                   Ładowanie…
                 </td>
               </tr>
             ) : rows.length === 0 ? (
               <tr>
-                <td colSpan={11} className="px-3 py-12 text-center text-zinc-500">
+                <td colSpan={8} className="px-3 py-12 text-center text-zinc-500">
                   Brak projektów. Użyj <strong>Dodaj projekt</strong>.
                 </td>
               </tr>
@@ -366,56 +417,67 @@ export function ProjectsClient({ initialEditId = null }: { initialEditId?: strin
                 const lifeLabel = projectLifecycleLabel(r.lifecycleStatus);
                 const setLabel = projectSettlementLabel(r.settlementStatus);
                 return (
-                <tr key={r.id} className="bg-white dark:bg-zinc-950">
-                  <td className="px-3 py-2 font-medium text-zinc-900 dark:text-zinc-100">
-                    <Link href={`/projects/${r.id}`} className="underline decoration-zinc-300 underline-offset-2 hover:decoration-zinc-600 dark:decoration-zinc-600">
-                      {r.name}
-                    </Link>
-                  </td>
-                  <td className="px-3 py-2 text-zinc-600 dark:text-zinc-400">{r.code ?? "—"}</td>
-                  <td className="max-w-[200px] truncate px-3 py-2 text-zinc-600 dark:text-zinc-400" title={r.clientName ?? undefined}>
-                    {r.clientName ?? "—"}
-                  </td>
-                  <td className="max-w-[9rem] px-2 py-2 align-top" title={lifeLabel}>
-                    <span className="inline-block max-w-full">
+                  <tr key={r.id} className="bg-white align-top dark:bg-zinc-950">
+                    <td className="min-w-0 px-2 py-2.5 pl-3">
+                      <Link
+                        href={`/projects/${r.id}`}
+                        className="break-words font-medium text-zinc-900 underline decoration-zinc-300 underline-offset-2 hover:decoration-zinc-600 dark:text-zinc-100 dark:decoration-zinc-600"
+                      >
+                        {r.name}
+                      </Link>
+                      <ProjectPlanSubline r={r} />
+                    </td>
+                    <td className="px-1 py-2.5 font-mono text-xs text-zinc-600 dark:text-zinc-400" title={r.code ?? undefined}>
+                      <span className="line-clamp-3 break-all">{r.code ?? "—"}</span>
+                    </td>
+                    <td className="min-w-0 px-2 py-2.5 text-zinc-600 dark:text-zinc-400" title={r.clientName ?? undefined}>
+                      <span className="line-clamp-3 break-words text-sm">{r.clientName ?? "—"}</span>
+                    </td>
+                    <td className="min-w-0 px-1 py-2.5" title={lifeLabel}>
                       <Badge variant={lifecycleBadgeVariant(r.lifecycleStatus)}>
-                        <span className="line-clamp-2 break-words">{lifeLabel}</span>
+                        <span className="line-clamp-2 text-[11px] leading-snug break-words">{lifeLabel}</span>
                       </Badge>
-                    </span>
-                  </td>
-                  <td className="max-w-[9rem] px-2 py-2 align-top" title={setLabel}>
-                    <span className="inline-block max-w-full">
+                    </td>
+                    <td className="min-w-0 px-1 py-2.5" title={setLabel}>
                       <Badge variant={settlementBadgeVariant(r.settlementStatus)}>
-                        <span className="line-clamp-2 break-words">{setLabel}</span>
+                        <span className="line-clamp-2 text-[11px] leading-snug break-words">{setLabel}</span>
                       </Badge>
-                    </span>
-                  </td>
-                  <td className="px-3 py-2 text-right tabular-nums text-zinc-700 dark:text-zinc-300">{moneyCell(r.plannedRevenueNet)}</td>
-                  <td className="px-3 py-2 text-right tabular-nums text-zinc-700 dark:text-zinc-300">{moneyCell(r.plannedCostNet)}</td>
-                  <td className="px-3 py-2 text-right tabular-nums text-zinc-700 dark:text-zinc-300">
-                    {formatMoney(r.paidTotalGross ?? 0)}
-                  </td>
-                  <td className="px-3 py-2 text-right tabular-nums text-zinc-700 dark:text-zinc-300">
-                    {r.actualResultNet == null ? "—" : formatMoney(r.actualResultNet)}
-                  </td>
-                  <td className="px-3 py-2">
-                    {r.isActive ? <Badge variant="success">Aktywny</Badge> : <Badge variant="muted">Nieaktywny</Badge>}
-                  </td>
-                  <td className="px-3 py-2 text-right whitespace-nowrap">
-                    <Link
-                      href={`/projects/${r.id}`}
-                      className="mr-1 inline-flex items-center rounded-md px-2 py-1 text-xs font-medium text-zinc-700 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800"
-                    >
-                      Podgląd
-                    </Link>
-                    <Button variant="ghost" className="!py-1 text-xs" onClick={() => openEdit(r)}>
-                      Edytuj
-                    </Button>
-                    <Button variant="ghost" className="!py-1 text-xs text-red-600 dark:text-red-400" onClick={() => remove(r.id)}>
-                      Usuń
-                    </Button>
-                  </td>
-                </tr>
+                    </td>
+                    <td className="px-2 py-2.5 text-right text-sm tabular-nums text-zinc-800 dark:text-zinc-200">
+                      {r.actualResultNet == null ? "—" : formatMoney(r.actualResultNet)}
+                    </td>
+                    <td className="min-w-0 px-1 py-2.5">
+                      {r.isActive ? (
+                        <Badge variant="success">
+                          <span className="block max-w-[5.5rem] text-[10px] leading-tight sm:max-w-none sm:text-xs">Aktywny</span>
+                        </Badge>
+                      ) : (
+                        <Badge variant="muted">
+                          <span className="block max-w-[5.5rem] text-[10px] leading-tight sm:max-w-none sm:text-xs">Nieaktywny</span>
+                        </Badge>
+                      )}
+                    </td>
+                    <td className="px-2 py-2 pr-3 text-right">
+                      <div className="flex flex-col items-end gap-0.5 sm:flex-row sm:flex-wrap sm:justify-end sm:gap-0">
+                        <Link
+                          href={`/projects/${r.id}`}
+                          className="inline-flex rounded-md px-1.5 py-0.5 text-xs font-medium text-zinc-700 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800"
+                        >
+                          Podgląd
+                        </Link>
+                        <Button variant="ghost" className="!h-auto !py-0.5 !px-1.5 text-xs" onClick={() => openEdit(r)}>
+                          Edytuj
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          className="!h-auto !py-0.5 !px-1.5 text-xs text-red-600 dark:text-red-400"
+                          onClick={() => remove(r.id)}
+                        >
+                          Usuń
+                        </Button>
+                      </div>
+                    </td>
+                  </tr>
                 );
               })
             )}
