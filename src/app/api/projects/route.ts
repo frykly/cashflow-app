@@ -51,6 +51,8 @@ export async function GET(req: Request) {
     "code",
     "name",
     "clientName",
+    "lifecycleStatus",
+    "settlementStatus",
     "plannedRevenueNet",
     "plannedCostNet",
     "paidTotal",
