@@ -3,10 +3,11 @@
 import { usePathname, useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 
-const LIST_DEFAULTS: Record<"income" | "cost" | "planned", Record<string, string>> = {
+const LIST_DEFAULTS: Record<"income" | "cost" | "planned" | "recurring", Record<string, string>> = {
   income: { sort: "plannedIncomeDate", order: "asc" },
   cost: { sort: "plannedPaymentDate", order: "asc" },
   planned: { sort: "plannedDate", order: "asc" },
+  recurring: { sort: "createdAt", order: "desc" },
 };
 
 function mergeWithDefaults(sp: URLSearchParams, defaults: Record<string, string>) {
@@ -22,7 +23,7 @@ function mergeWithDefaults(sp: URLSearchParams, defaults: Record<string, string>
  * `initialQueryString` pochodzi ze strony serwerowej — unika `useSearchParams()` (Suspense / wieczny fallback).
  */
 export function useListQuery(
-  which: "income" | "cost" | "planned",
+  which: "income" | "cost" | "planned" | "recurring",
   initialQueryString: string,
 ) {
   const defaults = LIST_DEFAULTS[which];

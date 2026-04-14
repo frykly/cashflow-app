@@ -11,12 +11,31 @@ import { resolveProjectFields } from "@/lib/project-persist";
 import { finalizePlannedToCostConversion } from "@/lib/planned-event-conversion";
 import { ZodError } from "zod";
 
-const sortable = new Set(["plannedPaymentDate", "documentDate", "createdAt", "paymentDueDate"]);
+const sortable = new Set([
+  "plannedPaymentDate",
+  "documentDate",
+  "createdAt",
+  "paymentDueDate",
+  "documentNumber",
+  "supplier",
+  "netAmount",
+  "grossAmount",
+  "status",
+]);
 
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
   const sort = sortable.has(searchParams.get("sort") ?? "")
-    ? (searchParams.get("sort") as "plannedPaymentDate" | "documentDate" | "createdAt" | "paymentDueDate")
+    ? (searchParams.get("sort") as
+        | "plannedPaymentDate"
+        | "documentDate"
+        | "createdAt"
+        | "paymentDueDate"
+        | "documentNumber"
+        | "supplier"
+        | "netAmount"
+        | "grossAmount"
+        | "status")
     : "plannedPaymentDate";
   const order = searchParams.get("order") === "desc" ? "desc" : "asc";
 

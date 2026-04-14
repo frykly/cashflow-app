@@ -3,12 +3,14 @@
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Alert, Badge, Button, Field, Input, Modal, Select, Spinner, Textarea } from "@/components/ui";
+import { CrudToolbar } from "@/components/CrudToolbar";
 import { formatDate, formatMoney, toIsoOrNull } from "@/lib/format";
 import { isoToDateInputValue } from "@/lib/date-input";
 import { readApiErrorBody } from "@/lib/api-client";
 import { normalizeDecimalInput } from "@/lib/decimal-input";
 import { nextNOccurrences } from "@/lib/cashflow/recurring";
 import { isAfter, startOfDay } from "date-fns";
+import { useListQuery } from "@/hooks/useListQuery";
 
 type Row = {
   id: string;
@@ -80,6 +82,16 @@ function formatRecurringAmount(r: Row): string {
 
 type Cat = { id: string; name: string; slug: string; isActive?: boolean };
 
+const SORT_OPTIONS = [
+  { value: "title", label: "Tytuł" },
+  { value: "type", label: "Typ" },
+  { value: "frequency", label: "Częstotliwość" },
+  { value: "startDate", label: "Start" },
+  { value: "endDate", label: "Koniec" },
+  { value: "isActive", label: "Aktywny" },
+  { value: "createdAt", label: "Data utworzenia" },
+];
+
 type GeneratedBlock = {
   templateType: string;
   upcomingCosts: {
@@ -100,7 +112,8 @@ type GeneratedBlock = {
   }[];
 };
 
-export function RecurringClient() {
+export function RecurringClient({ initialQueryString = "" }: { initialQueryString?: string }) {
+  const { queryString, setParam, setParams, merged } = useListQuery("recurring", initialQueryString);
   const [rows, setRows] = useState<Row[]>([]);
   const [listLoading, setListLoading] = useState(true);
   const [open, setOpen] = useState(false);
@@ -136,11 +149,45 @@ export function RecurringClient() {
       });
   }, []);
 
+  const sort = merged.get("sort") ?? "createdAt";
+  const order = (merged.get("order") === "asc" ? "asc" : "desc") as "asc" | "desc";
+
+  function clickHeaderSort(key: string) {
+    if (!SORT_OPTIONS.some((o) => o.value === key)) return;
+    if (sort === key) setParam("order", order === "asc" ? "desc" : "asc");
+    else setParams({ sort: key, order: "asc" });
+  }
+
+  function recurringSortTh(label: string, sortKey: string | null, align: "left" | "right" = "left") {
+    if (!sortKey) {
+      const al = align === "right" ? "text-right" : "text-left";
+      return (
+        <span
+          className={`block px-2 py-2.5 text-xs font-semibold uppercase tracking-wide text-zinc-600 dark:text-zinc-400 ${al}`}
+        >
+          {label}
+        </span>
+      );
+    }
+    const active = sort === sortKey;
+    const ac = align === "right" ? "justify-end text-right" : "justify-start text-left";
+    return (
+      <button
+        type="button"
+        className={`${ac} inline-flex w-full min-w-0 items-center gap-0.5 rounded-md px-2 py-2.5 text-xs font-semibold uppercase tracking-wide hover:bg-zinc-200/80 hover:text-zinc-950 dark:hover:bg-zinc-800/80 dark:hover:text-zinc-50 ${active ? "text-zinc-900 dark:text-zinc-100" : "text-zinc-600 dark:text-zinc-400"}`}
+        onClick={() => clickHeaderSort(sortKey)}
+      >
+        <span className="min-w-0">{label}</span>
+        {active ? (order === "asc" ? " ↑" : " ↓") : null}
+      </button>
+    );
+  }
+
   const load = useCallback(async () => {
     setListLoading(true);
     setLoadError(null);
     try {
-      const r = await fetch("/api/recurring-templates");
+      const r = await fetch(`/api/recurring-templates?${queryString}`);
       const j = await r.json();
       if (!r.ok) throw new Error(readApiErrorBody(j));
       setRows(Array.isArray(j) ? j : []);
@@ -150,7 +197,7 @@ export function RecurringClient() {
     } finally {
       setListLoading(false);
     }
-  }, []);
+  }, [queryString]);
 
   useEffect(() => {
     load();
@@ -386,33 +433,54 @@ export function RecurringClient() {
             oznaczeniem źródła). Synchronizacja aktualizuje przyszłe wpisy w stanie „planowana”, bez płatności.
           </p>
         </div>
-        <div className="flex flex-wrap items-center justify-end gap-2">
-          <Button type="button" variant="secondary" onClick={load} disabled={listLoading}>
-            Odśwież
-          </Button>
-          <Button type="button" onClick={openNew} disabled={listLoading}>
-            Dodaj
-          </Button>
-        </div>
+        <CrudToolbar
+          sortOptions={SORT_OPTIONS}
+          sort={sort}
+          order={order}
+          onSortChange={(v) => setParam("sort", v)}
+          onOrderChange={(v) => setParam("order", v)}
+          onRefresh={load}
+          onAdd={openNew}
+          loading={listLoading}
+        />
       </div>
 
       {loadError && <Alert variant="error">{loadError}</Alert>}
 
-      <div className="overflow-x-auto rounded-xl border border-zinc-200 shadow-sm dark:border-zinc-800">
-        <table className="w-full min-w-[960px] text-left text-sm">
-          <thead className="border-b border-zinc-200 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900">
-            <tr>
-              <th className="px-3 py-2.5 font-semibold">Tytuł</th>
-              <th className="px-3 py-2.5 font-semibold">Typ</th>
-              <th className="px-3 py-2.5 font-semibold">Konto</th>
-              <th className="px-3 py-2.5 font-semibold">Kwota</th>
-              <th className="px-3 py-2.5 font-semibold">Częstotliwość</th>
-              <th className="px-3 py-2.5 font-semibold">Start</th>
-              <th className="px-3 py-2.5 font-semibold">Aktywny</th>
-              <th className="min-w-[200px] px-3 py-2.5 font-semibold">Narzędzia</th>
-              <th className="px-3 py-2.5 text-right font-semibold">Akcje</th>
-            </tr>
-          </thead>
+      <div className="overflow-hidden rounded-xl border border-zinc-200 shadow-sm dark:border-zinc-800">
+        <div className="max-h-[min(70vh,56rem)] overflow-y-auto">
+          <table className="w-full table-fixed border-separate border-spacing-0 text-left text-sm">
+            <thead className="border-b border-zinc-200 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900">
+              <tr>
+                <th className="sticky top-0 z-20 w-[18%] border-b border-zinc-200 bg-zinc-50 pl-3 dark:border-zinc-800 dark:bg-zinc-900">
+                  {recurringSortTh("Tytuł", "title")}
+                </th>
+                <th className="sticky top-0 z-20 w-[9%] border-b border-zinc-200 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900">
+                  {recurringSortTh("Typ", "type")}
+                </th>
+                <th className="sticky top-0 z-20 w-[10%] border-b border-zinc-200 bg-zinc-50 px-1 py-2 text-xs font-semibold uppercase tracking-wide text-zinc-600 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400">
+                  Konto
+                </th>
+                <th className="sticky top-0 z-20 w-[12%] border-b border-zinc-200 bg-zinc-50 px-1 py-2 text-xs font-semibold uppercase tracking-wide text-zinc-600 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400">
+                  Kwota
+                </th>
+                <th className="sticky top-0 z-20 w-[12%] border-b border-zinc-200 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900">
+                  {recurringSortTh("Częstotliwość", "frequency")}
+                </th>
+                <th className="sticky top-0 z-20 w-[10%] border-b border-zinc-200 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900">
+                  {recurringSortTh("Start", "startDate")}
+                </th>
+                <th className="sticky top-0 z-20 w-[8%] border-b border-zinc-200 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900">
+                  {recurringSortTh("Aktywny", "isActive")}
+                </th>
+                <th className="sticky top-0 z-20 w-[13%] border-b border-zinc-200 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900">
+                  {recurringSortTh("Narzędzia", null)}
+                </th>
+                <th className="sticky top-0 z-20 w-[8%] border-b border-zinc-200 bg-zinc-50 pr-3 text-right dark:border-zinc-800 dark:bg-zinc-900">
+                  {recurringSortTh("Akcje", null)}
+                </th>
+              </tr>
+            </thead>
           <tbody className="divide-y divide-zinc-200 dark:divide-zinc-800">
             {listLoading && rows.length === 0 ? (
               <tr>
@@ -430,25 +498,27 @@ export function RecurringClient() {
             ) : (
               rows.map((r) => (
                 <tr key={r.id} className="bg-white transition-colors hover:bg-zinc-50 dark:bg-zinc-950 dark:hover:bg-zinc-900/80">
-                  <td className="max-w-[220px] px-3 py-2 font-medium text-zinc-900 dark:text-zinc-100">{r.title}</td>
-                  <td className="px-3 py-2">
+                  <td className="min-w-0 px-2 py-2 pl-3 font-medium text-zinc-900 dark:text-zinc-100">
+                    <span className="line-clamp-2 break-words">{r.title}</span>
+                  </td>
+                  <td className="min-w-0 px-1 py-2 text-xs">
                     {r.type === "INCOME" ? (
                       <span className="text-emerald-700 dark:text-emerald-400">Przychód</span>
                     ) : (
                       <span className="text-red-700 dark:text-red-400">Koszt</span>
                     )}
                   </td>
-                  <td className="whitespace-nowrap px-3 py-2 text-xs text-zinc-600 dark:text-zinc-400">
+                  <td className="min-w-0 whitespace-nowrap px-1 py-2 text-[11px] text-zinc-600 dark:text-zinc-400">
                     {accountModeLabel(r.accountMode)}
                   </td>
-                  <td className="px-3 py-2 tabular-nums">{formatRecurringAmount(r)}</td>
-                  <td className="px-3 py-2 text-xs text-zinc-600 dark:text-zinc-400">{freqLabel(r.frequency)}</td>
-                  <td className="whitespace-nowrap px-3 py-2">{formatDate(r.startDate)}</td>
-                  <td className="px-3 py-2">
+                  <td className="min-w-0 px-1 py-2 text-right text-sm tabular-nums">{formatRecurringAmount(r)}</td>
+                  <td className="min-w-0 px-1 py-2 text-[11px] text-zinc-600 dark:text-zinc-400">{freqLabel(r.frequency)}</td>
+                  <td className="min-w-0 whitespace-nowrap px-1 py-2 text-sm tabular-nums">{formatDate(r.startDate)}</td>
+                  <td className="min-w-0 px-1 py-2">
                     {r.isActive ? <Badge variant="success">Tak</Badge> : <Badge variant="muted">Nie</Badge>}
                   </td>
-                  <td className="px-3 py-2 align-top">
-                    <div className="flex max-w-[220px] flex-col gap-1">
+                  <td className="min-w-0 px-1 py-2 align-top">
+                    <div className="flex flex-col gap-1">
                       <Button
                         type="button"
                         variant="secondary"
@@ -487,7 +557,7 @@ export function RecurringClient() {
                       </Button>
                     </div>
                   </td>
-                  <td className="px-3 py-2 text-right whitespace-nowrap">
+                  <td className="min-w-0 px-2 py-2 pr-3 text-right whitespace-nowrap">
                     <Button variant="ghost" className="!py-1 text-xs" onClick={() => openEdit(r)}>
                       Edytuj
                     </Button>
@@ -503,6 +573,7 @@ export function RecurringClient() {
             )}
           </tbody>
         </table>
+        </div>
       </div>
 
       <Modal

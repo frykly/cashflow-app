@@ -10,12 +10,31 @@ import { resolveProjectFields } from "@/lib/project-persist";
 import { finalizePlannedToIncomeConversion } from "@/lib/planned-event-conversion";
 import { ZodError } from "zod";
 
-const sortable = new Set(["plannedIncomeDate", "issueDate", "createdAt", "paymentDueDate"]);
+const sortable = new Set([
+  "plannedIncomeDate",
+  "issueDate",
+  "createdAt",
+  "paymentDueDate",
+  "invoiceNumber",
+  "contractor",
+  "netAmount",
+  "grossAmount",
+  "status",
+]);
 
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
   const sort = sortable.has(searchParams.get("sort") ?? "")
-    ? (searchParams.get("sort") as "plannedIncomeDate" | "issueDate" | "createdAt" | "paymentDueDate")
+    ? (searchParams.get("sort") as
+        | "plannedIncomeDate"
+        | "issueDate"
+        | "createdAt"
+        | "paymentDueDate"
+        | "invoiceNumber"
+        | "contractor"
+        | "netAmount"
+        | "grossAmount"
+        | "status")
     : "plannedIncomeDate";
   const order = searchParams.get("order") === "desc" ? "desc" : "asc";
 

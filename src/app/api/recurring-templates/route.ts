@@ -5,9 +5,32 @@ import { recurringTemplateCreateSchema } from "@/lib/validation/schemas";
 import { recurringSplitAmountError } from "@/lib/validation/recurring-split";
 import { ZodError } from "zod";
 
-export async function GET() {
+const recurringSortable = new Set([
+  "title",
+  "type",
+  "frequency",
+  "startDate",
+  "endDate",
+  "isActive",
+  "createdAt",
+]);
+
+export async function GET(req: Request) {
+  const { searchParams } = new URL(req.url);
+  const sort = recurringSortable.has(searchParams.get("sort") ?? "")
+    ? (searchParams.get("sort") as
+        | "title"
+        | "type"
+        | "frequency"
+        | "startDate"
+        | "endDate"
+        | "isActive"
+        | "createdAt")
+    : "createdAt";
+  const order = searchParams.get("order") === "asc" ? "asc" : "desc";
+
   const rows = await prisma.recurringTemplate.findMany({
-    orderBy: { createdAt: "desc" },
+    orderBy: { [sort]: order },
     include: { incomeCategory: true, expenseCategory: true },
   });
   return jsonData(rows);

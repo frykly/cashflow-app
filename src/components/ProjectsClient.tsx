@@ -288,6 +288,40 @@ export function ProjectsClient({ initialEditId = null }: { initialEditId?: strin
     load();
   }
 
+  function clickProjectHeaderSort(key: SortKey) {
+    if (!SORT_OPTIONS.some((o) => o.value === key)) return;
+    if (sortKey === key) setSortOrder((o) => (o === "asc" ? "desc" : "asc"));
+    else {
+      setSortKey(key);
+      setSortOrder("asc");
+    }
+  }
+
+  function projectSortTh(label: string, key: SortKey | null, align: "left" | "right" = "left") {
+    if (!key) {
+      const al = align === "right" ? "text-right" : "text-left";
+      return (
+        <span
+          className={`block px-2 py-2.5 text-xs font-semibold uppercase tracking-wide text-zinc-600 dark:text-zinc-400 ${al}`}
+        >
+          {label}
+        </span>
+      );
+    }
+    const active = sortKey === key;
+    const ac = align === "right" ? "justify-end text-right" : "justify-start text-left";
+    return (
+      <button
+        type="button"
+        className={`${ac} inline-flex w-full min-w-0 items-center gap-0.5 rounded-md px-2 py-2.5 text-xs font-semibold uppercase tracking-wide hover:bg-zinc-200/80 hover:text-zinc-950 dark:hover:bg-zinc-800/80 dark:hover:text-zinc-50 ${active ? "text-zinc-900 dark:text-zinc-100" : "text-zinc-600 dark:text-zinc-400"}`}
+        onClick={() => clickProjectHeaderSort(key)}
+      >
+        <span className="min-w-0">{label}</span>
+        {active ? (sortOrder === "asc" ? " ↑" : " ↓") : null}
+      </button>
+    );
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
@@ -369,33 +403,16 @@ export function ProjectsClient({ initialEditId = null }: { initialEditId?: strin
         <table className="w-full table-fixed text-left text-sm">
           <thead className="border-b border-zinc-200 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900">
             <tr>
-              <th className="w-[26%] px-2 py-2.5 pl-3 text-xs font-semibold uppercase tracking-wide text-zinc-600 dark:text-zinc-400">
-                Projekt
+              <th className="w-[26%] pl-3">{projectSortTh("Projekt", "name")}</th>
+              <th className="w-[7%]">{projectSortTh("Kod", "code")}</th>
+              <th className="w-[13%]">{projectSortTh("Klient", "clientName")}</th>
+              <th className="w-[15%]">{projectSortTh("Realizacja", "lifecycleStatus")}</th>
+              <th className="w-[15%]">{projectSortTh("Rozliczenie", "settlementStatus")}</th>
+              <th className="w-[9%]" title="Wynik rzeczywisty (netto z faktur projektu)">
+                {projectSortTh("Wynik", "actualResult", "right")}
               </th>
-              <th className="w-[7%] px-1 py-2.5 text-xs font-semibold uppercase tracking-wide text-zinc-600 dark:text-zinc-400">
-                Kod
-              </th>
-              <th className="w-[13%] px-2 py-2.5 text-xs font-semibold uppercase tracking-wide text-zinc-600 dark:text-zinc-400">
-                Klient
-              </th>
-              <th className="w-[15%] px-1 py-2.5 text-xs font-semibold uppercase tracking-wide text-zinc-600 dark:text-zinc-400">
-                Realizacja
-              </th>
-              <th className="w-[15%] px-1 py-2.5 text-xs font-semibold uppercase tracking-wide text-zinc-600 dark:text-zinc-400">
-                Rozliczenie
-              </th>
-              <th
-                className="w-[9%] px-2 py-2.5 text-right text-xs font-semibold uppercase tracking-wide text-zinc-600 dark:text-zinc-400"
-                title="Wynik rzeczywisty (netto z faktur projektu)"
-              >
-                Wynik
-              </th>
-              <th className="w-[7%] px-1 py-2.5 text-xs font-semibold uppercase tracking-wide text-zinc-600 dark:text-zinc-400">
-                Aktywny
-              </th>
-              <th className="w-[8%] px-2 py-2.5 pr-3 text-right text-xs font-semibold uppercase tracking-wide text-zinc-600 dark:text-zinc-400">
-                Akcje
-              </th>
+              <th className="w-[7%]">{projectSortTh("Aktywny", null)}</th>
+              <th className="w-[8%] pr-3">{projectSortTh("Akcje", null)}</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-zinc-200 dark:divide-zinc-800">

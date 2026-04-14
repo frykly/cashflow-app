@@ -142,8 +142,6 @@ function CostListSubline({
   settled: number;
   remaining: number;
 }) {
-  const plan = r.plannedPaymentDate ? formatDate(r.plannedPaymentDate) : "—";
-  const gross = formatMoney(Number(r.grossAmount));
   const src = paymentSourceLabel(r.paymentSource);
   const srcLong =
     r.paymentSource === "VAT_THEN_MAIN"
@@ -151,37 +149,38 @@ function CostListSubline({
       : r.paymentSource === "MAIN"
         ? "Płatność z konta MAIN"
         : "Płatność z konta VAT";
+  const cat = r.expenseCategory?.name ?? "—";
   const note = [r.description?.trim(), r.notes?.trim()].filter(Boolean).join(" — ");
   return (
-    <p className="mt-1.5 flex flex-wrap items-baseline gap-x-1.5 gap-y-0.5 text-[11px] leading-snug text-zinc-500 dark:text-zinc-400">
-      <span title={`Planowana data zapłaty: ${plan}`}>Plan: {plan}</span>
-      <span className="text-zinc-400" aria-hidden>
-        ·
-      </span>
-      <span title={srcLong}>Płatność: {src}</span>
-      <span className="text-zinc-400" aria-hidden>
-        ·
-      </span>
-      <span title="Kwota brutto dokumentu">Brutto: {gross}</span>
-      <span className="text-zinc-400" aria-hidden>
-        ·
-      </span>
-      <span title="Suma zarejestrowanych zapłat brutto">Zapłac.: {formatMoney(settled)}</span>
-      <span className="text-zinc-400" aria-hidden>
-        ·
-      </span>
-      <span title="Pozostało do rozliczenia brutto">Zostało: {formatMoney(remaining)}</span>
-      {note ? (
-        <>
-          <span className="text-zinc-400" aria-hidden>
-            ·
-          </span>
-          <span className="line-clamp-2 min-w-0 max-w-full break-words" title={note}>
-            {note}
-          </span>
-        </>
-      ) : null}
-    </p>
+    <div className="mt-1.5 space-y-1 text-[10px] leading-snug text-zinc-500 dark:text-zinc-400">
+      <p className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
+        <span className="shrink-0 text-zinc-400">Źródło</span>
+        <span className="min-w-0">{costEntrySourceBadge(r)}</span>
+        <span className="text-zinc-400">·</span>
+        <span className="line-clamp-1 min-w-0" title={`Kategoria: ${cat}`}>
+          Kat.: {cat}
+        </span>
+      </p>
+      <p className="flex flex-wrap items-baseline gap-x-1.5 gap-y-0.5">
+        <span title={srcLong}>VAT / płatność: {src}</span>
+        <span className="text-zinc-400">·</span>
+        <span title="Suma zarejestrowanych zapłat brutto" className="tabular-nums text-zinc-600 dark:text-zinc-300">
+          Zapłac.: {formatMoney(settled)}
+        </span>
+        <span className="text-zinc-400">·</span>
+        <span title="Pozostało do rozliczenia brutto" className="tabular-nums text-zinc-600 dark:text-zinc-300">
+          Zostało: {formatMoney(remaining)}
+        </span>
+        {note ? (
+          <>
+            <span className="text-zinc-400">·</span>
+            <span className="line-clamp-2 min-w-0 max-w-full break-words text-zinc-500" title={note}>
+              {note}
+            </span>
+          </>
+        ) : null}
+      </p>
+    </div>
   );
 }
 
@@ -189,6 +188,11 @@ const SORT_OPTIONS = [
   { value: "plannedPaymentDate", label: "Plan. zapłata" },
   { value: "paymentDueDate", label: "Termin płatności" },
   { value: "documentDate", label: "Data dokumentu" },
+  { value: "documentNumber", label: "Numer dokumentu" },
+  { value: "supplier", label: "Dostawca" },
+  { value: "netAmount", label: "Netto" },
+  { value: "grossAmount", label: "Brutto" },
+  { value: "status", label: "Status" },
   { value: "createdAt", label: "Data utworzenia" },
 ];
 
@@ -428,6 +432,27 @@ export function CostInvoicesClient({ initialQueryString = "" }: { initialQuerySt
 
   const sort = merged.get("sort") ?? "plannedPaymentDate";
   const order = (merged.get("order") === "desc" ? "desc" : "asc") as "asc" | "desc";
+
+  function clickHeaderSort(key: string) {
+    if (!SORT_OPTIONS.some((o) => o.value === key)) return;
+    if (sort === key) setParam("order", order === "asc" ? "desc" : "asc");
+    else setParams({ sort: key, order: "asc" });
+  }
+
+  function costSortTh(label: string, sortKey: string, align: "left" | "right" = "left") {
+    const active = sort === sortKey;
+    const ac = align === "right" ? "justify-end text-right" : "justify-start text-left";
+    return (
+      <button
+        type="button"
+        className={`${ac} inline-flex w-full min-w-0 items-center gap-0.5 rounded-md py-0.5 text-xs font-semibold uppercase tracking-wide hover:bg-zinc-200/80 hover:text-zinc-950 dark:hover:bg-zinc-800/80 dark:hover:text-zinc-50 ${active ? "text-zinc-900 dark:text-zinc-100" : "text-zinc-600 dark:text-zinc-400"}`}
+        onClick={() => clickHeaderSort(sortKey)}
+      >
+        <span className="min-w-0">{label}</span>
+        {active ? (order === "asc" ? " ↑" : " ↓") : null}
+      </button>
+    );
+  }
 
   function closeModal() {
     setOpen(false);
@@ -1107,28 +1132,28 @@ export function CostInvoicesClient({ initialQueryString = "" }: { initialQuerySt
           <table className="w-full table-fixed border-separate border-spacing-0 text-left text-sm">
             <thead className="border-b border-zinc-200 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900">
               <tr>
-                <th className="sticky top-0 z-20 w-[20%] border-b border-zinc-200 bg-zinc-50 px-2 py-2.5 pl-3 text-xs font-semibold uppercase tracking-wide text-zinc-600 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400">
-                  Numer
+                <th className="sticky top-0 z-20 w-[14%] border-b border-zinc-200 bg-zinc-50 px-2 py-2 pl-3 dark:border-zinc-800 dark:bg-zinc-900">
+                  {costSortTh("Numer", "documentNumber")}
                 </th>
-                <th className="sticky top-0 z-20 w-[8%] border-b border-zinc-200 bg-zinc-50 px-1 py-2.5 text-xs font-semibold uppercase tracking-wide text-zinc-600 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400">
-                  Źródło
+                <th className="sticky top-0 z-20 w-[19%] border-b border-zinc-200 bg-zinc-50 px-1 py-2 dark:border-zinc-800 dark:bg-zinc-900">
+                  {costSortTh("Dostawca", "supplier")}
                 </th>
-                <th className="sticky top-0 z-20 w-[17%] border-b border-zinc-200 bg-zinc-50 px-2 py-2.5 text-xs font-semibold uppercase tracking-wide text-zinc-600 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400">
-                  Dostawca
-                </th>
-                <th className="sticky top-0 z-20 w-[12%] border-b border-zinc-200 bg-zinc-50 px-1 py-2.5 text-xs font-semibold uppercase tracking-wide text-zinc-600 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400">
-                  Kategoria
-                </th>
-                <th className="sticky top-0 z-20 w-[12%] border-b border-zinc-200 bg-zinc-50 px-1 py-2.5 text-xs font-semibold uppercase tracking-wide text-zinc-600 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400">
+                <th className="sticky top-0 z-20 w-[14%] border-b border-zinc-200 bg-zinc-50 px-1 py-2 text-xs font-semibold uppercase tracking-wide text-zinc-600 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400">
                   Projekt
                 </th>
-                <th className="sticky top-0 z-20 w-[9%] border-b border-zinc-200 bg-zinc-50 px-2 py-2.5 text-right text-xs font-semibold uppercase tracking-wide text-zinc-600 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400">
-                  Netto
+                <th className="sticky top-0 z-20 w-[9%] border-b border-zinc-200 bg-zinc-50 px-1 py-2 dark:border-zinc-800 dark:bg-zinc-900">
+                  {costSortTh("Netto", "netAmount", "right")}
                 </th>
-                <th className="sticky top-0 z-20 w-[12%] border-b border-zinc-200 bg-zinc-50 px-1 py-2.5 text-xs font-semibold uppercase tracking-wide text-zinc-600 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400">
-                  Status
+                <th className="sticky top-0 z-20 w-[9%] border-b border-zinc-200 bg-zinc-50 px-1 py-2 dark:border-zinc-800 dark:bg-zinc-900">
+                  {costSortTh("Brutto", "grossAmount", "right")}
                 </th>
-                <th className="sticky top-0 z-20 w-[10%] border-b border-zinc-200 bg-zinc-50 px-2 py-2.5 pr-3 text-right text-xs font-semibold uppercase tracking-wide text-zinc-600 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400">
+                <th className="sticky top-0 z-20 w-[11%] border-b border-zinc-200 bg-zinc-50 px-1 py-2 dark:border-zinc-800 dark:bg-zinc-900">
+                  {costSortTh("Plan", "plannedPaymentDate")}
+                </th>
+                <th className="sticky top-0 z-20 w-[12%] border-b border-zinc-200 bg-zinc-50 px-1 py-2 dark:border-zinc-800 dark:bg-zinc-900">
+                  {costSortTh("Status", "status")}
+                </th>
+                <th className="sticky top-0 z-20 w-[12%] border-b border-zinc-200 bg-zinc-50 px-2 py-2 pr-3 text-right text-xs font-semibold uppercase tracking-wide text-zinc-600 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400">
                   Akcje
                 </th>
               </tr>
@@ -1177,21 +1202,30 @@ export function CostInvoicesClient({ initialQueryString = "" }: { initialQuerySt
                       </span>
                       <CostListSubline r={r} settled={settled} remaining={remaining} />
                     </td>
-                    <td className="min-w-0 px-1 py-2.5">{costEntrySourceBadge(r)}</td>
-                    <td className="min-w-0 px-2 py-2.5 text-sm text-zinc-800 dark:text-zinc-200" title={r.supplier}>
+                    <td className="min-w-0 px-1 py-2.5 text-sm text-zinc-800 dark:text-zinc-200" title={r.supplier}>
                       <span className="line-clamp-2 break-words">{r.supplier}</span>
                     </td>
-                    <td className="min-w-0 px-1 py-2.5 text-xs text-zinc-600 dark:text-zinc-400" title={r.expenseCategory?.name}>
-                      <span className="line-clamp-2 break-words">{r.expenseCategory?.name ?? "—"}</span>
+                    <td className="min-w-0 px-1 py-2.5 text-xs">
+                      {r.projectId ? (
+                        <Link
+                          href={`/projects/${r.projectId}`}
+                          className="line-clamp-2 break-words font-medium text-emerald-800 underline decoration-emerald-300 underline-offset-2 hover:decoration-emerald-600 dark:text-emerald-300 dark:decoration-emerald-700 dark:hover:decoration-emerald-400"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          {projectDisplayLabel(r)}
+                        </Link>
+                      ) : (
+                        <span className="line-clamp-2 break-words text-zinc-500 dark:text-zinc-400">—</span>
+                      )}
                     </td>
-                    <td
-                      className="min-w-0 px-1 py-2.5 text-xs text-zinc-600 dark:text-zinc-400"
-                      title={projectDisplayLabel(r) || undefined}
-                    >
-                      <span className="line-clamp-2 break-words">{projectDisplayLabel(r) || "—"}</span>
-                    </td>
-                    <td className="px-2 py-2.5 text-right text-sm tabular-nums text-zinc-900 dark:text-zinc-100">
+                    <td className="px-1 py-2.5 text-right text-sm tabular-nums font-medium text-zinc-900 dark:text-zinc-100">
                       {formatMoney(Number(r.netAmount))}
+                    </td>
+                    <td className="px-1 py-2.5 text-right text-sm tabular-nums text-zinc-800 dark:text-zinc-200">
+                      {formatMoney(Number(r.grossAmount))}
+                    </td>
+                    <td className="min-w-0 px-1 py-2.5 text-sm font-medium tabular-nums text-zinc-900 dark:text-zinc-100">
+                      {r.plannedPaymentDate ? formatDate(r.plannedPaymentDate) : "—"}
                     </td>
                     <td className="min-w-0 px-1 py-2.5">{statusBadge(r.status)}</td>
                     <td className="px-2 py-2.5 pr-3 text-right align-top">

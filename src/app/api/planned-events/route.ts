@@ -6,12 +6,12 @@ import { buildPlannedWhere } from "@/lib/prisma-list-filters";
 import { resolveProjectFields } from "@/lib/project-persist";
 import { ZodError } from "zod";
 
-const sortable = new Set(["plannedDate", "createdAt"]);
+const sortable = new Set(["plannedDate", "createdAt", "title", "type", "status", "amount"]);
 
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
   const sort = sortable.has(searchParams.get("sort") ?? "")
-    ? (searchParams.get("sort") as "plannedDate" | "createdAt")
+    ? (searchParams.get("sort") as "plannedDate" | "createdAt" | "title" | "type" | "status" | "amount")
     : "plannedDate";
   const order = searchParams.get("order") === "desc" ? "desc" : "asc";
 

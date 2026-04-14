@@ -78,6 +78,10 @@ function plannedRowOverdue(r: Row): boolean {
 
 const SORT_OPTIONS = [
   { value: "plannedDate", label: "Planowana data" },
+  { value: "title", label: "Tytuł" },
+  { value: "type", label: "Typ" },
+  { value: "amount", label: "Kwota" },
+  { value: "status", label: "Status" },
   { value: "createdAt", label: "Data utworzenia" },
 ];
 
@@ -209,6 +213,27 @@ export function PlannedEventsClient({ initialQueryString = "" }: { initialQueryS
 
   const sort = merged.get("sort") ?? "plannedDate";
   const order = (merged.get("order") === "desc" ? "desc" : "asc") as "asc" | "desc";
+
+  function clickHeaderSort(key: string) {
+    if (!SORT_OPTIONS.some((o) => o.value === key)) return;
+    if (sort === key) setParam("order", order === "asc" ? "desc" : "asc");
+    else setParams({ sort: key, order: "asc" });
+  }
+
+  function plannedSortTh(label: string, sortKey: string, align: "left" | "right" = "left") {
+    const active = sort === sortKey;
+    const ac = align === "right" ? "justify-end text-right" : "justify-start text-left";
+    return (
+      <button
+        type="button"
+        className={`${ac} inline-flex w-full min-w-0 items-center gap-0.5 rounded-md py-0.5 text-xs font-semibold uppercase tracking-wide hover:bg-zinc-200/80 hover:text-zinc-950 dark:hover:bg-zinc-800/80 dark:hover:text-zinc-50 ${active ? "text-zinc-900 dark:text-zinc-100" : "text-zinc-600 dark:text-zinc-400"}`}
+        onClick={() => clickHeaderSort(sortKey)}
+      >
+        <span className="min-w-0">{label}</span>
+        {active ? (order === "asc" ? " ↑" : " ↓") : null}
+      </button>
+    );
+  }
 
   function closeModal() {
     setOpen(false);
@@ -538,20 +563,37 @@ export function PlannedEventsClient({ initialQueryString = "" }: { initialQueryS
 
       {loadError && <Alert variant="error">{loadError}</Alert>}
 
-      <div className="overflow-x-auto rounded-xl border border-zinc-200 shadow-sm dark:border-zinc-800">
-        <table className="w-full min-w-[960px] text-left text-sm">
-          <thead className="border-b border-zinc-200 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900">
-            <tr>
-              <th className="px-3 py-2.5 font-semibold">Tytuł</th>
-              <th className="px-3 py-2.5 font-semibold">Typ</th>
-              <th className="px-3 py-2.5 font-semibold">Kategoria</th>
-              <th className="px-3 py-2.5 font-semibold">Projekt</th>
-              <th className="px-3 py-2.5 font-semibold">Data</th>
-              <th className="px-3 py-2.5 font-semibold">Kwota</th>
-              <th className="px-3 py-2.5 font-semibold">Status</th>
-              <th className="px-3 py-2.5 text-right font-semibold">Akcje</th>
-            </tr>
-          </thead>
+      <div className="overflow-hidden rounded-xl border border-zinc-200 shadow-sm dark:border-zinc-800">
+        <div className="max-h-[min(70vh,56rem)] overflow-y-auto">
+          <table className="w-full table-fixed border-separate border-spacing-0 text-left text-sm">
+            <thead className="border-b border-zinc-200 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900">
+              <tr>
+                <th className="sticky top-0 z-20 w-[22%] border-b border-zinc-200 bg-zinc-50 px-2 py-2 pl-3 dark:border-zinc-800 dark:bg-zinc-900">
+                  {plannedSortTh("Tytuł", "title")}
+                </th>
+                <th className="sticky top-0 z-20 w-[9%] border-b border-zinc-200 bg-zinc-50 px-1 py-2 dark:border-zinc-800 dark:bg-zinc-900">
+                  {plannedSortTh("Typ", "type")}
+                </th>
+                <th className="sticky top-0 z-20 w-[14%] border-b border-zinc-200 bg-zinc-50 px-1 py-2 text-xs font-semibold uppercase tracking-wide text-zinc-600 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400">
+                  Kategoria
+                </th>
+                <th className="sticky top-0 z-20 w-[14%] border-b border-zinc-200 bg-zinc-50 px-1 py-2 text-xs font-semibold uppercase tracking-wide text-zinc-600 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400">
+                  Projekt
+                </th>
+                <th className="sticky top-0 z-20 w-[11%] border-b border-zinc-200 bg-zinc-50 px-1 py-2 dark:border-zinc-800 dark:bg-zinc-900">
+                  {plannedSortTh("Data", "plannedDate")}
+                </th>
+                <th className="sticky top-0 z-20 w-[12%] border-b border-zinc-200 bg-zinc-50 px-1 py-2 dark:border-zinc-800 dark:bg-zinc-900">
+                  {plannedSortTh("Kwota", "amount", "right")}
+                </th>
+                <th className="sticky top-0 z-20 w-[12%] border-b border-zinc-200 bg-zinc-50 px-1 py-2 dark:border-zinc-800 dark:bg-zinc-900">
+                  {plannedSortTh("Status", "status")}
+                </th>
+                <th className="sticky top-0 z-20 w-[6%] border-b border-zinc-200 bg-zinc-50 px-2 py-2 pr-3 text-right text-xs font-semibold uppercase tracking-wide text-zinc-600 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400">
+                  Akcje
+                </th>
+              </tr>
+            </thead>
           <tbody className="divide-y divide-zinc-200 dark:divide-zinc-800">
             {listLoading && rows.length === 0 ? (
               <tr>
@@ -576,31 +618,39 @@ export function PlannedEventsClient({ initialQueryString = "" }: { initialQueryS
                       overdue ? "border-l-4 border-amber-500 bg-amber-50/40 dark:bg-amber-950/20" : ""
                     }`}
                   >
-                    <td className="max-w-[240px] px-3 py-2">
+                    <td className="min-w-0 px-2 py-2 pl-3">
                       <div className="flex flex-wrap items-center gap-1 font-medium text-zinc-900 dark:text-zinc-100">
                         {r.title}
                         {overdue ? <Badge variant="warning">Po terminie</Badge> : null}
                       </div>
                       {r.description ? (
-                        <div className="mt-0.5 truncate text-xs text-zinc-500" title={r.description}>
+                        <div className="mt-0.5 line-clamp-2 text-xs text-zinc-500" title={r.description}>
                           {r.description}
                         </div>
                       ) : null}
                     </td>
-                    <td className="px-3 py-2 font-medium">{typeBadge(r.type)}</td>
-                    <td className="max-w-[140px] truncate px-3 py-2 text-zinc-600 dark:text-zinc-400" title={categoryCell(r)}>
+                    <td className="min-w-0 px-1 py-2 font-medium">{typeBadge(r.type)}</td>
+                    <td className="min-w-0 truncate px-1 py-2 text-xs text-zinc-600 dark:text-zinc-400" title={categoryCell(r)}>
                       {categoryCell(r)}
                     </td>
-                    <td
-                      className="max-w-[120px] truncate px-3 py-2 text-zinc-600 dark:text-zinc-400"
-                      title={projectDisplayLabel(r) || undefined}
-                    >
-                      {projectDisplayLabel(r) || "—"}
+                    <td className="min-w-0 px-1 py-2 text-xs">
+                      {r.projectId ? (
+                        <Link
+                          href={`/projects/${r.projectId}`}
+                          className="line-clamp-2 break-words font-medium text-emerald-800 underline decoration-emerald-300 underline-offset-2 hover:decoration-emerald-600 dark:text-emerald-300 dark:decoration-emerald-700 dark:hover:decoration-emerald-400"
+                        >
+                          {projectDisplayLabel(r)}
+                        </Link>
+                      ) : (
+                        <span className="text-zinc-500 dark:text-zinc-400">—</span>
+                      )}
                     </td>
-                    <td className="whitespace-nowrap px-3 py-2">{formatDate(r.plannedDate)}</td>
-                    <td className="px-3 py-2 tabular-nums font-medium">{formatPlannedAmountCell(r)}</td>
-                    <td className="px-3 py-2">{statusBadge(r.status)}</td>
-                    <td className="px-3 py-2 text-right whitespace-nowrap">
+                    <td className="min-w-0 whitespace-nowrap px-1 py-2 text-sm font-medium tabular-nums text-zinc-900 dark:text-zinc-100">
+                      {formatDate(r.plannedDate)}
+                    </td>
+                    <td className="min-w-0 px-1 py-2 text-right text-sm tabular-nums font-medium">{formatPlannedAmountCell(r)}</td>
+                    <td className="min-w-0 px-1 py-2">{statusBadge(r.status)}</td>
+                    <td className="min-w-0 px-2 py-2 pr-3 text-right whitespace-nowrap">
                       <Button variant="ghost" className="!py-1 text-xs" onClick={() => openEdit(r)}>
                         Edytuj
                       </Button>
@@ -614,6 +664,7 @@ export function PlannedEventsClient({ initialQueryString = "" }: { initialQueryS
             )}
           </tbody>
         </table>
+        </div>
       </div>
 
       <Modal
