@@ -13,11 +13,22 @@ import { formatMoney, toIsoOrNull } from "@/lib/format";
 import {
   PROJECT_LIFECYCLE_VALUES,
   PROJECT_SETTLEMENT_VALUES,
+  lifecycleBadgeVariant,
   projectLifecycleLabel,
   projectSettlementLabel,
+  settlementBadgeVariant,
 } from "@/lib/project-status-labels";
 
-type SortKey = "code" | "name" | "clientName" | "plannedRevenueNet" | "plannedCostNet" | "paidTotal" | "actualResult";
+type SortKey =
+  | "code"
+  | "name"
+  | "clientName"
+  | "lifecycleStatus"
+  | "settlementStatus"
+  | "plannedRevenueNet"
+  | "plannedCostNet"
+  | "paidTotal"
+  | "actualResult";
 
 type Row = {
   id: string;
@@ -320,36 +331,41 @@ export function ProjectsClient({ initialEditId = null }: { initialEditId?: strin
       {loadError && <Alert variant="error">{loadError}</Alert>}
 
       <div className="overflow-x-auto rounded-xl border border-zinc-200 shadow-sm dark:border-zinc-800">
-        <table className="w-full min-w-[960px] text-left text-sm">
+        <table className="w-full min-w-[1100px] text-left text-sm">
           <thead className="border-b border-zinc-200 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900">
             <tr>
               <th className="px-3 py-2.5">{headerBtn("Nazwa", "name")}</th>
               <th className="px-3 py-2.5">{headerBtn("Numer zlecenia", "code")}</th>
               <th className="px-3 py-2.5">{headerBtn("Klient", "clientName")}</th>
+              <th className="px-2 py-2.5">{headerBtn("Realizacja", "lifecycleStatus")}</th>
+              <th className="px-2 py-2.5">{headerBtn("Rozliczenie", "settlementStatus")}</th>
               <th className="px-3 py-2.5 text-right">{headerBtn("Plan przychód", "plannedRevenueNet")}</th>
               <th className="px-3 py-2.5 text-right">{headerBtn("Plan koszt", "plannedCostNet")}</th>
               <th className="px-3 py-2.5 text-right">{headerBtn("Zapłacone", "paidTotal")}</th>
               <th className="px-3 py-2.5 text-right">{headerBtn("Wynik rzecz.", "actualResult")}</th>
-              <th className="px-3 py-2.5 font-semibold">Status</th>
+              <th className="px-3 py-2.5 font-semibold">Aktywny</th>
               <th className="px-3 py-2.5 text-right font-semibold">Akcje</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-zinc-200 dark:divide-zinc-800">
             {loading && rows.length === 0 ? (
               <tr>
-                <td colSpan={9} className="px-3 py-12 text-center text-zinc-500">
+                <td colSpan={11} className="px-3 py-12 text-center text-zinc-500">
                   <Spinner className="mr-2 inline !size-5" />
                   Ładowanie…
                 </td>
               </tr>
             ) : rows.length === 0 ? (
               <tr>
-                <td colSpan={9} className="px-3 py-12 text-center text-zinc-500">
+                <td colSpan={11} className="px-3 py-12 text-center text-zinc-500">
                   Brak projektów. Użyj <strong>Dodaj projekt</strong>.
                 </td>
               </tr>
             ) : (
-              rows.map((r) => (
+              rows.map((r) => {
+                const lifeLabel = projectLifecycleLabel(r.lifecycleStatus);
+                const setLabel = projectSettlementLabel(r.settlementStatus);
+                return (
                 <tr key={r.id} className="bg-white dark:bg-zinc-950">
                   <td className="px-3 py-2 font-medium text-zinc-900 dark:text-zinc-100">
                     <Link href={`/projects/${r.id}`} className="underline decoration-zinc-300 underline-offset-2 hover:decoration-zinc-600 dark:decoration-zinc-600">
@@ -359,6 +375,20 @@ export function ProjectsClient({ initialEditId = null }: { initialEditId?: strin
                   <td className="px-3 py-2 text-zinc-600 dark:text-zinc-400">{r.code ?? "—"}</td>
                   <td className="max-w-[200px] truncate px-3 py-2 text-zinc-600 dark:text-zinc-400" title={r.clientName ?? undefined}>
                     {r.clientName ?? "—"}
+                  </td>
+                  <td className="max-w-[9rem] px-2 py-2 align-top" title={lifeLabel}>
+                    <span className="inline-block max-w-full">
+                      <Badge variant={lifecycleBadgeVariant(r.lifecycleStatus)}>
+                        <span className="line-clamp-2 break-words">{lifeLabel}</span>
+                      </Badge>
+                    </span>
+                  </td>
+                  <td className="max-w-[9rem] px-2 py-2 align-top" title={setLabel}>
+                    <span className="inline-block max-w-full">
+                      <Badge variant={settlementBadgeVariant(r.settlementStatus)}>
+                        <span className="line-clamp-2 break-words">{setLabel}</span>
+                      </Badge>
+                    </span>
                   </td>
                   <td className="px-3 py-2 text-right tabular-nums text-zinc-700 dark:text-zinc-300">{moneyCell(r.plannedRevenueNet)}</td>
                   <td className="px-3 py-2 text-right tabular-nums text-zinc-700 dark:text-zinc-300">{moneyCell(r.plannedCostNet)}</td>
@@ -386,7 +416,8 @@ export function ProjectsClient({ initialEditId = null }: { initialEditId?: strin
                     </Button>
                   </td>
                 </tr>
-              ))
+                );
+              })
             )}
           </tbody>
         </table>

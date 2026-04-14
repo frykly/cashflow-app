@@ -7,6 +7,8 @@ export type ProjectListSortKey =
   | "code"
   | "name"
   | "clientName"
+  | "lifecycleStatus"
+  | "settlementStatus"
   | "plannedRevenueNet"
   | "plannedCostNet"
   | "paidTotal"
@@ -129,6 +131,10 @@ export async function listProjectsEnriched(options: {
         return strNullsLast(a.name, b.name, order);
       case "clientName":
         return strNullsLast(a.clientName, b.clientName, order);
+      case "lifecycleStatus":
+        return strNullsLast(a.lifecycleStatus, b.lifecycleStatus, order);
+      case "settlementStatus":
+        return strNullsLast(a.settlementStatus, b.settlementStatus, order);
       case "plannedRevenueNet":
         return nullsLastCompare(
           a.plannedRevenueNet != null ? decToNumber(a.plannedRevenueNet) : null,
