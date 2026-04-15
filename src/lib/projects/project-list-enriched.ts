@@ -36,6 +36,21 @@ function strNullsLast(a: string | null, b: string | null, order: "asc" | "desc")
   return order === "asc" ? sa.localeCompare(sb, "pl") : sb.localeCompare(sa, "pl");
 }
 
+/** Puste / null na końcu; same cyfry → porządek numeryczny; inaczej jak string. */
+function codeNullsLast(a: string | null, b: string | null, order: "asc" | "desc"): number {
+  const na = a?.trim() || null;
+  const nb = b?.trim() || null;
+  if (na == null || nb == null) {
+    return strNullsLast(na, nb, order);
+  }
+  if (/^\d+$/.test(na) && /^\d+$/.test(nb)) {
+    const da = parseInt(na, 10);
+    const db = parseInt(nb, 10);
+    return order === "asc" ? da - db : db - da;
+  }
+  return strNullsLast(na, nb, order);
+}
+
 export async function listProjectsEnriched(options: {
   q?: string;
   active?: string | null;
@@ -203,7 +218,7 @@ export async function listProjectsEnriched(options: {
   const cmp = (a: ProjectListRow, b: ProjectListRow): number => {
     switch (sort) {
       case "code":
-        return strNullsLast(a.code, b.code, order);
+        return codeNullsLast(a.code, b.code, order);
       case "name":
         return strNullsLast(a.name, b.name, order);
       case "clientName":
