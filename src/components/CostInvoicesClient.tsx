@@ -19,7 +19,7 @@ import { costRemainingGross, isCostFullyPaid, sumCostPaymentsGross } from "@/lib
 import { DueDateOffsetControls } from "@/components/DueDateOffsetControls";
 import { normalizeDecimalInput } from "@/lib/decimal-input";
 import { isStoredVatOnlyCost } from "@/lib/validation/is-vat-only-cost";
-import { projectLinkTargetId, projectListLabel } from "@/lib/project-display";
+import { projectAllocationListLinks } from "@/lib/project-display";
 import {
   addSavedCostListView,
   loadLastCostListQuery,
@@ -902,15 +902,28 @@ export function CostInvoicesClient({ initialQueryString = "" }: { initialQuerySt
     }
   }
 
-  async function remove(id: string) {
-    if (!confirm("Usunąć ten dokument kosztowy?")) return;
+  async function deleteCostInvoiceById(id: string): Promise<boolean> {
     const res = await fetch(`/api/cost-invoices/${id}`, { method: "DELETE" });
     if (!res.ok) {
       const j = await res.json();
       alert(readApiErrorBody(j));
-      return;
+      return false;
     }
-    load();
+    return true;
+  }
+
+  async function remove(id: string) {
+    if (!confirm("Usunąć ten dokument kosztowy?")) return;
+    if (await deleteCostInvoiceById(id)) load();
+  }
+
+  async function removeFromEdit() {
+    if (!editing.id) return;
+    if (!confirm("Usunąć ten dokument kosztowy? Operacja jest nieodwracalna.")) return;
+    if (await deleteCostInvoiceById(editing.id)) {
+      closeModal();
+      load();
+    }
   }
 
   const overdueFilterActive = merged.get("overdue") === "1";
@@ -1272,25 +1285,49 @@ export function CostInvoicesClient({ initialQueryString = "" }: { initialQuerySt
                     <td className="min-w-0 px-1 py-2.5 text-sm text-zinc-800 dark:text-zinc-200" title={r.supplier}>
                       <span className="line-clamp-2 break-words">{r.supplier}</span>
                     </td>
-                    <td className="min-w-0 px-1 py-2.5 text-xs">
+                    <td className="min-w-0 max-w-[220px] px-1 py-2.5 text-xs align-top">
                       {(() => {
-                        const hrefId = projectLinkTargetId({
-                          projectAllocations: r.projectAllocations?.map((a) => ({ projectId: a.projectId })),
-                          projectId: r.projectId,
-                        });
-                        const label = projectListLabel(r);
-                        return hrefId ? (
-                          <Link
-                            href={`/projects/${hrefId}`}
-                            className="line-clamp-2 break-words font-medium text-emerald-800 underline decoration-emerald-300 underline-offset-2 hover:decoration-emerald-600 dark:text-emerald-300 dark:decoration-emerald-700 dark:hover:decoration-emerald-400"
-                            onClick={(e) => e.stopPropagation()}
+                        const items = projectAllocationListLinks(r);
+                        if (items.length === 0) {
+                          return <span className="text-zinc-500 dark:text-zinc-400">—</span>;
+                        }
+                        const multi = items.length > 1;
+                        return (
+                          <div
+                            className={
+                              multi
+                                ? "rounded-md border border-emerald-200/90 bg-emerald-50/60 px-1.5 py-1 dark:border-emerald-900/60 dark:bg-emerald-950/30"
+                                : ""
+                            }
                           >
-                            {label}
-                          </Link>
-                        ) : label !== "—" ? (
-                          <span className="line-clamp-2 break-words text-zinc-700 dark:text-zinc-300">{label}</span>
-                        ) : (
-                          <span className="line-clamp-2 break-words text-zinc-500 dark:text-zinc-400">—</span>
+                            {multi ? (
+                              <p className="mb-1 text-[10px] font-semibold uppercase leading-tight tracking-wide text-emerald-900 dark:text-emerald-300">
+                                Wiele projektów
+                              </p>
+                            ) : null}
+                            <ul className="list-none space-y-1">
+                              {items.map((it, idx) => (
+                                <li key={`${it.projectId || "x"}-${idx}`}>
+                                  {it.projectId ? (
+                                    <Link
+                                      href={`/projects/${it.projectId}`}
+                                      className="break-words font-medium text-emerald-800 underline decoration-emerald-300 underline-offset-2 hover:decoration-emerald-600 dark:text-emerald-300 dark:decoration-emerald-700 dark:hover:decoration-emerald-400"
+                                      onClick={(e) => e.stopPropagation()}
+                                    >
+                                      {it.label}
+                                    </Link>
+                                  ) : (
+                                    <span
+                                      className="break-words text-amber-800 dark:text-amber-300"
+                                      title="Wybierz projekt z listy przy edycji, aby dodać link"
+                                    >
+                                      {it.label}
+                                    </span>
+                                  )}
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
                         );
                       })()}
                     </td>
@@ -1811,14 +1848,29 @@ export function CostInvoicesClient({ initialQueryString = "" }: { initialQuerySt
               </div>
             </div>
           ) : null}
-          <div className="flex flex-wrap gap-2 border-t border-zinc-200 pt-4 dark:border-zinc-700">
-            <Button type="submit" disabled={saving}>
-              {saving ? <Spinner className="!size-4" /> : null}
-              Zapisz
-            </Button>
-            <Button type="button" variant="secondary" onClick={closeModal} disabled={saving}>
-              Anuluj
-            </Button>
+          <div className="flex flex-wrap items-center justify-between gap-2 border-t border-zinc-200 pt-4 dark:border-zinc-700">
+            <div>
+              {editing.id ? (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  className="!text-sm text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-950/40"
+                  disabled={saving}
+                  onClick={() => void removeFromEdit()}
+                >
+                  Usuń dokument
+                </Button>
+              ) : null}
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Button type="submit" disabled={saving}>
+                {saving ? <Spinner className="!size-4" /> : null}
+                Zapisz
+              </Button>
+              <Button type="button" variant="secondary" onClick={closeModal} disabled={saving}>
+                Anuluj
+              </Button>
+            </div>
           </div>
         </form>
       </Modal>

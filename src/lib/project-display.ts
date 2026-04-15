@@ -35,3 +35,31 @@ export function projectLinkTargetId(r: {
   if (r.projectAllocations && r.projectAllocations.length > 1) return null;
   return r.projectId ?? null;
 }
+
+export type ProjectListLinkItem = {
+  projectId: string;
+  label: string;
+};
+
+/**
+ * Osobne pozycje do linków w kolumnie „Projekt” (wiele alokacji lub jeden legacy).
+ * Gdy `projectId` jest pusty, jest tylko legacy `projectName` — link nie jest możliwy.
+ */
+export function projectAllocationListLinks(r: {
+  projectAllocations?: { projectId: string; project?: { name: string | null } | null }[] | null;
+  projectId?: string | null;
+  project?: { name: string } | null;
+  projectName?: string | null;
+}): ProjectListLinkItem[] {
+  const allocs = r.projectAllocations;
+  if (allocs && allocs.length > 0) {
+    return allocs.map((a) => ({
+      projectId: a.projectId,
+      label: (a.project?.name ?? "").trim() || "Projekt",
+    }));
+  }
+  const leg = projectDisplayLabel(r);
+  if (!leg) return [];
+  if (r.projectId) return [{ projectId: r.projectId, label: leg }];
+  return [{ projectId: "", label: leg }];
+}
