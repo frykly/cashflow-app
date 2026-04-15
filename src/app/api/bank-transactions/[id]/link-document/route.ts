@@ -11,6 +11,8 @@ import {
   bankGroszeToAmountGross,
   BANK_LINK_PAYMENT_NOTE,
 } from "@/lib/bank-import/payment-from-bank";
+import { normalizeDecimalInput } from "@/lib/decimal-input";
+import { finalizeNewCostPaymentAllocations, finalizeNewIncomePaymentAllocations } from "@/lib/payment-project-allocation/finalize";
 
 const bodySchema = z
   .object({
@@ -59,7 +61,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
 
     const inv = await prisma.costInvoice.findUnique({
       where: { id: parsed.data.costInvoiceId },
-      include: { payments: true },
+      include: { payments: true, projectAllocations: true },
     });
     if (!inv) return jsonError("Nie znaleziono faktury kosztowej", 404);
 
@@ -71,7 +73,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     }
 
     const updated = await prisma.$transaction(async (trx) => {
-      await trx.costInvoicePayment.create({
+      const payment = await trx.costInvoicePayment.create({
         data: {
           costInvoiceId: inv.id,
           amountGross,
@@ -79,7 +81,15 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
           notes: `${BANK_LINK_PAYMENT_NOTE} (${bankTxId.slice(0, 8)}…)`,
           bankTransactionId: bankTxId,
         },
+        select: { id: true },
       });
+      await finalizeNewCostPaymentAllocations(
+        trx,
+        inv.id,
+        payment.id,
+        normalizeDecimalInput(amountGross.toString()),
+        null,
+      );
       return trx.bankTransaction.update({
         where: { id: bankTxId },
         data: {
@@ -110,7 +120,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
 
   const inv = await prisma.incomeInvoice.findUnique({
     where: { id: parsed.data.incomeInvoiceId! },
-    include: { payments: true },
+    include: { payments: true, projectAllocations: true },
   });
   if (!inv) return jsonError("Nie znaleziono faktury przychodu", 404);
 
@@ -122,7 +132,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
   }
 
   const updated = await prisma.$transaction(async (trx) => {
-    await trx.incomeInvoicePayment.create({
+    const payment = await trx.incomeInvoicePayment.create({
       data: {
         incomeInvoiceId: inv.id,
         amountGross,
@@ -130,7 +140,15 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
         notes: `${BANK_LINK_PAYMENT_NOTE} (${bankTxId.slice(0, 8)}…)`,
         bankTransactionId: bankTxId,
       },
+      select: { id: true },
     });
+    await finalizeNewIncomePaymentAllocations(
+      trx,
+      inv.id,
+      payment.id,
+      normalizeDecimalInput(amountGross.toString()),
+      null,
+    );
     return trx.bankTransaction.update({
       where: { id: bankTxId },
       data: {

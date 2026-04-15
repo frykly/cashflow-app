@@ -47,7 +47,10 @@ export async function GET(req: Request) {
     include: {
       incomeCategory: true,
       project: true,
-      payments: { orderBy: { paymentDate: "asc" } },
+      payments: {
+        orderBy: { paymentDate: "asc" },
+        include: { projectAllocations: { include: { project: { select: { id: true, name: true } } } } },
+      },
       projectAllocations: { include: { project: { select: { id: true, name: true, code: true } } } },
     },
   });
@@ -123,7 +126,10 @@ export async function POST(req: Request) {
       include: {
         incomeCategory: true,
         project: true,
-        payments: { orderBy: { paymentDate: "asc" } },
+        payments: {
+        orderBy: { paymentDate: "asc" },
+        include: { projectAllocations: { include: { project: { select: { id: true, name: true } } } } },
+      },
         projectAllocations: { include: { project: { select: { id: true, name: true, code: true } } } },
       },
     });

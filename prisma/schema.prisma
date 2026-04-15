@@ -38,6 +38,8 @@ model Project {
   costAllocations    CostInvoiceProjectAllocation[]
   incomeAllocations  IncomeInvoiceProjectAllocation[]
   plannedAllocations PlannedEventProjectAllocation[]
+  costPaymentProjectAllocations   CostInvoicePaymentProjectAllocation[]
+  incomePaymentProjectAllocations IncomeInvoicePaymentProjectAllocation[]
 }
 
 /// Rozbicie kosztu na wiele projektów — jeśli są wiersze, raportowanie używa ich zamiast legacy CostInvoice.projectId.
@@ -159,8 +161,25 @@ model IncomeInvoicePayment {
   /// Powiązanie z wierszem importu bankowego (jedna płatność na transakcję)
   bankTransactionId  String?          @unique
   createdAt          DateTime         @default(now())
+  projectAllocations IncomeInvoicePaymentProjectAllocation[]
 
   @@index([bankTransactionId])
+}
+
+/// Rozbicie kwoty brutto płatności przychodu na projekty — pierwszeństwo przy raportowaniu „zapłacono”; brak wierszy = fallback wg alokacji dokumentu.
+model IncomeInvoicePaymentProjectAllocation {
+  id                     String               @id @default(cuid())
+  incomeInvoicePaymentId String
+  incomeInvoicePayment   IncomeInvoicePayment @relation(fields: [incomeInvoicePaymentId], references: [id], onDelete: Cascade)
+  projectId              String
+  project                Project              @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  grossAmount            Decimal
+  description            String               @default("")
+  createdAt              DateTime             @default(now())
+  updatedAt              DateTime             @updatedAt
+
+  @@index([incomeInvoicePaymentId])
+  @@index([projectId])
 }
 
 model CostInvoice {
@@ -210,8 +229,25 @@ model CostInvoicePayment {
   notes              String      @default("")
   bankTransactionId  String?     @unique
   createdAt          DateTime    @default(now())
+  projectAllocations CostInvoicePaymentProjectAllocation[]
 
   @@index([bankTransactionId])
+}
+
+/// Rozbicie kwoty brutto płatności kosztu na projekty — pierwszeństwo przy raportowaniu „zapłacono”; brak wierszy = fallback wg alokacji dokumentu.
+model CostInvoicePaymentProjectAllocation {
+  id                   String             @id @default(cuid())
+  costInvoicePaymentId String
+  costInvoicePayment   CostInvoicePayment @relation(fields: [costInvoicePaymentId], references: [id], onDelete: Cascade)
+  projectId            String
+  project              Project            @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  grossAmount          Decimal
+  description          String             @default("")
+  createdAt            DateTime           @default(now())
+  updatedAt            DateTime           @updatedAt
+
+  @@index([costInvoicePaymentId])
+  @@index([projectId])
 }
 
 model RecurringTemplate {

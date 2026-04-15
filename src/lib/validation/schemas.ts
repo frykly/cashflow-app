@@ -204,17 +204,31 @@ export const projectUpdateSchema = z.object({
   endDate: optionalIsoNullable(),
 });
 
-export const incomePaymentCreateSchema = z.object({
-  amountGross: decimalLike,
-  paymentDate: isoDateTime,
-  notes: z.string().optional().default(""),
+const paymentProjectAllocationRowSchema = z.object({
+  projectId: z.string().min(1),
+  grossAmount: decimalLike,
+  description: z.string().max(500).optional().default(""),
 });
 
-export const costPaymentCreateSchema = z.object({
-  amountGross: decimalLike,
-  paymentDate: isoDateTime,
-  notes: z.string().optional().default(""),
-});
+export const incomePaymentCreateSchema = z
+  .object({
+    amountGross: decimalLike,
+    paymentDate: isoDateTime,
+    notes: z.string().optional().default(""),
+  })
+  .extend({
+    projectAllocations: z.array(paymentProjectAllocationRowSchema).optional(),
+  });
+
+export const costPaymentCreateSchema = z
+  .object({
+    amountGross: decimalLike,
+    paymentDate: isoDateTime,
+    notes: z.string().optional().default(""),
+  })
+  .extend({
+    projectAllocations: z.array(paymentProjectAllocationRowSchema).optional(),
+  });
 
 const optionalAmountVatRecurring = z.preprocess(
   (v) => (v === "" || v === null || v === undefined ? null : normalizeDecimalInput(String(v))),

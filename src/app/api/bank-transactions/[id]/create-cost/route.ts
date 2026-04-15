@@ -8,6 +8,8 @@ import { resolveProjectFields } from "@/lib/project-persist";
 import type { VatRatePct } from "@/lib/vat-rate";
 import { healBankTransactionLinks } from "@/lib/bank-import/heal-links";
 import { assertCostLinkSign, BANK_COST_PAYMENT_NOTE } from "@/lib/bank-import/payment-from-bank";
+import { normalizeDecimalInput } from "@/lib/decimal-input";
+import { finalizeNewCostPaymentAllocations } from "@/lib/payment-project-allocation/finalize";
 import { inferDocumentNumberFromBankText } from "@/lib/bank-import/parse-document-number";
 import { isExpenseCategoryBankFeesLike, looksLikeBankFeeDescription } from "@/lib/bank-import/bank-fee-heuristic";
 import { z } from "zod";
@@ -161,7 +163,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
       },
     });
 
-    await trx.costInvoicePayment.create({
+    const pay = await trx.costInvoicePayment.create({
       data: {
         costInvoiceId: cost.id,
         amountGross: gross,
@@ -169,7 +171,9 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
         notes: `${BANK_COST_PAYMENT_NOTE} (${bankTxId.slice(0, 8)}…)`,
         bankTransactionId: bankTxId,
       },
+      select: { id: true },
     });
+    await finalizeNewCostPaymentAllocations(trx, cost.id, pay.id, normalizeDecimalInput(gross.toString()), null);
 
     const bankRow = await trx.bankTransaction.update({
       where: { id: fresh.id },

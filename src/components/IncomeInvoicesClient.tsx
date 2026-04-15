@@ -21,6 +21,8 @@ import { incomeRemainingGross, isIncomeFullyPaid, sumIncomePaymentsGross } from 
 import { DueDateOffsetControls } from "@/components/DueDateOffsetControls";
 import { normalizeDecimalInput } from "@/lib/decimal-input";
 import { projectLinkTargetId, projectListLabel } from "@/lib/project-display";
+import { documentGrossSlicesFromInvoice } from "@/lib/payment-project-allocation/distribute-read";
+import { defaultProportionalPaymentAllocationRows } from "@/lib/payment-project-allocation/default-rows";
 
 type ProjectOption = { id: string; name: string; isActive: boolean; code?: string | null };
 
@@ -43,7 +45,13 @@ type Row = {
   notes: string;
   incomeCategoryId?: string | null;
   incomeCategory?: { id: string; name: string; slug: string } | null;
-  payments?: { id: string; amountGross: string; paymentDate: string; notes: string }[];
+  payments?: {
+    id: string;
+    amountGross: string;
+    paymentDate: string;
+    notes: string;
+    projectAllocations?: { projectId: string; grossAmount: unknown; project?: { id: string; name: string } | null }[];
+  }[];
   isGeneratedFromRecurring?: boolean;
   isRecurringDetached?: boolean;
   projectId?: string | null;
@@ -63,6 +71,23 @@ type Draft = Omit<Row, "id"> & { id?: string };
 
 function todayYmd(): string {
   return new Date().toISOString().slice(0, 10);
+}
+
+function incomeInvoiceMultiProject(editing: Pick<Draft, "projectAllocations" | "projectId">): boolean {
+  return (editing.projectAllocations?.length ?? 0) > 1;
+}
+
+function prefillIncomePaymentProjectRows(editing: Draft, amountGrossStr: string) {
+  const inv = {
+    projectAllocations: (editing.projectAllocations ?? []).map((a) => ({
+      projectId: a.projectId,
+      grossAmount: a.grossAmount,
+    })),
+    grossAmount: editing.grossAmount,
+    projectId: editing.projectId ?? null,
+  };
+  const slices = documentGrossSlicesFromInvoice(inv);
+  return defaultProportionalPaymentAllocationRows(slices, amountGrossStr);
 }
 
 function emptyDraft(): Draft {
@@ -199,6 +224,8 @@ export function IncomeInvoicesClient({ initialQueryString = "" }: { initialQuery
   const [categories, setCategories] = useState<Cat[]>([]);
   const [payOpen, setPayOpen] = useState(false);
   const [payDraft, setPayDraft] = useState({ amountGross: "", paymentDate: "", notes: "" });
+  const [payProjectRows, setPayProjectRows] = useState<{ projectId: string; grossAmount: string }[]>([]);
+  const [payProjectManual, setPayProjectManual] = useState(false);
   const [paySaving, setPaySaving] = useState(false);
   const [importMsg, setImportMsg] = useState<string | null>(null);
   const [contractorSuggestions, setContractorSuggestions] = useState<string[]>([]);
@@ -570,17 +597,38 @@ export function IncomeInvoicesClient({ initialQueryString = "" }: { initialQuery
       setFormError("Ustaw datę wpłaty.");
       return;
     }
+    const gNorm = normalizeDecimalInput(payDraft.amountGross);
+    if (incomeInvoiceMultiProject(editing)) {
+      if (payProjectRows.length === 0) {
+        setFormError("Ustaw podział brutto na projekty (dokument ma wiele alokacji).");
+        return;
+      }
+      const sum = payProjectRows.reduce((a, r) => a + (Number(normalizeDecimalInput(r.grossAmount)) || 0), 0);
+      const target = Number(gNorm);
+      if (!Number.isFinite(sum) || !Number.isFinite(target) || Math.abs(sum - target) > 0.02) {
+        setFormError("Suma brutto po projektach musi równać się kwocie wpłaty.");
+        return;
+      }
+    }
     setPaySaving(true);
     setFormError(null);
     try {
+      const body: Record<string, unknown> = {
+        amountGross: gNorm,
+        paymentDate: pd,
+        notes: payDraft.notes,
+      };
+      if (incomeInvoiceMultiProject(editing) && payProjectRows.length > 0) {
+        body.projectAllocations = payProjectRows.map((r) => ({
+          projectId: r.projectId,
+          grossAmount: normalizeDecimalInput(r.grossAmount),
+          description: "",
+        }));
+      }
       const res = await fetch(`/api/income-invoices/${editing.id}/payments`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          amountGross: normalizeDecimalInput(payDraft.amountGross),
-          paymentDate: pd,
-          notes: payDraft.notes,
-        }),
+        body: JSON.stringify(body),
       });
       const j = await res.json();
       if (!res.ok) {
@@ -589,6 +637,8 @@ export function IncomeInvoicesClient({ initialQueryString = "" }: { initialQuery
       }
       setPayOpen(false);
       setPayDraft({ amountGross: "", paymentDate: "", notes: "" });
+      setPayProjectRows([]);
+      setPayProjectManual(false);
       await refreshPaymentsForInvoice(editing.id);
       load();
     } catch {
@@ -1395,11 +1445,20 @@ export function IncomeInvoicesClient({ initialQueryString = "" }: { initialQuery
                   className="!py-1.5 !text-xs"
                   onClick={() => {
                     setFormError(null);
+                    const inv = editing as unknown as IncomeInvoice;
+                    const pays = (editing.payments ?? []) as unknown as PayPick[];
+                    const remaining = incomeRemainingGross(inv, pays);
+                    const amt =
+                      remaining > 0 ? String(remaining) : (Number(editing.grossAmount) > 0 ? String(editing.grossAmount) : "");
+                    setPayProjectManual(false);
                     setPayDraft({
-                      amountGross: "",
+                      amountGross: amt,
                       paymentDate: todayYmd(),
                       notes: "",
                     });
+                    setPayProjectRows(
+                      incomeInvoiceMultiProject(editing) && amt ? prefillIncomePaymentProjectRows(editing, amt) : [],
+                    );
                     setPayOpen(true);
                   }}
                   disabled={saving}
@@ -1488,11 +1547,71 @@ export function IncomeInvoicesClient({ initialQueryString = "" }: { initialQuery
           <Field label="Kwota brutto">
             <Input
               value={payDraft.amountGross}
-              onChange={(e) => setPayDraft({ ...payDraft, amountGross: e.target.value })}
+              onChange={(e) => {
+                const v = e.target.value;
+                setPayDraft({ ...payDraft, amountGross: v });
+                if (!payProjectManual && incomeInvoiceMultiProject(editing) && v.trim()) {
+                  setPayProjectRows(prefillIncomePaymentProjectRows(editing, v));
+                }
+              }}
               required
               disabled={paySaving}
             />
           </Field>
+          {incomeInvoiceMultiProject(editing) && payProjectRows.length > 0 ? (
+            <div className="rounded-lg border border-zinc-200 p-3 dark:border-zinc-700">
+              <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                <span className="text-sm font-medium text-zinc-800 dark:text-zinc-200">Podział na projekty (brutto)</span>
+                <label className="flex cursor-pointer items-center gap-2 text-xs text-zinc-600 dark:text-zinc-400">
+                  <input
+                    type="checkbox"
+                    className="size-4 rounded border-zinc-300"
+                    checked={payProjectManual}
+                    onChange={(e) => setPayProjectManual(e.target.checked)}
+                    disabled={paySaving}
+                  />
+                  Ręczny
+                </label>
+              </div>
+              <p className="mb-2 text-xs text-zinc-500">
+                Domyślnie proporcje jak w alokacji dokumentu. Zaznacz „Ręczny”, aby poprawić kwoty.
+              </p>
+              <div className="space-y-2">
+                {payProjectRows.map((row, idx) => {
+                  const name =
+                    editing.projectAllocations?.find((a) => a.projectId === row.projectId)?.project?.name ??
+                    projects.find((p) => p.id === row.projectId)?.name ??
+                    row.projectId;
+                  return (
+                    <div key={`${row.projectId}-${idx}`} className="flex flex-wrap items-center gap-2 text-sm">
+                      <span className="min-w-[120px] flex-1 font-medium text-zinc-800 dark:text-zinc-200">{name}</span>
+                      <Input
+                        className="max-w-[140px]"
+                        value={row.grossAmount}
+                        disabled={paySaving || !payProjectManual}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          setPayProjectRows((rows) => rows.map((x, i) => (i === idx ? { ...x, grossAmount: val } : x)));
+                        }}
+                      />
+                    </div>
+                  );
+                })}
+              </div>
+              <Button
+                type="button"
+                variant="secondary"
+                className="mt-2 !text-xs"
+                disabled={paySaving}
+                onClick={() => {
+                  setPayProjectManual(false);
+                  setPayProjectRows(prefillIncomePaymentProjectRows(editing, payDraft.amountGross || "0"));
+                }}
+              >
+                Przelicz wg proporcji dokumentu
+              </Button>
+            </div>
+          ) : null}
           <Field label="Data wpłaty">
             <Input
               type="date"

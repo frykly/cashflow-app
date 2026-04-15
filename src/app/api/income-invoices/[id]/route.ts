@@ -27,7 +27,10 @@ export async function GET(_req: Request, ctx: Ctx) {
     include: {
       incomeCategory: true,
       project: true,
-      payments: { orderBy: { paymentDate: "asc" } },
+      payments: {
+        orderBy: { paymentDate: "asc" },
+        include: { projectAllocations: { include: { project: { select: { id: true, name: true } } } } },
+      },
       projectAllocations: { include: { project: { select: { id: true, name: true, code: true } } } },
     },
   });
@@ -143,7 +146,14 @@ export async function PATCH(req: Request, ctx: Ctx) {
           isRecurringDetached:
             data.isRecurringDetached !== undefined ? data.isRecurringDetached : existing.isRecurringDetached,
         },
-        include: { incomeCategory: true, project: true, payments: { orderBy: { paymentDate: "asc" } } },
+        include: {
+          incomeCategory: true,
+          project: true,
+          payments: {
+            orderBy: { paymentDate: "asc" },
+            include: { projectAllocations: { include: { project: { select: { id: true, name: true } } } } },
+          },
+        },
       });
       if (data.projectAllocations !== undefined) {
         await replaceIncomeInvoiceAllocations(tx, id, data.projectAllocations);
@@ -157,7 +167,10 @@ export async function PATCH(req: Request, ctx: Ctx) {
       include: {
         incomeCategory: true,
         project: true,
-        payments: { orderBy: { paymentDate: "asc" } },
+        payments: {
+          orderBy: { paymentDate: "asc" },
+          include: { projectAllocations: { include: { project: { select: { id: true, name: true } } } } },
+        },
         projectAllocations: { include: { project: { select: { id: true, name: true, code: true } } } },
       },
     });

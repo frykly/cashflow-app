@@ -6,6 +6,7 @@ import {
   costRemainingGross,
   incomeRemainingGross,
 } from "@/lib/cashflow/settlement";
+import { finalizeNewCostPaymentAllocations, finalizeNewIncomePaymentAllocations } from "@/lib/payment-project-allocation/finalize";
 
 export const AUTO_INCOME_PAYMENT_NOTE = "Automatycznie dodane przy oznaczeniu jako opłacona";
 export const AUTO_COST_PAYMENT_NOTE = "Automatycznie dodane przy oznaczeniu jako zapłacona";
@@ -61,13 +62,18 @@ export async function ensureClosingIncomePaymentIfFullySettled(invoiceId: string
   if (rem <= PAY_EPS) return false;
 
   const paymentDate = inv.actualIncomeDate ?? inv.plannedIncomeDate;
-  await prisma.incomeInvoicePayment.create({
-    data: {
-      incomeInvoiceId: invoiceId,
-      amountGross: decimalFromRemaining(rem),
-      paymentDate,
-      notes: AUTO_INCOME_PAYMENT_NOTE,
-    },
+  const amountGross = decimalFromRemaining(rem);
+  const amountStr = amountGross.toString();
+  await prisma.$transaction(async (tx) => {
+    const pay = await tx.incomeInvoicePayment.create({
+      data: {
+        incomeInvoiceId: invoiceId,
+        amountGross,
+        paymentDate,
+        notes: AUTO_INCOME_PAYMENT_NOTE,
+      },
+    });
+    await finalizeNewIncomePaymentAllocations(tx, invoiceId, pay.id, amountStr, null);
   });
   return true;
 }
@@ -87,13 +93,18 @@ export async function ensureClosingCostPaymentIfFullySettled(invoiceId: string):
   if (rem <= PAY_EPS) return false;
 
   const paymentDate = inv.actualPaymentDate ?? inv.plannedPaymentDate;
-  await prisma.costInvoicePayment.create({
-    data: {
-      costInvoiceId: invoiceId,
-      amountGross: decimalFromRemaining(rem),
-      paymentDate,
-      notes: AUTO_COST_PAYMENT_NOTE,
-    },
+  const amountGross = decimalFromRemaining(rem);
+  const amountStr = amountGross.toString();
+  await prisma.$transaction(async (tx) => {
+    const pay = await tx.costInvoicePayment.create({
+      data: {
+        costInvoiceId: invoiceId,
+        amountGross,
+        paymentDate,
+        notes: AUTO_COST_PAYMENT_NOTE,
+      },
+    });
+    await finalizeNewCostPaymentAllocations(tx, invoiceId, pay.id, amountStr, null);
   });
   return true;
 }

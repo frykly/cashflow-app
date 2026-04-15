@@ -2,6 +2,10 @@ import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { decToNumber } from "@/lib/cashflow/money";
 import type { Project } from "@prisma/client";
+import {
+  distributePaymentGrossForReporting,
+  documentGrossSlicesFromInvoice,
+} from "@/lib/payment-project-allocation/distribute-read";
 
 export type ProjectListSortKey =
   | "code"
@@ -120,9 +124,15 @@ export async function listProjectsEnriched(options: {
       ],
     },
     select: {
+      grossAmount: true,
       projectId: true,
-      payments: { select: { amountGross: true } },
-      projectAllocations: { select: { projectId: true } },
+      projectAllocations: { select: { projectId: true, grossAmount: true } },
+      payments: {
+        select: {
+          amountGross: true,
+          projectAllocations: { select: { projectId: true, grossAmount: true } },
+        },
+      },
     },
   });
   const costForPaid = await prisma.costInvoice.findMany({
@@ -133,31 +143,47 @@ export async function listProjectsEnriched(options: {
       ],
     },
     select: {
+      grossAmount: true,
       projectId: true,
-      payments: { select: { amountGross: true } },
-      projectAllocations: { select: { projectId: true } },
+      projectAllocations: { select: { projectId: true, grossAmount: true } },
+      payments: {
+        select: {
+          amountGross: true,
+          projectAllocations: { select: { projectId: true, grossAmount: true } },
+        },
+      },
     },
   });
 
   const paidIncome = new Map<string, number>();
   for (const id of ids) paidIncome.set(id, 0);
   for (const row of incForPaid) {
-    const alloc = row.projectAllocations;
-    if (alloc.length > 1) continue;
-    const targetPid = alloc.length === 1 ? alloc[0]!.projectId : row.projectId;
-    if (!targetPid || !ids.includes(targetPid)) continue;
-    const s = row.payments.reduce((acc, p) => acc + decToNumber(p.amountGross), 0);
-    paidIncome.set(targetPid, (paidIncome.get(targetPid) ?? 0) + s);
+    const docSlices = documentGrossSlicesFromInvoice(row);
+    for (const p of row.payments) {
+      const dist = distributePaymentGrossForReporting(
+        decToNumber(p.amountGross),
+        p.projectAllocations,
+        docSlices,
+      );
+      for (const [pid, amt] of dist) {
+        if (ids.includes(pid)) paidIncome.set(pid, (paidIncome.get(pid) ?? 0) + amt);
+      }
+    }
   }
   const paidCost = new Map<string, number>();
   for (const id of ids) paidCost.set(id, 0);
   for (const row of costForPaid) {
-    const alloc = row.projectAllocations;
-    if (alloc.length > 1) continue;
-    const targetPid = alloc.length === 1 ? alloc[0]!.projectId : row.projectId;
-    if (!targetPid || !ids.includes(targetPid)) continue;
-    const s = row.payments.reduce((acc, p) => acc + decToNumber(p.amountGross), 0);
-    paidCost.set(targetPid, (paidCost.get(targetPid) ?? 0) + s);
+    const docSlices = documentGrossSlicesFromInvoice(row);
+    for (const p of row.payments) {
+      const dist = distributePaymentGrossForReporting(
+        decToNumber(p.amountGross),
+        p.projectAllocations,
+        docSlices,
+      );
+      for (const [pid, amt] of dist) {
+        if (ids.includes(pid)) paidCost.set(pid, (paidCost.get(pid) ?? 0) + amt);
+      }
+    }
   }
 
   const enriched: ProjectListRow[] = projects.map((p) => {

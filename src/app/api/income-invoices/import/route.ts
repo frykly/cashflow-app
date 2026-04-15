@@ -6,6 +6,8 @@ import { grossFromNetVat } from "@/lib/validation/gross";
 import { inferVatRateFromAmounts } from "@/lib/vat-rate";
 import { resolveIncomeCategoryByName } from "@/lib/category-resolve";
 import { syncIncomeInvoiceStatus } from "@/lib/invoice-status-sync";
+import { normalizeDecimalInput } from "@/lib/decimal-input";
+import { finalizeNewIncomePaymentAllocations } from "@/lib/payment-project-allocation/finalize";
 
 function pick(r: Record<string, unknown>, ...keys: string[]): string {
   for (const k of keys) {
@@ -106,13 +108,17 @@ export async function POST(req: Request) {
         },
       });
       if (status === "OPLACONA") {
-        await prisma.incomeInvoicePayment.create({
-          data: {
-            incomeInvoiceId: created.id,
-            amountGross: gross,
-            paymentDate: plannedIncomeDate,
-            notes: "import CSV",
-          },
+        await prisma.$transaction(async (tx) => {
+          const pay = await tx.incomeInvoicePayment.create({
+            data: {
+              incomeInvoiceId: created.id,
+              amountGross: gross,
+              paymentDate: plannedIncomeDate,
+              notes: "import CSV",
+            },
+            select: { id: true },
+          });
+          await finalizeNewIncomePaymentAllocations(tx, created.id, pay.id, normalizeDecimalInput(gross.toString()), null);
         });
         await syncIncomeInvoiceStatus(created.id);
       }
