@@ -12,8 +12,11 @@ const optionalCuid = z.preprocess(
   z.union([z.null(), z.string().min(1).max(64)]),
 );
 
+const optionalVat = z.union([z.string(), z.number()]).optional();
+
 const manualBody = z.object({
   amount: z.union([z.string(), z.number()]),
+  vatAmount: optionalVat,
   date: z.string().min(1),
   description: z.string().min(1).max(2000),
   projectId: optionalCuid,
@@ -22,10 +25,29 @@ const manualBody = z.object({
 
 const bankBody = z.object({
   bankTransactionId: z.string().min(1),
+  vatAmount: optionalVat,
   description: z.string().max(2000).optional(),
   projectId: optionalCuid,
   categoryId: optionalCuid,
 });
+
+function parseVatAmountOrError(raw: unknown, maxGross: Decimal): { ok: true; vat: Decimal } | { ok: false; message: string } {
+  if (raw === undefined || raw === null || raw === "") {
+    return { ok: true, vat: new Decimal(0) };
+  }
+  const norm = normalizeDecimalInput(String(raw));
+  const vat = new Decimal(norm);
+  if (!vat.isFinite() || vat.isNaN()) {
+    return { ok: false, message: "Nieprawidłowa kwota VAT." };
+  }
+  if (vat.lt(0)) {
+    return { ok: false, message: "Kwota VAT nie może być ujemna." };
+  }
+  if (vat.gt(maxGross)) {
+    return { ok: false, message: "Kwota VAT nie może przekraczać kwoty brutto." };
+  }
+  return { ok: true, vat };
+}
 
 function isRecord(x: unknown): x is Record<string, unknown> {
   return typeof x === "object" && x !== null;
@@ -81,6 +103,9 @@ export async function POST(req: Request) {
     const desc = (parsed.data.description?.trim() || fresh.description || "Przychód bez faktury").slice(0, 2000);
     const amountGross = bankGroszeToAmountGross(fresh.amount);
 
+    const vatParsed = parseVatAmountOrError(parsed.data.vatAmount, amountGross);
+    if (!vatParsed.ok) return jsonError(vatParsed.message, 422);
+
     if (parsed.data.projectId) {
       const p = await prisma.project.findUnique({ where: { id: parsed.data.projectId } });
       if (!p) return jsonError("Nie znaleziono projektu", 404);
@@ -94,6 +119,7 @@ export async function POST(req: Request) {
       const oi = await trx.otherIncome.create({
         data: {
           amountGross,
+          vatAmount: vatParsed.vat,
           date: fresh.bookingDate,
           description: desc,
           projectId: parsed.data.projectId,
@@ -119,6 +145,9 @@ export async function POST(req: Request) {
   const dec = new Decimal(norm);
   if (dec.lte(0)) return jsonError("Kwota musi być dodatnia.", 400);
 
+  const vatParsed = parseVatAmountOrError(parsed.data.vatAmount, dec);
+  if (!vatParsed.ok) return jsonError(vatParsed.message, 422);
+
   const d = new Date(parsed.data.date);
   if (Number.isNaN(d.getTime())) return jsonError("Nieprawidłowa data.", 400);
 
@@ -134,6 +163,7 @@ export async function POST(req: Request) {
   const created = await prisma.otherIncome.create({
     data: {
       amountGross: dec,
+      vatAmount: vatParsed.vat,
       date: d,
       description: parsed.data.description.trim(),
       projectId: parsed.data.projectId,

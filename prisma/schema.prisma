@@ -104,10 +104,11 @@ model IncomeCategory {
   recurringTemplates RecurringTemplate[]     @relation("RecurringIncomeCategory")
 }
 
-/// Przychód poza fakturą (np. zwrot podatku, wpłata własna) — bez VAT, wpływ na MAIN w cashflow.
+/// Przychód poza fakturą (np. zwrot podatku, wpłata własna). Rozdział MAIN/VAT przez vatAmount (bez netto w MVP).
 model OtherIncome {
   id                String          @id @default(cuid())
   amountGross       Decimal
+  vatAmount         Decimal         @default(0)
   date              DateTime
   description       String
   projectId         String?

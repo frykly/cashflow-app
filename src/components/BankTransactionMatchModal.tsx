@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { readApiError } from "@/lib/api-client";
+import { formatPlnFromGrosze } from "@/lib/bank-import/format-pln";
 import { formatMoney, safeFormatDate } from "@/lib/format";
 
 type Suggestion = { id: string; score: number; grossAmount: string };
@@ -35,6 +36,8 @@ export function BankTransactionMatchModal({
   const [costs, setCosts] = useState<CostS[]>([]);
   const [incomes, setIncomes] = useState<IncS[]>([]);
   const [busy, setBusy] = useState(false);
+  /** Kwota VAT (PLN) dla przychodu bez faktury — puste = 0 */
+  const [otherIncomeVat, setOtherIncomeVat] = useState("");
 
   const load = useCallback(async () => {
     if (!open || !transactionId) return;
@@ -59,6 +62,10 @@ export function BankTransactionMatchModal({
   useEffect(() => {
     void load();
   }, [load]);
+
+  useEffect(() => {
+    if (open) setOtherIncomeVat("");
+  }, [open]);
 
   async function linkCost(id: string) {
     setBusy(true);
@@ -110,6 +117,7 @@ export function BankTransactionMatchModal({
         body: JSON.stringify({
           bankTransactionId: transactionId,
           description: transactionDescription.trim() || undefined,
+          vatAmount: otherIncomeVat.trim() === "" ? undefined : otherIncomeVat.trim(),
         }),
       });
       if (!res.ok) {
@@ -171,9 +179,21 @@ export function BankTransactionMatchModal({
       {allowOtherIncomeOnMain ?
         <div className="rounded border border-teal-200 bg-teal-50/60 p-3 dark:border-teal-900 dark:bg-teal-950/25">
           <p className="mb-2 text-xs text-zinc-600 dark:text-zinc-400">
-            Bez faktury (np. zwrot podatku, wpłata własna): zapisz jako przychód pozafakturowy — trafi do prognozy cashflow na konto
-            MAIN, bez tworzenia faktury przychodowej.
+            Bez faktury (np. zwrot podatku, wpłata własna): zapisz jako przychód pozafakturowy — wpływ w cashflow (MAIN + ewentualnie VAT).
+            Kwota z wyciągu: {formatPlnFromGrosze(transactionAmountGrosze)}.
           </p>
+          <label className="mb-2 block text-xs text-zinc-600 dark:text-zinc-400">
+            <span className="mb-0.5 block font-medium text-zinc-700 dark:text-zinc-300">VAT (kwota, opcjonalnie)</span>
+            <input
+              type="text"
+              inputMode="decimal"
+              value={otherIncomeVat}
+              onChange={(e) => setOtherIncomeVat(e.target.value)}
+              placeholder="0"
+              className="mt-0.5 w-full max-w-[200px] rounded border border-zinc-300 bg-white px-2 py-1 font-mono text-sm dark:border-zinc-600 dark:bg-zinc-950"
+            />
+            <span className="mt-0.5 block text-zinc-500">Nie więcej niż kwota brutto z transakcji. Puste = całość na MAIN.</span>
+          </label>
           <button
             type="button"
             disabled={busy}

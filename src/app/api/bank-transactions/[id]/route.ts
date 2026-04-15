@@ -56,7 +56,7 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
 
   const otherIncome = await prisma.otherIncome.findUnique({
     where: { bankTransactionId: id },
-    select: { id: true, description: true, amountGross: true },
+    select: { id: true, description: true, amountGross: true, vatAmount: true },
   });
 
   const dedupe = explainBankTransactionDedupe({

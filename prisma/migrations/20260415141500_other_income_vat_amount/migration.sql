@@ -1,0 +1,2 @@
+-- AlterTable
+ALTER TABLE "OtherIncome" ADD COLUMN "vatAmount" DECIMAL NOT NULL DEFAULT 0;

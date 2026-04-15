@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { readApiError } from "@/lib/api-client";
 import { formatPlnFromGrosze } from "@/lib/bank-import/format-pln";
+import { decToNumber } from "@/lib/cashflow/money";
 import { formatMoney, safeFormatDate } from "@/lib/format";
 import { Alert, Button, Spinner } from "@/components/ui";
 import { CreateCostFromBankModal } from "@/components/CreateCostFromBankModal";
@@ -40,7 +41,7 @@ type DetailJson = {
     linkedCost: { id: string; documentNumber: string; supplier: string } | null;
     matchedIncome: { id: string; invoiceNumber: string; contractor: string } | null;
     createdCost: { id: string; documentNumber: string; supplier: string } | null;
-    otherIncome: { id: string; description: string; amountGross: unknown } | null;
+    otherIncome: { id: string; description: string; amountGross: unknown; vatAmount: unknown } | null;
   };
 };
 
@@ -219,7 +220,18 @@ export function BankTransactionDetailClient({ importId, transactionId }: Props) 
             ) : null}
             {L.otherIncome ? (
               <li>
-                Przychód bez faktury: {formatMoney(L.otherIncome.amountGross)} — {L.otherIncome.description}
+                Przychód bez faktury: brutto {formatMoney(L.otherIncome.amountGross)}
+                {decToNumber(L.otherIncome.vatAmount as string | number) > 0 ?
+                  <>
+                    {" "}
+                    · VAT {formatMoney(L.otherIncome.vatAmount)} · MAIN{" "}
+                    {formatMoney(
+                      decToNumber(L.otherIncome.amountGross as string | number) -
+                        decToNumber(L.otherIncome.vatAmount as string | number),
+                    )}
+                  </>
+                : null}{" "}
+                — {L.otherIncome.description}
               </li>
             ) : null}
             {!L.createdCost && !L.linkedCost && !L.payment && !L.matchedIncome && !L.otherIncome ? (

@@ -154,15 +154,16 @@ function pushCostMovement(
 
 function appendOtherIncomeMovements(rows: OtherIncome[], out: CashflowMovement[]) {
   for (const oi of rows) {
-    const amt = decToNumber(oi.amountGross);
+    const gross = decToNumber(oi.amountGross);
+    const vat = decToNumber(oi.vatAmount);
     const label = oi.description.trim() || "Pozostały przychód (bez faktury)";
     out.push({
       kind: "other_income",
       refId: oi.id,
       label,
       dayKey: dayKey(oi.date),
-      mainDelta: round2(amt),
-      vatDelta: 0,
+      mainDelta: round2(gross - vat),
+      vatDelta: round2(vat),
     });
   }
 }
