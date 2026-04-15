@@ -24,6 +24,7 @@ export async function POST(_req: Request, ctx: { params: Promise<{ id: string }>
   await prisma.$transaction(async (trx) => {
     await trx.incomeInvoicePayment.deleteMany({ where: { bankTransactionId: bankTxId } });
     await trx.costInvoicePayment.deleteMany({ where: { bankTransactionId: bankTxId } });
+    await trx.otherIncome.deleteMany({ where: { bankTransactionId: bankTxId } });
     await trx.bankTransaction.update({
       where: { id: bankTxId },
       data: {

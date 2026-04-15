@@ -30,11 +30,12 @@ export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
   const warnDays = Math.min(365, Math.max(1, Number(searchParams.get("warnDays") ?? "90") || 90));
 
-  const [settings, incomes, costs, events, incomeCats, expenseCats] = await Promise.all([
+  const [settings, incomes, costs, events, otherIncomes, incomeCats, expenseCats] = await Promise.all([
     prisma.appSettings.findUnique({ where: { id: 1 } }),
     prisma.incomeInvoice.findMany({ include: { payments: true } }),
     prisma.costInvoice.findMany({ include: { payments: true } }),
     prisma.plannedFinancialEvent.findMany(),
+    prisma.otherIncome.findMany(),
     prisma.incomeCategory.findMany(),
     prisma.expenseCategory.findMany(),
   ]);
@@ -44,7 +45,7 @@ export async function GET(req: Request) {
   const expenseName = (id: string | null) =>
     id ? (expenseCats.find((c) => c.id === id)?.name ?? "Kategoria") : "Bez kategorii";
 
-  const movements = collectMovements(incomes, costs, events);
+  const movements = collectMovements(incomes, costs, events, otherIncomes);
   const costMap = costInvoiceMap(costs);
   const balances = currentBalances(movements, settings, new Date(), costMap);
   const planned30 = plannedMainFlowsInWindow(incomes, costs, events, 30);

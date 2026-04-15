@@ -34,12 +34,13 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
   const parsed = bodySchema.safeParse(body);
   if (!parsed.success) return jsonError(parsed.error.flatten().formErrors.join("; ") || "Walidacja", 422);
 
-  const [existingIp, existingCp] = await Promise.all([
+  const [existingIp, existingCp, existingOi] = await Promise.all([
     prisma.incomeInvoicePayment.findFirst({ where: { bankTransactionId: bankTxId } }),
     prisma.costInvoicePayment.findFirst({ where: { bankTransactionId: bankTxId } }),
+    prisma.otherIncome.findUnique({ where: { bankTransactionId: bankTxId } }),
   ]);
-  if (existingIp || existingCp) {
-    return jsonError("Ta transakcja bankowa ma już utworzoną płatność — użyj „Cofnij”, aby ją usunąć.", 409);
+  if (existingIp || existingCp || existingOi) {
+    return jsonError("Ta transakcja bankowa ma już utworzoną płatność lub przychód bez faktury — użyj „Cofnij”, aby to usunąć.", 409);
   }
 
   const tx = await prisma.bankTransaction.findUnique({ where: { id: bankTxId } });

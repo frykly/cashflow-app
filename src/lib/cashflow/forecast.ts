@@ -4,6 +4,7 @@ import type {
   CostInvoicePayment,
   IncomeInvoice,
   IncomeInvoicePayment,
+  OtherIncome,
   PlannedFinancialEvent,
 } from "@prisma/client";
 import { addDays, isBefore, startOfDay } from "date-fns";
@@ -20,7 +21,7 @@ import {
   PAY_EPS,
 } from "./settlement";
 
-export type MovementKind = "income" | "cost" | "planned";
+export type MovementKind = "income" | "cost" | "planned" | "other_income";
 
 export type CashflowMovement = {
   kind: MovementKind;
@@ -151,6 +152,21 @@ function pushCostMovement(
   });
 }
 
+function appendOtherIncomeMovements(rows: OtherIncome[], out: CashflowMovement[]) {
+  for (const oi of rows) {
+    const amt = decToNumber(oi.amountGross);
+    const label = oi.description.trim() || "Pozostały przychód (bez faktury)";
+    out.push({
+      kind: "other_income",
+      refId: oi.id,
+      label,
+      dayKey: dayKey(oi.date),
+      mainDelta: round2(amt),
+      vatDelta: 0,
+    });
+  }
+}
+
 function appendCostMovements(inv: CostInvoice & { payments: CostInvoicePayment[] }, out: CashflowMovement[]) {
   const label = `Koszt ${inv.documentNumber}`;
 
@@ -175,12 +191,15 @@ export function collectMovements(
   incomes: (IncomeInvoice & { payments: IncomeInvoicePayment[] })[],
   costs: (CostInvoice & { payments: CostInvoicePayment[] })[],
   events: PlannedFinancialEvent[],
+  otherIncomes: OtherIncome[] = [],
 ): CashflowMovement[] {
   const out: CashflowMovement[] = [];
 
   for (const inv of incomes) {
     appendIncomeMovements(inv, out);
   }
+
+  appendOtherIncomeMovements(otherIncomes, out);
 
   for (const inv of costs) {
     appendCostMovements(inv, out);
@@ -193,7 +212,12 @@ export function collectMovements(
 
   return out.sort((a, b) => {
     if (a.dayKey !== b.dayKey) return a.dayKey.localeCompare(b.dayKey);
-    const order = { income: 0, cost: 1, planned: 2 };
+    const order: Record<CashflowMovement["kind"], number> = {
+      income: 0,
+      other_income: 0,
+      cost: 1,
+      planned: 2,
+    };
     return order[a.kind] - order[b.kind] || a.refId.localeCompare(b.refId);
   });
 }
@@ -230,7 +254,12 @@ function enumerateDayKeys(fromKey: string, toKey: string): string[] {
 
 function sortDayMoves(dayMoves: CashflowMovement[]): CashflowMovement[] {
   return dayMoves.slice().sort((a, b) => {
-    const order = { income: 0, cost: 1, planned: 2 };
+    const order: Record<CashflowMovement["kind"], number> = {
+      income: 0,
+      other_income: 0,
+      cost: 1,
+      planned: 2,
+    };
     return order[a.kind] - order[b.kind] || a.refId.localeCompare(b.refId);
   });
 }

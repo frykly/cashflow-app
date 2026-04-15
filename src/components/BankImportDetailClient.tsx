@@ -15,6 +15,7 @@ type Tx = {
   amount: number;
   currency: string;
   description: string;
+  accountType: string;
   status: string;
   matchedInvoiceId: string | null;
   linkedCostInvoiceId: string | null;
@@ -33,6 +34,7 @@ const statusClass: Record<string, string> = {
   MATCHED: "bg-emerald-100 text-emerald-900 dark:bg-emerald-950 dark:text-emerald-200",
   LINKED_COST: "bg-blue-100 text-blue-900 dark:bg-blue-950 dark:text-blue-200",
   LINKED_INCOME: "bg-cyan-100 text-cyan-900 dark:bg-cyan-950 dark:text-cyan-200",
+  LINKED_OTHER_INCOME: "bg-teal-100 text-teal-900 dark:bg-teal-950 dark:text-teal-200",
   CREATED: "bg-blue-100 text-blue-900 dark:bg-blue-950 dark:text-blue-200",
   IGNORED: "bg-zinc-200 text-zinc-600 dark:bg-zinc-700 dark:text-zinc-300",
   TRANSFER: "bg-violet-100 text-violet-900 dark:bg-violet-950 dark:text-violet-200",
@@ -44,12 +46,12 @@ const statusClass: Record<string, string> = {
 function canCreateCost(t: Tx): boolean {
   if (t.linkedCostInvoiceId) return false;
   if (t.status === "LINKED_COST" && t.createdCostId) return false;
-  if (["VAT_TOPUP", "DUPLICATE", "IGNORED"].includes(t.status)) return false;
+  if (["VAT_TOPUP", "DUPLICATE", "IGNORED", "LINKED_OTHER_INCOME"].includes(t.status)) return false;
   return true;
 }
 
 function showMatchButton(t: Tx): boolean {
-  return !["DUPLICATE", "IGNORED"].includes(t.status);
+  return !["DUPLICATE", "IGNORED", "LINKED_OTHER_INCOME"].includes(t.status);
 }
 
 export function BankImportDetailClient({ importId }: { importId: string }) {
@@ -57,7 +59,12 @@ export function BankImportDetailClient({ importId }: { importId: string }) {
   const [data, setData] = useState<Detail | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
-  const [matchTx, setMatchTx] = useState<{ id: string; amount: number } | null>(null);
+  const [matchTx, setMatchTx] = useState<{
+    id: string;
+    amount: number;
+    description: string;
+    accountType: string;
+  } | null>(null);
   const [costModalTxId, setCostModalTxId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
@@ -130,6 +137,8 @@ export function BankImportDetailClient({ importId }: { importId: string }) {
       <BankTransactionMatchModal
         transactionId={matchTx?.id ?? ""}
         transactionAmountGrosze={matchTx?.amount ?? 0}
+        transactionDescription={matchTx?.description ?? ""}
+        transactionAccountType={matchTx?.accountType ?? "MAIN"}
         open={matchTx !== null}
         onClose={() => setMatchTx(null)}
         onLinked={() => void afterMutation()}
@@ -198,7 +207,14 @@ export function BankImportDetailClient({ importId }: { importId: string }) {
                         <button
                           type="button"
                           disabled={b}
-                          onClick={() => setMatchTx({ id: t.id, amount: t.amount })}
+                          onClick={() =>
+                            setMatchTx({
+                              id: t.id,
+                              amount: t.amount,
+                              description: t.description,
+                              accountType: t.accountType,
+                            })
+                          }
                           className="rounded border border-emerald-600 bg-white px-2 py-1 text-xs text-emerald-900 hover:bg-emerald-50 disabled:opacity-50 dark:border-emerald-700 dark:bg-zinc-950 dark:text-emerald-200 dark:hover:bg-emerald-950/40"
                         >
                           Dopasuj do dokumentu

@@ -54,6 +54,11 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
       })
     : null;
 
+  const otherIncome = await prisma.otherIncome.findUnique({
+    where: { bankTransactionId: id },
+    select: { id: true, description: true, amountGross: true },
+  });
+
   const dedupe = explainBankTransactionDedupe({
     accountType: tx.accountType,
     bookingDate: tx.bookingDate,
@@ -73,6 +78,7 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
       linkedCost,
       matchedIncome,
       createdCost,
+      otherIncome,
     },
   });
 }
@@ -82,6 +88,7 @@ const statuses = z.enum([
   "MATCHED",
   "LINKED_COST",
   "LINKED_INCOME",
+  "LINKED_OTHER_INCOME",
   "TRANSFER",
   "VAT_TOPUP",
   "IGNORED",

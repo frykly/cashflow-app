@@ -13,6 +13,9 @@ type Props = {
   transactionId: string;
   /** Kwota w groszach: &gt;0 wpłata → tylko przychody; &lt;0 wydatek → tylko koszty */
   transactionAmountGrosze: number;
+  transactionDescription: string;
+  /** Przychód bez faktury tylko z konta MAIN */
+  transactionAccountType: string;
   open: boolean;
   onClose: () => void;
   onLinked: () => void;
@@ -21,6 +24,8 @@ type Props = {
 export function BankTransactionMatchModal({
   transactionId,
   transactionAmountGrosze,
+  transactionDescription,
+  transactionAccountType,
   open,
   onClose,
   onLinked,
@@ -95,6 +100,29 @@ export function BankTransactionMatchModal({
     }
   }
 
+  async function addOtherIncomeNoInvoice() {
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/other-income", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          bankTransactionId: transactionId,
+          description: transactionDescription.trim() || undefined,
+        }),
+      });
+      if (!res.ok) {
+        setError(await readApiError(res));
+        return;
+      }
+      onLinked();
+      onClose();
+    } finally {
+      setBusy(false);
+    }
+  }
+
   if (!open) return null;
 
   const amt = transactionAmountGrosze;
@@ -105,35 +133,60 @@ export function BankTransactionMatchModal({
   const scoreHint =
     "Współczynnik dopasowania (data, kwota, opis). Wyższa wartość = lepsza zgodność z transakcją.";
 
+  const allowOtherIncomeOnMain = transactionAccountType === "MAIN";
+
   const incomeSection = (
-    <div>
-      <h3 className="mb-1 text-sm font-medium text-zinc-800 dark:text-zinc-200">Faktury przychodu</h3>
-      <p className="mb-2 text-xs text-zinc-500 dark:text-zinc-400">
-        Kwota brutto z dokumentu — saldo po wcześniejszych wpłatach sprawdzisz w module przychodów.
-      </p>
-      {incomes.length === 0 ? (
-        <p className="text-xs text-zinc-500">Brak oczywistych dopasowań w oknie dat.</p>
-      ) : (
-        <ul className="max-h-40 space-y-1 overflow-y-auto text-sm">
-          {incomes.map((c) => (
-            <li key={c.id} className="flex flex-wrap items-center justify-between gap-2 border-b border-zinc-100 py-1 dark:border-zinc-800">
-              <span className="text-zinc-700 dark:text-zinc-300">
-                {c.invoiceNumber} · {c.contractor} · {safeFormatDate(c.issueDate)} · brutto {formatMoney(c.grossAmount)}
-                <span className="ml-1 text-xs text-zinc-400" title={scoreHint}>
-                  (dopasowanie {c.score})
+    <div className="space-y-4">
+      <div>
+        <h3 className="mb-1 text-sm font-medium text-zinc-800 dark:text-zinc-200">Faktury przychodu</h3>
+        <p className="mb-2 text-xs text-zinc-500 dark:text-zinc-400">
+          Kwota brutto z dokumentu — saldo po wcześniejszych wpłatach sprawdzisz w module przychodów.
+        </p>
+        {incomes.length === 0 ? (
+          <p className="text-xs text-zinc-500">Brak oczywistych dopasowań w oknie dat.</p>
+        ) : (
+          <ul className="max-h-40 space-y-1 overflow-y-auto text-sm">
+            {incomes.map((c) => (
+              <li key={c.id} className="flex flex-wrap items-center justify-between gap-2 border-b border-zinc-100 py-1 dark:border-zinc-800">
+                <span className="text-zinc-700 dark:text-zinc-300">
+                  {c.invoiceNumber} · {c.contractor} · {safeFormatDate(c.issueDate)} · brutto {formatMoney(c.grossAmount)}
+                  <span className="ml-1 text-xs text-zinc-400" title={scoreHint}>
+                    (dopasowanie {c.score})
+                  </span>
                 </span>
-              </span>
-              <button
-                type="button"
-                disabled={busy}
-                onClick={() => void linkIncome(c.id)}
-                className="shrink-0 rounded border border-emerald-600 px-2 py-0.5 text-xs text-emerald-800 hover:bg-emerald-50 disabled:opacity-50 dark:border-emerald-700 dark:text-emerald-200 dark:hover:bg-emerald-950/40"
-              >
-                Połącz + wpłata
-              </button>
-            </li>
-          ))}
-        </ul>
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => void linkIncome(c.id)}
+                  className="shrink-0 rounded border border-emerald-600 px-2 py-0.5 text-xs text-emerald-800 hover:bg-emerald-50 disabled:opacity-50 dark:border-emerald-700 dark:text-emerald-200 dark:hover:bg-emerald-950/40"
+                >
+                  Połącz + wpłata
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+
+      {allowOtherIncomeOnMain ?
+        <div className="rounded border border-teal-200 bg-teal-50/60 p-3 dark:border-teal-900 dark:bg-teal-950/25">
+          <p className="mb-2 text-xs text-zinc-600 dark:text-zinc-400">
+            Bez faktury (np. zwrot podatku, wpłata własna): zapisz jako przychód pozafakturowy — trafi do prognozy cashflow na konto
+            MAIN, bez tworzenia faktury przychodowej.
+          </p>
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => void addOtherIncomeNoInvoice()}
+            className="rounded border border-teal-700 bg-white px-3 py-1.5 text-xs font-medium text-teal-900 hover:bg-teal-50 disabled:opacity-50 dark:border-teal-600 dark:bg-zinc-950 dark:text-teal-100 dark:hover:bg-teal-950/40"
+          >
+            Dodaj jako przychód (bez faktury)
+          </button>
+        </div>
+      : (
+        <p className="text-xs text-zinc-500">
+          Przychód bez faktury z importu jest dostępny tylko dla wierszy na koncie <strong className="font-medium">MAIN</strong>.
+        </p>
       )}
     </div>
   );

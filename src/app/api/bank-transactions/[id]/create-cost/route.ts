@@ -78,6 +78,9 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
   const payExisting = await prisma.costInvoicePayment.findFirst({ where: { bankTransactionId: bankTxId } });
   if (payExisting) return jsonError("Dla tej transakcji istnieje już płatność — użyj „Cofnij”.", 409);
 
+  const otherInc = await prisma.otherIncome.findUnique({ where: { bankTransactionId: bankTxId } });
+  if (otherInc) return jsonError("Dla tej transakcji zapisano już przychód bez faktury — użyj „Cofnij”.", 409);
+
   const absGrosze = Math.abs(fresh.amount);
   if (absGrosze === 0) return jsonError("Kwota 0 — nie można utworzyć kosztu", 400);
 

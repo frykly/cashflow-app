@@ -64,4 +64,22 @@ export async function healBankTransactionLinks(db: PrismaClient, importId?: stri
       });
     }
   }
+
+  const withOtherIncome = await db.bankTransaction.findMany({
+    where: {
+      ...whereImport,
+      status: "LINKED_OTHER_INCOME",
+    },
+    select: { id: true },
+  });
+
+  for (const row of withOtherIncome) {
+    const oi = await db.otherIncome.findUnique({ where: { bankTransactionId: row.id }, select: { id: true } });
+    if (!oi) {
+      await db.bankTransaction.update({
+        where: { id: row.id },
+        data: { status: "BROKEN_LINK" },
+      });
+    }
+  }
 }

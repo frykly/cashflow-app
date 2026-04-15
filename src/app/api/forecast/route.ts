@@ -14,14 +14,15 @@ export async function GET(req: Request) {
   const { from, to } = parseForecastRange(searchParams);
   const daysSpan = Math.max(0, differenceInCalendarDays(to, from));
 
-  const [settings, incomes, costs, events] = await Promise.all([
+  const [settings, incomes, costs, events, otherIncomes] = await Promise.all([
     prisma.appSettings.findUnique({ where: { id: 1 } }),
     prisma.incomeInvoice.findMany({ include: { payments: true } }),
     prisma.costInvoice.findMany({ include: { payments: true } }),
     prisma.plannedFinancialEvent.findMany(),
+    prisma.otherIncome.findMany(),
   ]);
 
-  const movements = collectMovements(incomes, costs, events);
+  const movements = collectMovements(incomes, costs, events, otherIncomes);
   const costMap = costInvoiceMap(costs);
   const rawRows = buildDailyForecast(movements, settings, from, to, costMap);
 

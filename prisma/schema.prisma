@@ -40,6 +40,7 @@ model Project {
   plannedAllocations PlannedEventProjectAllocation[]
   costPaymentProjectAllocations   CostInvoicePaymentProjectAllocation[]
   incomePaymentProjectAllocations IncomeInvoicePaymentProjectAllocation[]
+  otherIncomes       OtherIncome[]
 }
 
 /// Rozbicie kosztu na wiele projektów — jeśli są wiersze, raportowanie używa ich zamiast legacy CostInvoice.projectId.
@@ -98,8 +99,28 @@ model IncomeCategory {
   name               String
   slug               String                  @unique
   invoices           IncomeInvoice[]
+  otherIncomes       OtherIncome[]
   plannedAsIncome    PlannedFinancialEvent[] @relation("PlannedIncomeCategory")
   recurringTemplates RecurringTemplate[]     @relation("RecurringIncomeCategory")
+}
+
+/// Przychód poza fakturą (np. zwrot podatku, wpłata własna) — bez VAT, wpływ na MAIN w cashflow.
+model OtherIncome {
+  id                String          @id @default(cuid())
+  amountGross       Decimal
+  date              DateTime
+  description       String
+  projectId         String?
+  project           Project?        @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  categoryId        String?
+  category          IncomeCategory? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  source            String
+  bankTransactionId String?         @unique
+  bankTransaction   BankTransaction? @relation(fields: [bankTransactionId], references: [id], onDelete: Cascade)
+  createdAt         DateTime        @default(now())
+
+  @@index([date])
+  @@index([projectId])
 }
 
 model ExpenseCategory {
@@ -327,7 +348,7 @@ model BankTransaction {
   counterpartyName    String?
   counterpartyAccount String?
   accountType         String // MAIN | VAT
-  /// NEW | MATCHED | LINKED_COST | LINKED_INCOME | TRANSFER | VAT_TOPUP | IGNORED | DUPLICATE | BROKEN_LINK | CREATED (legacy)
+  /// NEW | MATCHED | LINKED_COST | LINKED_INCOME | LINKED_OTHER_INCOME | TRANSFER | VAT_TOPUP | IGNORED | DUPLICATE | BROKEN_LINK | CREATED (legacy)
   status              String
   createdAt           DateTime   @default(now())
   matchedInvoiceId    String?
@@ -337,6 +358,7 @@ model BankTransaction {
   dedupeKey           String?    @unique
   /// Surowy materiał wejściowy do fingerprintu (np. pełne „Dane operacji” iPKO) — diagnostyka; tylko nowe importy
   dedupeInputText     String?
+  otherIncome         OtherIncome?
 
   @@index([importId])
   @@index([status])

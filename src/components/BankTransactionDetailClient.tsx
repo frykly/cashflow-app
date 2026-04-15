@@ -40,6 +40,7 @@ type DetailJson = {
     linkedCost: { id: string; documentNumber: string; supplier: string } | null;
     matchedIncome: { id: string; invoiceNumber: string; contractor: string } | null;
     createdCost: { id: string; documentNumber: string; supplier: string } | null;
+    otherIncome: { id: string; description: string; amountGross: unknown } | null;
   };
 };
 
@@ -94,7 +95,9 @@ export function BankTransactionDetailClient({ importId, transactionId }: Props) 
   if (!data) return null;
 
   const { links: L } = data;
-  const hasCostLink = Boolean(L.createdCost?.id || L.linkedCost?.id || L.payment?.costInvoiceId);
+  const hasCostLink = Boolean(
+    L.createdCost?.id || L.linkedCost?.id || L.payment?.costInvoiceId || L.otherIncome?.id,
+  );
 
   return (
     <div className="space-y-6">
@@ -214,7 +217,12 @@ export function BankTransactionDetailClient({ importId, transactionId }: Props) 
                 </Link>
               </li>
             ) : null}
-            {!L.createdCost && !L.linkedCost && !L.payment && !L.matchedIncome ? (
+            {L.otherIncome ? (
+              <li>
+                Przychód bez faktury: {formatMoney(L.otherIncome.amountGross)} — {L.otherIncome.description}
+              </li>
+            ) : null}
+            {!L.createdCost && !L.linkedCost && !L.payment && !L.matchedIncome && !L.otherIncome ? (
               <li className="text-zinc-500">Brak powiązań z dokumentami.</li>
             ) : null}
           </ul>
