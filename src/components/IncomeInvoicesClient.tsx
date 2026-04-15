@@ -23,6 +23,8 @@ import { normalizeDecimalInput } from "@/lib/decimal-input";
 import { projectLinkTargetId, projectListLabel } from "@/lib/project-display";
 import { documentGrossSlicesFromInvoice } from "@/lib/payment-project-allocation/distribute-read";
 import { defaultProportionalPaymentAllocationRows } from "@/lib/payment-project-allocation/default-rows";
+import { InvoicePdfDraftSection } from "@/components/InvoicePdfDraftSection";
+import type { InvoicePdfDraftResponse } from "@/lib/invoice-pdf/types";
 
 type ProjectOption = { id: string; name: string; isActive: boolean; code?: string | null };
 
@@ -219,6 +221,7 @@ export function IncomeInvoicesClient({ initialQueryString = "" }: { initialQuery
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<Draft>(emptyDraft());
   const [formError, setFormError] = useState<string | null>(null);
+  const [pdfDraftNote, setPdfDraftNote] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [categories, setCategories] = useState<Cat[]>([]);
@@ -364,6 +367,7 @@ export function IncomeInvoicesClient({ initialQueryString = "" }: { initialQuery
   function closeModal() {
     setOpen(false);
     setFormError(null);
+    setPdfDraftNote(null);
     setPayOpen(false);
     sourcePlannedEventIdRef.current = null;
     setProjectAllocMode("simple");
@@ -378,7 +382,37 @@ export function IncomeInvoicesClient({ initialQueryString = "" }: { initialQuery
     setProjectAllocRows([]);
     setEditing(emptyDraft());
     setFormError(null);
+    setPdfDraftNote(null);
     setOpen(true);
+  }
+
+  function applyIncomePdfDraft(res: InvoicePdfDraftResponse) {
+    const v = res.values;
+    setEditing((prev) => {
+      const next = { ...prev };
+      if (v.invoiceNumber?.trim()) next.invoiceNumber = v.invoiceNumber.trim();
+      if (v.contractor?.trim()) next.contractor = v.contractor.trim();
+      if (v.description?.trim()) next.description = v.description.trim();
+      if (v.issueDate) next.issueDate = v.issueDate;
+      if (v.paymentDueDate) {
+        next.paymentDueDate = v.paymentDueDate;
+        next.plannedIncomeDate = v.paymentDueDate;
+      }
+      if (v.documentDate && !v.issueDate) next.issueDate = v.documentDate;
+      if (v.netAmount && v.vatAmount && v.grossAmount) {
+        next.netAmount = v.netAmount;
+        next.vatAmount = v.vatAmount;
+        next.grossAmount = v.grossAmount;
+        if (v.vatRate != null) next.vatRate = v.vatRate;
+      }
+      return next;
+    });
+    if (res.values.netAmount) setAmountEntryMode("net");
+    const parts: string[] = [];
+    if (res.filledLabels.length) parts.push(`Uzupełniono z PDF: ${res.filledLabels.join(", ")}.`);
+    for (const w of res.warnings) parts.push(w);
+    setPdfDraftNote(parts.join("\n"));
+    setFormError(null);
   }
 
   function handleRowClickOpenEdit(r: Row) {
@@ -436,6 +470,7 @@ export function IncomeInvoicesClient({ initialQueryString = "" }: { initialQuery
       setProjectAllocRows([]);
     }
     setFormError(null);
+    setPdfDraftNote(null);
     setOpen(true);
   }
 
@@ -1123,6 +1158,12 @@ export function IncomeInvoicesClient({ initialQueryString = "" }: { initialQuery
       >
         <form onSubmit={save} className="max-h-[75vh] space-y-3 overflow-y-auto pr-1">
           {formError && <Alert variant="error">{formError}</Alert>}
+          {pdfDraftNote ? (
+            <Alert variant="info">
+              <p className="whitespace-pre-wrap text-sm">{pdfDraftNote}</p>
+            </Alert>
+          ) : null}
+          <InvoicePdfDraftSection kind="income" disabled={saving} onDraft={applyIncomePdfDraft} />
           <div className="grid gap-3 sm:grid-cols-2">
             <Field label="Numer faktury">
               <Input

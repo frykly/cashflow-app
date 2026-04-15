@@ -30,6 +30,8 @@ import {
   saveLastCostListQuery,
   type SavedCostListView,
 } from "@/lib/cost-invoices-list-storage";
+import { InvoicePdfDraftSection } from "@/components/InvoicePdfDraftSection";
+import type { InvoicePdfDraftResponse } from "@/lib/invoice-pdf/types";
 
 type PayPick = Pick<CostInvoicePayment, "amountGross">;
 
@@ -269,6 +271,7 @@ export function CostInvoicesClient({ initialQueryString = "" }: { initialQuerySt
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<Draft>(emptyDraft());
   const [formError, setFormError] = useState<string | null>(null);
+  const [pdfDraftNote, setPdfDraftNote] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [categories, setCategories] = useState<Cat[]>([]);
@@ -497,6 +500,7 @@ export function CostInvoicesClient({ initialQueryString = "" }: { initialQuerySt
   function closeModal() {
     setOpen(false);
     setFormError(null);
+    setPdfDraftNote(null);
     setPayOpen(false);
     sourcePlannedEventIdRef.current = null;
     setProjectAllocMode("simple");
@@ -512,7 +516,36 @@ export function CostInvoicesClient({ initialQueryString = "" }: { initialQuerySt
     setProjectAllocRows([]);
     setEditing(emptyDraft());
     setFormError(null);
+    setPdfDraftNote(null);
     setOpen(true);
+  }
+
+  function applyCostPdfDraft(res: InvoicePdfDraftResponse) {
+    const v = res.values;
+    setEditing((prev) => {
+      const next = { ...prev };
+      if (v.documentNumber?.trim()) next.documentNumber = v.documentNumber.trim();
+      if (v.supplier?.trim()) next.supplier = v.supplier.trim();
+      if (v.description?.trim()) next.description = v.description.trim();
+      if (v.documentDate) next.documentDate = v.documentDate;
+      if (v.paymentDueDate) {
+        next.paymentDueDate = v.paymentDueDate;
+        next.plannedPaymentDate = v.paymentDueDate;
+      }
+      if (v.netAmount && v.vatAmount && v.grossAmount) {
+        next.netAmount = v.netAmount;
+        next.vatAmount = v.vatAmount;
+        next.grossAmount = v.grossAmount;
+        if (v.vatRate != null) next.vatRate = v.vatRate;
+      }
+      return next;
+    });
+    if (res.values.netAmount) setAmountEntryMode("net");
+    const parts: string[] = [];
+    if (res.filledLabels.length) parts.push(`Uzupełniono z PDF: ${res.filledLabels.join(", ")}.`);
+    for (const w of res.warnings) parts.push(w);
+    setPdfDraftNote(parts.join("\n"));
+    setFormError(null);
   }
 
   function handleRowClickOpenEdit(r: Row) {
@@ -597,6 +630,7 @@ export function CostInvoicesClient({ initialQueryString = "" }: { initialQuerySt
       setProjectAllocRows([]);
     }
     setFormError(null);
+    setPdfDraftNote(null);
     setOpen(true);
   }
 
@@ -1464,6 +1498,12 @@ export function CostInvoicesClient({ initialQueryString = "" }: { initialQuerySt
       >
         <form onSubmit={save} className="max-h-[75vh] space-y-3 overflow-y-auto pr-1">
           {formError && <Alert variant="error">{formError}</Alert>}
+          {pdfDraftNote ? (
+            <Alert variant="info">
+              <p className="whitespace-pre-wrap text-sm">{pdfDraftNote}</p>
+            </Alert>
+          ) : null}
+          <InvoicePdfDraftSection kind="cost" disabled={saving} onDraft={applyCostPdfDraft} />
           <div className="grid gap-3 sm:grid-cols-2">
             <Field label="Numer dokumentu">
               <Input
