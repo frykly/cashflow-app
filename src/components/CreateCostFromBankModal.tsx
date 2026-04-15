@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Alert, Button, Field, Input, Modal, Select, Spinner, Textarea } from "@/components/ui";
 import { readApiErrorBody } from "@/lib/api-client";
 import {
@@ -31,6 +32,8 @@ type Props = {
 };
 
 export function CreateCostFromBankModal({ transactionId, open, onClose, onCreated }: Props) {
+  const router = useRouter();
+  const formRef = useRef<HTMLFormElement>(null);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -111,8 +114,7 @@ export function CreateCostFromBankModal({ transactionId, open, onClose, onCreate
     onClose();
   }
 
-  async function submit(e: React.FormEvent) {
-    e.preventDefault();
+  async function runCreate(redirectToMultiProjectEdit: boolean) {
     if (!transactionId || !tx) return;
     setSaving(true);
     setErr(null);
@@ -128,18 +130,36 @@ export function CreateCostFromBankModal({ transactionId, open, onClose, onCreate
           projectId: projectId || null,
         }),
       });
-      const j = await res.json().catch(() => ({}));
+      const j = (await res.json().catch(() => ({}))) as { costInvoice?: { id: string } };
       if (!res.ok) {
         setErr(readApiErrorBody(j));
         return;
       }
       onCreated();
       handleClose();
+      const costId = j.costInvoice?.id;
+      if (redirectToMultiProjectEdit && costId) {
+        router.push(`/cost-invoices?editCost=${encodeURIComponent(costId)}&multiProject=1`);
+      }
     } catch {
       setErr("Błąd sieci");
     } finally {
       setSaving(false);
     }
+  }
+
+  function submit(e: React.FormEvent) {
+    e.preventDefault();
+    void runCreate(false);
+  }
+
+  function submitMultiProject() {
+    const f = formRef.current;
+    if (f && !f.checkValidity()) {
+      f.reportValidity();
+      return;
+    }
+    void runCreate(true);
   }
 
   const grossPln = tx ? (Math.abs(tx.amount) / 100).toFixed(2) : "—";
@@ -165,7 +185,7 @@ export function CreateCostFromBankModal({ transactionId, open, onClose, onCreate
       ) : err && !tx ? (
         <Alert variant="error">{err}</Alert>
       ) : tx ? (
-        <form onSubmit={submit} className="space-y-4">
+        <form ref={formRef} onSubmit={submit} className="space-y-4">
           <p className="text-xs text-zinc-500">
             Pola są wypełniane z opisu przelewu — możesz je poprawić przed zapisem. Kwota i VAT (0%) jak dotychczas przy
             kosztach z importu.
@@ -252,10 +272,17 @@ export function CreateCostFromBankModal({ transactionId, open, onClose, onCreate
                 "Utwórz koszt i powiąż"
               )}
             </Button>
+            <Button type="button" variant="secondary" disabled={saving} onClick={submitMultiProject}>
+              Utwórz koszt i przypisz do wielu projektów
+            </Button>
             <Button type="button" variant="secondary" onClick={handleClose} disabled={saving}>
               Anuluj
             </Button>
           </div>
+          <p className="text-xs text-zinc-500">
+            Druga opcja zapisuje koszt i płatność tak samo, potem otwiera edycję dokumentu w trybie podziału na kilka
+            projektów — podział zapisujesz sam w formularzu kosztu.
+          </p>
         </form>
       ) : null}
     </Modal>

@@ -533,7 +533,7 @@ export function CostInvoicesClient({ initialQueryString = "" }: { initialQuerySt
     });
   }
 
-  function openEdit(r: Row) {
+  function openEdit(r: Row, opts?: { preferMultiProjectAllocation?: boolean }) {
     const vatOnlyRec = isStoredVatOnlyCost(r.netAmount, r.vatAmount);
     setVatOnlyPayment(vatOnlyRec);
     const rate = (
@@ -570,6 +570,28 @@ export function CostInvoicesClient({ initialQueryString = "" }: { initialQuerySt
           description: a.description ?? "",
         })),
       );
+    } else if (opts?.preferMultiProjectAllocation) {
+      setProjectAllocMode("multi");
+      const pid = r.projectId?.trim();
+      setProjectAllocRows(
+        pid
+          ? [
+              {
+                projectId: pid,
+                netAmount: String(r.netAmount),
+                grossAmount: String(r.grossAmount),
+                description: "",
+              },
+            ]
+          : [
+              {
+                projectId: "",
+                netAmount: String(r.netAmount),
+                grossAmount: String(r.grossAmount),
+                description: "",
+              },
+            ],
+      );
     } else {
       setProjectAllocMode("simple");
       setProjectAllocRows([]);
@@ -589,12 +611,14 @@ export function CostInvoicesClient({ initialQueryString = "" }: { initialQuerySt
     projectName: null as string | null,
     projectCode: null as string | null,
     convertPlannedEventId: null as string | null,
+    multiProject: null as string | null,
   };
 
   const listQs = merged.toString();
   useEffect(() => {
     const m = new URLSearchParams(listQs);
     const editCost = m.get("editCost");
+    const openMultiAlloc = m.get("multiProject") === "1";
     const wantNew = m.get("new") === "1";
     const convertPlanned = m.get("convertPlannedEventId")?.trim() || null;
     const prefillPid = m.get("projectId")?.trim() || null;
@@ -608,7 +632,12 @@ export function CostInvoicesClient({ initialQueryString = "" }: { initialQuerySt
         const r = await fetch(`/api/cost-invoices/${editCost}`);
         const j = await r.json();
         if (cancelled) return;
-        if (r.ok) openEditRef.current(j as Row);
+        if (r.ok) {
+          openEditRef.current(
+            j as Row,
+            openMultiAlloc ? { preferMultiProjectAllocation: true } : undefined,
+          );
+        }
         queueMicrotask(() => setParams(stripCostDeepLinkParams));
         return;
       }
