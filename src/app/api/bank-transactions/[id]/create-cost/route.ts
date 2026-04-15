@@ -12,11 +12,17 @@ import { inferDocumentNumberFromBankText } from "@/lib/bank-import/parse-documen
 import { isExpenseCategoryBankFeesLike, looksLikeBankFeeDescription } from "@/lib/bank-import/bank-fee-heuristic";
 import { z } from "zod";
 
+/** ID rekordów Prisma to CUID, nie UUID — `.uuid()` odrzucało poprawne kategorie. */
+const optionalCuidLike = z.preprocess(
+  (v) => (v === "" || v === null || v === undefined ? null : v),
+  z.union([z.null(), z.string().min(1).max(64)]),
+);
+
 const createCostBodySchema = z.object({
   documentNumber: z.string().max(120).optional().nullable(),
   supplier: z.string().max(500).optional().nullable(),
   description: z.string().max(2000).optional().nullable(),
-  expenseCategoryId: z.string().uuid().optional().nullable(),
+  expenseCategoryId: optionalCuidLike,
   projectId: z.string().min(1).optional().nullable(),
 });
 
@@ -32,7 +38,16 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
   }
 
   const parsedBody = createCostBodySchema.safeParse(bodyRaw);
-  if (!parsedBody.success) return jsonError("Nieprawidłowe pola formularza", 422);
+  if (!parsedBody.success) {
+    const catIssue = parsedBody.error.issues.find((i) => i.path[0] === "expenseCategoryId");
+    if (catIssue) {
+      return jsonError(
+        "Nieprawidłowy identyfikator kategorii kosztu. Wybierz kategorię z listy albo pozostaw pole puste.",
+        422,
+      );
+    }
+    return jsonError("Nieprawidłowe pola formularza", 422);
+  }
 
   const tx = await prisma.bankTransaction.findUnique({ where: { id: bankTxId } });
   if (!tx) return jsonError("Nie znaleziono transakcji", 404);
@@ -85,10 +100,21 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
   if (expenseCategoryId) {
     const cat = await prisma.expenseCategory.findUnique({
       where: { id: expenseCategoryId },
-      select: { id: true, name: true, slug: true },
+      select: { id: true, name: true, slug: true, isActive: true },
     });
-    if (!cat) return jsonError("Nie znaleziono kategorii kosztu", 400);
-    categoryRow = cat;
+    if (!cat) {
+      return jsonError(
+        "Nie znaleziono wybranej kategorii kosztowej — mogła zostać usunięta. Wybierz inną kategorię lub zapisz bez kategorii.",
+        400,
+      );
+    }
+    if (!cat.isActive) {
+      return jsonError(
+        "Wybrana kategoria kosztowa jest zarchiwizowana. Wybierz aktywną kategorię z listy lub usuń kategorię i zapisz ponownie.",
+        400,
+      );
+    }
+    categoryRow = { id: cat.id, name: cat.name, slug: cat.slug };
   }
 
   const descForHeur = (b.description?.trim() ?? fresh.description).trim();
