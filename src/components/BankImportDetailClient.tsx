@@ -57,7 +57,7 @@ export function BankImportDetailClient({ importId }: { importId: string }) {
   const [data, setData] = useState<Detail | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
-  const [matchTxId, setMatchTxId] = useState<string | null>(null);
+  const [matchTx, setMatchTx] = useState<{ id: string; amount: number } | null>(null);
   const [costModalTxId, setCostModalTxId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
@@ -128,9 +128,10 @@ export function BankImportDetailClient({ importId }: { importId: string }) {
   return (
     <div className="space-y-6">
       <BankTransactionMatchModal
-        transactionId={matchTxId ?? ""}
-        open={matchTxId !== null}
-        onClose={() => setMatchTxId(null)}
+        transactionId={matchTx?.id ?? ""}
+        transactionAmountGrosze={matchTx?.amount ?? 0}
+        open={matchTx !== null}
+        onClose={() => setMatchTx(null)}
         onLinked={() => void afterMutation()}
       />
 
@@ -197,7 +198,7 @@ export function BankImportDetailClient({ importId }: { importId: string }) {
                         <button
                           type="button"
                           disabled={b}
-                          onClick={() => setMatchTxId(t.id)}
+                          onClick={() => setMatchTx({ id: t.id, amount: t.amount })}
                           className="rounded border border-emerald-600 bg-white px-2 py-1 text-xs text-emerald-900 hover:bg-emerald-50 disabled:opacity-50 dark:border-emerald-700 dark:bg-zinc-950 dark:text-emerald-200 dark:hover:bg-emerald-950/40"
                         >
                           Dopasuj do dokumentu
@@ -211,14 +212,6 @@ export function BankImportDetailClient({ importId }: { importId: string }) {
                         title={!createOk ? "Powiązanie z kosztem już istnieje lub status blokuje" : undefined}
                       >
                         Utwórz koszt…
-                      </button>
-                      <button
-                        type="button"
-                        disabled={b}
-                        onClick={() => void setStatus(t.id, "TRANSFER")}
-                        className="rounded border border-violet-300 bg-white px-2 py-1 text-xs text-violet-900 hover:bg-violet-50 disabled:opacity-50 dark:border-violet-800 dark:bg-zinc-950 dark:text-violet-200 dark:hover:bg-violet-950/40"
-                      >
-                        Transfer
                       </button>
                       <button
                         type="button"

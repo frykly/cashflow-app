@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { readApiError } from "@/lib/api-client";
-import { safeFormatDate } from "@/lib/format";
+import { formatMoney, safeFormatDate } from "@/lib/format";
 
 type Suggestion = { id: string; score: number; grossAmount: string };
 
@@ -11,19 +11,24 @@ type IncS = Suggestion & { invoiceNumber: string; contractor: string; issueDate:
 
 type Props = {
   transactionId: string;
+  /** Kwota w groszach: &gt;0 wpłata → tylko przychody; &lt;0 wydatek → tylko koszty */
+  transactionAmountGrosze: number;
   open: boolean;
   onClose: () => void;
   onLinked: () => void;
 };
 
-export function BankTransactionMatchModal({ transactionId, open, onClose, onLinked }: Props) {
+export function BankTransactionMatchModal({
+  transactionId,
+  transactionAmountGrosze,
+  open,
+  onClose,
+  onLinked,
+}: Props) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [costs, setCosts] = useState<CostS[]>([]);
   const [incomes, setIncomes] = useState<IncS[]>([]);
-  const [preferPrimaryDocument, setPreferPrimaryDocument] = useState<"income" | "cost">("income");
-  const [manualCost, setManualCost] = useState("");
-  const [manualIncome, setManualIncome] = useState("");
   const [busy, setBusy] = useState(false);
 
   const load = useCallback(async () => {
@@ -37,13 +42,10 @@ export function BankTransactionMatchModal({ transactionId, open, onClose, onLink
         return;
       }
       const data = (await res.json()) as {
-        suggestions: { costs: CostS[]; incomes: IncS[]; preferPrimaryDocument?: "income" | "cost" };
+        suggestions: { costs: CostS[]; incomes: IncS[] };
       };
       setCosts(data.suggestions.costs ?? []);
       setIncomes(data.suggestions.incomes ?? []);
-      if (data.suggestions.preferPrimaryDocument) {
-        setPreferPrimaryDocument(data.suggestions.preferPrimaryDocument);
-      }
     } finally {
       setLoading(false);
     }
@@ -93,31 +95,22 @@ export function BankTransactionMatchModal({ transactionId, open, onClose, onLink
     }
   }
 
-  async function linkManual() {
-    const c = manualCost.trim();
-    const i = manualIncome.trim();
-    if (!c && !i) {
-      setError("Wklej identyfikator faktury kosztowej lub przychodu.");
-      return;
-    }
-    if (c && i) {
-      setError("Podaj tylko jeden identyfikator.");
-      return;
-    }
-    if (c) await linkCost(c);
-    else if (i) await linkIncome(i);
-  }
-
   if (!open) return null;
 
-  const hint =
-    preferPrimaryDocument === "income" ?
-      "Kwota dodatnia: najpierw sugerujemy przychody; ujemna transakcja → koszty."
-    : "Kwota ujemna: najpierw sugerujemy koszty; dodatnia transakcja → przychody.";
+  const amt = transactionAmountGrosze;
+  const showIncome = amt > 0;
+  const showCost = amt < 0;
+  const showZeroHint = amt === 0;
+
+  const scoreHint =
+    "Współczynnik dopasowania (data, kwota, opis). Wyższa wartość = lepsza zgodność z transakcją.";
 
   const incomeSection = (
     <div>
-      <h3 className="mb-2 text-sm font-medium text-zinc-800 dark:text-zinc-200">Faktury przychodu</h3>
+      <h3 className="mb-1 text-sm font-medium text-zinc-800 dark:text-zinc-200">Faktury przychodu</h3>
+      <p className="mb-2 text-xs text-zinc-500 dark:text-zinc-400">
+        Kwota brutto z dokumentu — saldo po wcześniejszych wpłatach sprawdzisz w module przychodów.
+      </p>
       {incomes.length === 0 ? (
         <p className="text-xs text-zinc-500">Brak oczywistych dopasowań w oknie dat.</p>
       ) : (
@@ -125,8 +118,10 @@ export function BankTransactionMatchModal({ transactionId, open, onClose, onLink
           {incomes.map((c) => (
             <li key={c.id} className="flex flex-wrap items-center justify-between gap-2 border-b border-zinc-100 py-1 dark:border-zinc-800">
               <span className="text-zinc-700 dark:text-zinc-300">
-                {c.invoiceNumber} · {c.contractor} · {safeFormatDate(c.issueDate)} · {c.grossAmount} PLN
-                <span className="ml-1 text-xs text-zinc-400">({c.score})</span>
+                {c.invoiceNumber} · {c.contractor} · {safeFormatDate(c.issueDate)} · brutto {formatMoney(c.grossAmount)}
+                <span className="ml-1 text-xs text-zinc-400" title={scoreHint}>
+                  (dopasowanie {c.score})
+                </span>
               </span>
               <button
                 type="button"
@@ -145,7 +140,10 @@ export function BankTransactionMatchModal({ transactionId, open, onClose, onLink
 
   const costSection = (
     <div>
-      <h3 className="mb-2 text-sm font-medium text-zinc-800 dark:text-zinc-200">Faktury kosztowe</h3>
+      <h3 className="mb-1 text-sm font-medium text-zinc-800 dark:text-zinc-200">Faktury kosztowe</h3>
+      <p className="mb-2 text-xs text-zinc-500 dark:text-zinc-400">
+        Kwota brutto z dokumentu — pozostało do zapłaty (po wcześniejszych przelewach) sprawdzisz w module kosztów.
+      </p>
       {costs.length === 0 ? (
         <p className="text-xs text-zinc-500">Brak oczywistych dopasowań w oknie dat.</p>
       ) : (
@@ -153,8 +151,10 @@ export function BankTransactionMatchModal({ transactionId, open, onClose, onLink
           {costs.map((c) => (
             <li key={c.id} className="flex flex-wrap items-center justify-between gap-2 border-b border-zinc-100 py-1 dark:border-zinc-800">
               <span className="text-zinc-700 dark:text-zinc-300">
-                {c.documentNumber} · {c.supplier} · {safeFormatDate(c.documentDate)} · {c.grossAmount} PLN
-                <span className="ml-1 text-xs text-zinc-400">({c.score})</span>
+                {c.documentNumber} · {c.supplier} · {safeFormatDate(c.documentDate)} · brutto {formatMoney(c.grossAmount)}
+                <span className="ml-1 text-xs text-zinc-400" title={scoreHint}>
+                  (dopasowanie {c.score})
+                </span>
               </span>
               <button
                 type="button"
@@ -170,6 +170,13 @@ export function BankTransactionMatchModal({ transactionId, open, onClose, onLink
       )}
     </div>
   );
+
+  const introHint =
+    showIncome ?
+      "Wpłata — wybierz fakturę przychodu, do której dopisujemy tę kwotę."
+    : showCost ?
+      "Wydatek — wybierz fakturę kosztową, do której dopisujemy tę płatność."
+    : "Kwota zerowa — brak podziału na przychód / koszt w tym widoku.";
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" role="dialog">
@@ -188,7 +195,7 @@ export function BankTransactionMatchModal({ transactionId, open, onClose, onLink
           Po potwierdzeniu zostanie utworzony <strong className="font-medium">realny zapis płatności</strong> na fakturze (wpłata
           / wypłata), zgodny z kwotą i datą z wyciągu.
         </p>
-        <p className="mb-3 text-xs text-zinc-500 dark:text-zinc-400">{hint}</p>
+        <p className="mb-3 text-xs text-zinc-500 dark:text-zinc-400">{introHint}</p>
 
         {error ? (
           <p className="mb-3 rounded border border-red-200 bg-red-50 px-2 py-1.5 text-sm text-red-800 dark:border-red-900 dark:bg-red-950/40 dark:text-red-200">
@@ -200,53 +207,13 @@ export function BankTransactionMatchModal({ transactionId, open, onClose, onLink
           <p className="text-sm text-zinc-500">Ładowanie sugestii…</p>
         ) : (
           <div className="space-y-4">
-            {preferPrimaryDocument === "income" ?
-              <>
-                {incomeSection}
-                {costSection}
-              </>
-            : <>
-                {costSection}
-                {incomeSection}
-              </>
-            }
-            <div className="rounded border border-zinc-200 p-3 dark:border-zinc-700">
-              <h3 className="mb-2 text-sm font-medium text-zinc-800 dark:text-zinc-200">Ręcznie (ID z systemu)</h3>
-              <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
-                <label className="flex-1 text-xs">
-                  <span className="text-zinc-500">Koszt (cuid)</span>
-                  <input
-                    value={manualCost}
-                    onChange={(e) => {
-                      setManualCost(e.target.value);
-                      setManualIncome("");
-                    }}
-                    className="mt-0.5 w-full rounded border border-zinc-300 px-2 py-1 font-mono text-xs dark:border-zinc-600 dark:bg-zinc-950"
-                    placeholder="tylko przy kwocie ujemnej"
-                  />
-                </label>
-                <label className="flex-1 text-xs">
-                  <span className="text-zinc-500">Przychód (cuid)</span>
-                  <input
-                    value={manualIncome}
-                    onChange={(e) => {
-                      setManualIncome(e.target.value);
-                      setManualCost("");
-                    }}
-                    className="mt-0.5 w-full rounded border border-zinc-300 px-2 py-1 font-mono text-xs dark:border-zinc-600 dark:bg-zinc-950"
-                    placeholder="tylko przy kwocie dodatniej"
-                  />
-                </label>
-                <button
-                  type="button"
-                  disabled={busy}
-                  onClick={() => void linkManual()}
-                  className="rounded bg-zinc-900 px-3 py-1.5 text-xs text-white disabled:opacity-50 dark:bg-zinc-100 dark:text-zinc-900"
-                >
-                  Połącz
-                </button>
-              </div>
-            </div>
+            {showZeroHint ?
+              <p className="text-sm text-zinc-600 dark:text-zinc-400">
+                Użyj statusów w tabeli importu lub szczegółów transakcji, jeśli ta pozycja nie wymaga dopasowania do faktury.
+              </p>
+            : showIncome ?
+              incomeSection
+            : costSection}
           </div>
         )}
       </div>
