@@ -2,6 +2,7 @@ import { Decimal } from "@prisma/client/runtime/library";
 import { prisma } from "@/lib/db";
 import { jsonData } from "@/lib/api/json-response";
 import { jsonError } from "@/lib/api/errors";
+import { serializeOtherIncomeRow } from "@/lib/other-income-api";
 import { healBankTransactionLinks } from "@/lib/bank-import/heal-links";
 import { assertIncomeLinkSign, bankGroszeToAmountGross } from "@/lib/bank-import/payment-from-bank";
 import { normalizeDecimalInput } from "@/lib/decimal-input";
@@ -51,6 +52,17 @@ function parseVatAmountOrError(raw: unknown, maxGross: Decimal): { ok: true; vat
 
 function isRecord(x: unknown): x is Record<string, unknown> {
   return typeof x === "object" && x !== null;
+}
+
+export async function GET() {
+  const rows = await prisma.otherIncome.findMany({
+    orderBy: { date: "desc" },
+    include: {
+      project: { select: { id: true, name: true } },
+      category: { select: { id: true, name: true } },
+    },
+  });
+  return jsonData({ items: rows.map(serializeOtherIncomeRow) });
 }
 
 export async function POST(req: Request) {
