@@ -20,7 +20,7 @@ type PayPick = Pick<IncomeInvoicePayment, "amountGross">;
 import { incomeRemainingGross, isIncomeFullyPaid, sumIncomePaymentsGross } from "@/lib/cashflow/settlement";
 import { DueDateOffsetControls } from "@/components/DueDateOffsetControls";
 import { normalizeDecimalInput } from "@/lib/decimal-input";
-import { projectDisplayLabel } from "@/lib/project-display";
+import { projectLinkTargetId, projectListLabel } from "@/lib/project-display";
 
 type ProjectOption = { id: string; name: string; isActive: boolean; code?: string | null };
 
@@ -49,6 +49,14 @@ type Row = {
   projectId?: string | null;
   project?: { id: string; name: string } | null;
   projectName?: string | null;
+  projectAllocations?: {
+    id: string;
+    projectId: string;
+    netAmount: unknown;
+    grossAmount: unknown;
+    description: string;
+    project?: { id: string; name: string } | null;
+  }[];
 };
 
 type Draft = Omit<Row, "id"> & { id?: string };
@@ -200,6 +208,10 @@ export function IncomeInvoicesClient({ initialQueryString = "" }: { initialQuery
   /** Po utworzeniu faktury z zdarzenia planowanego — wysłane w POST, potem czyszczone. */
   const sourcePlannedEventIdRef = useRef<string | null>(null);
   const [amountEntryMode, setAmountEntryMode] = useState<AmountEntryMode>("net");
+  const [projectAllocMode, setProjectAllocMode] = useState<"simple" | "multi">("simple");
+  const [projectAllocRows, setProjectAllocRows] = useState<
+    { projectId: string; netAmount: string; grossAmount: string; description: string }[]
+  >([]);
 
   const [filterDraft, setFilterDraft] = useState({
     q: "",
@@ -327,12 +339,16 @@ export function IncomeInvoicesClient({ initialQueryString = "" }: { initialQuery
     setFormError(null);
     setPayOpen(false);
     sourcePlannedEventIdRef.current = null;
+    setProjectAllocMode("simple");
+    setProjectAllocRows([]);
   }
 
   function openNew() {
     plannedIncomeManualRef.current = false;
     sourcePlannedEventIdRef.current = null;
     setAmountEntryMode("net");
+    setProjectAllocMode("simple");
+    setProjectAllocRows([]);
     setEditing(emptyDraft());
     setFormError(null);
     setOpen(true);
@@ -377,6 +393,21 @@ export function IncomeInvoicesClient({ initialQueryString = "" }: { initialQuery
       vatAmount: String(r.vatAmount),
       grossAmount: String(r.grossAmount),
     });
+    const pa = r.projectAllocations;
+    if (pa && pa.length > 0) {
+      setProjectAllocMode("multi");
+      setProjectAllocRows(
+        pa.map((a) => ({
+          projectId: a.projectId,
+          netAmount: String(a.netAmount),
+          grossAmount: String(a.grossAmount),
+          description: a.description ?? "",
+        })),
+      );
+    } else {
+      setProjectAllocMode("simple");
+      setProjectAllocRows([]);
+    }
     setFormError(null);
     setOpen(true);
   }
@@ -619,6 +650,34 @@ export function IncomeInvoicesClient({ initialQueryString = "" }: { initialQuery
         : {};
     const projectIdPayload = editing.projectId?.trim() || null;
 
+    if (projectAllocMode === "multi") {
+      const ok = projectAllocRows.filter((row) => row.projectId.trim());
+      if (ok.length === 0) {
+        setFormError("Tryb kilku projektów: dodaj co najmniej jeden wiersz z wybranym projektem.");
+        setSaving(false);
+        return;
+      }
+    }
+
+    const allocPart: Record<string, unknown> = (() => {
+      if (projectAllocMode === "multi") {
+        const ok = projectAllocRows.filter((row) => row.projectId.trim());
+        return {
+          projectAllocations: ok.map((row) => ({
+            projectId: row.projectId,
+            netAmount: normalizeDecimalInput(row.netAmount),
+            grossAmount: normalizeDecimalInput(row.grossAmount),
+            description: row.description.trim(),
+          })),
+        };
+      }
+      if (editing.id) return { projectAllocations: [] as never[] };
+      return {};
+    })();
+
+    const projectField =
+      projectAllocMode === "multi" ? { projectId: null } : { projectId: projectIdPayload };
+
     const url = editing.id ? `/api/income-invoices/${editing.id}` : "/api/income-invoices";
     const method = editing.id ? "PATCH" : "POST";
     const body = {
@@ -635,9 +694,10 @@ export function IncomeInvoicesClient({ initialQueryString = "" }: { initialQuery
       confirmedIncome: editing.confirmedIncome,
       actualIncomeDate: toIsoOrNull(editing.actualIncomeDate ?? undefined),
       notes: editing.notes,
-      projectId: projectIdPayload,
+      ...projectField,
       incomeCategoryId: editing.incomeCategoryId || null,
       ...recurringPatch,
+      ...allocPart,
       ...(method === "POST" && sourcePlannedEventIdRef.current
         ? { sourcePlannedEventId: sourcePlannedEventIdRef.current }
         : {}),
@@ -654,9 +714,15 @@ export function IncomeInvoicesClient({ initialQueryString = "" }: { initialQuery
         return;
       }
       closeModal();
-      if (method === "POST" && projectIdPayload) {
-        router.push(`/projects/${projectIdPayload}`);
-        return;
+      if (method === "POST") {
+        const redirectPid =
+          projectAllocMode === "multi"
+            ? projectAllocRows.find((x) => x.projectId.trim())?.projectId
+            : projectIdPayload;
+        if (redirectPid) {
+          router.push(`/projects/${redirectPid}`);
+          return;
+        }
       }
       load();
     } catch {
@@ -933,17 +999,26 @@ export function IncomeInvoicesClient({ initialQueryString = "" }: { initialQuery
                       <span className="line-clamp-2 break-words">{r.contractor}</span>
                     </td>
                     <td className="min-w-0 px-1 py-2.5 text-xs">
-                      {r.projectId ? (
-                        <Link
-                          href={`/projects/${r.projectId}`}
-                          className="line-clamp-2 break-words font-medium text-emerald-800 underline decoration-emerald-300 underline-offset-2 hover:decoration-emerald-600 dark:text-emerald-300 dark:decoration-emerald-700 dark:hover:decoration-emerald-400"
-                          onClick={(e) => e.stopPropagation()}
-                        >
-                          {projectDisplayLabel(r)}
-                        </Link>
-                      ) : (
-                        <span className="line-clamp-2 break-words text-zinc-500 dark:text-zinc-400">—</span>
-                      )}
+                      {(() => {
+                        const hrefId = projectLinkTargetId({
+                          projectAllocations: r.projectAllocations?.map((a) => ({ projectId: a.projectId })),
+                          projectId: r.projectId,
+                        });
+                        const label = projectListLabel(r);
+                        return hrefId ? (
+                          <Link
+                            href={`/projects/${hrefId}`}
+                            className="line-clamp-2 break-words font-medium text-emerald-800 underline decoration-emerald-300 underline-offset-2 hover:decoration-emerald-600 dark:text-emerald-300 dark:decoration-emerald-700 dark:hover:decoration-emerald-400"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            {label}
+                          </Link>
+                        ) : label !== "—" ? (
+                          <span className="line-clamp-2 break-words text-zinc-700 dark:text-zinc-300">{label}</span>
+                        ) : (
+                          <span className="line-clamp-2 break-words text-zinc-500 dark:text-zinc-400">—</span>
+                        );
+                      })()}
                     </td>
                     <td className="px-1 py-2.5 text-right text-sm tabular-nums font-medium text-zinc-900 dark:text-zinc-100">
                       {formatMoney(Number(r.netAmount))}
@@ -1040,18 +1115,141 @@ export function IncomeInvoicesClient({ initialQueryString = "" }: { initialQuery
               disabled={saving}
             />
           </Field>
-          <Field label="Projekt">
-            <ProjectSearchPicker
-              value={editing.projectId ?? null}
-              onChange={(id) => setEditing({ ...editing, projectId: id })}
-              disabled={saving}
-            />
-            {!editing.projectId && (editing.projectName ?? "").trim() ? (
-              <p className="mt-1 text-xs text-amber-700 dark:text-amber-400">
-                Legacy: „{(editing.projectName ?? "").trim()}” — wybierz projekt z listy, aby powiązać rekord.
-              </p>
-            ) : null}
-          </Field>
+          <div className="rounded-lg border border-zinc-200 p-3 dark:border-zinc-700">
+            <label className="flex cursor-pointer items-center gap-2 text-sm font-medium text-zinc-800 dark:text-zinc-200">
+              <input
+                type="checkbox"
+                className="size-4 rounded border-zinc-300"
+                checked={projectAllocMode === "multi"}
+                disabled={saving}
+                onChange={(e) => {
+                  const on = e.target.checked;
+                  setProjectAllocMode(on ? "multi" : "simple");
+                  if (on) {
+                    setProjectAllocRows((prev) => {
+                      if (prev.length > 0) return prev;
+                      const pid = editing.projectId?.trim();
+                      if (pid) {
+                        return [
+                          {
+                            projectId: pid,
+                            netAmount: editing.netAmount,
+                            grossAmount: editing.grossAmount,
+                            description: "",
+                          },
+                        ];
+                      }
+                      return [{ projectId: "", netAmount: editing.netAmount, grossAmount: editing.grossAmount, description: "" }];
+                    });
+                  } else {
+                    setProjectAllocRows([]);
+                  }
+                }}
+              />
+              Alokacja na kilka projektów (suma netto i brutto = dokument)
+            </label>
+            {projectAllocMode === "multi" ? (
+              <div className="mt-3 space-y-2">
+                {projectAllocRows.map((row, idx) => (
+                  <div
+                    key={idx}
+                    className="grid gap-2 rounded-md border border-zinc-100 p-2 dark:border-zinc-800 sm:grid-cols-2 lg:grid-cols-4"
+                  >
+                    <Field label="Projekt">
+                      <Select
+                        value={row.projectId}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          setProjectAllocRows((rows) => rows.map((x, i) => (i === idx ? { ...x, projectId: v } : x)));
+                        }}
+                        disabled={saving}
+                      >
+                        <option value="">—</option>
+                        {projects
+                          .slice()
+                          .sort((a, b) => Number(b.isActive) - Number(a.isActive) || a.name.localeCompare(b.name, "pl"))
+                          .map((p) => (
+                            <option key={p.id} value={p.id}>
+                              {p.name}
+                            </option>
+                          ))}
+                      </Select>
+                    </Field>
+                    <Field label="Netto (alokacja)">
+                      <Input
+                        value={row.netAmount}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          setProjectAllocRows((rows) => rows.map((x, i) => (i === idx ? { ...x, netAmount: v } : x)));
+                        }}
+                        disabled={saving}
+                      />
+                    </Field>
+                    <Field label="Brutto (alokacja)">
+                      <Input
+                        value={row.grossAmount}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          setProjectAllocRows((rows) => rows.map((x, i) => (i === idx ? { ...x, grossAmount: v } : x)));
+                        }}
+                        disabled={saving}
+                      />
+                    </Field>
+                    <Field label="Notatka (opcjonalnie)">
+                      <Input
+                        value={row.description}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          setProjectAllocRows((rows) => rows.map((x, i) => (i === idx ? { ...x, description: v } : x)));
+                        }}
+                        disabled={saving}
+                      />
+                    </Field>
+                  </div>
+                ))}
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    className="!text-xs"
+                    disabled={saving}
+                    onClick={() =>
+                      setProjectAllocRows((rows) => [
+                        ...rows,
+                        { projectId: "", netAmount: editing.netAmount, grossAmount: editing.grossAmount, description: "" },
+                      ])
+                    }
+                  >
+                    + Wiersz
+                  </Button>
+                  {projectAllocRows.length > 1 ? (
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      className="!text-xs"
+                      disabled={saving}
+                      onClick={() => setProjectAllocRows((rows) => rows.slice(0, -1))}
+                    >
+                      Usuń ostatni
+                    </Button>
+                  ) : null}
+                </div>
+              </div>
+            ) : (
+              <Field label="Projekt">
+                <ProjectSearchPicker
+                  value={editing.projectId ?? null}
+                  onChange={(id) => setEditing({ ...editing, projectId: id })}
+                  disabled={saving}
+                />
+                {!editing.projectId && (editing.projectName ?? "").trim() ? (
+                  <p className="mt-1 text-xs text-amber-700 dark:text-amber-400">
+                    Legacy: „{(editing.projectName ?? "").trim()}” — wybierz projekt z listy, aby powiązać rekord.
+                  </p>
+                ) : null}
+              </Field>
+            )}
+          </div>
           <InvoiceAmountFields
             mode={amountEntryMode}
             onModeChange={handleAmountModeChange}

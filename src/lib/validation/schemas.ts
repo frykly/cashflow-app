@@ -51,25 +51,43 @@ export const appSettingsSchema = z.object({
   effectiveFrom: isoDateTime,
 });
 
-export const incomeInvoiceCreateSchema = z.object({
-  invoiceNumber: z.string().min(1),
-  contractor: z.string().min(1),
-  description: z.string().optional().default(""),
-  vatRate: vatRateField.optional().default(23),
+const invoiceProjectAllocationRowSchema = z.object({
+  projectId: z.string().min(1),
   netAmount: decimalLike,
-  issueDate: isoDateTime,
-  paymentDueDate: isoDateTime,
-  plannedIncomeDate: isoDateTime,
-  status: z.enum(["PLANOWANA", "WYSTAWIONA", "PARTIALLY_RECEIVED", "OPLACONA"]),
-  vatDestination: z.enum(["MAIN", "VAT"]),
-  confirmedIncome: z.boolean().optional().default(false),
-  actualIncomeDate: optionalIsoNullable(),
-  incomeCategoryId: optionalId,
-  projectId: optionalId,
-  /** Po utworzeniu faktury — oznacza zdarzenie planowane jako CONVERTED (tylko PLANNED + typ INCOME). */
-  sourcePlannedEventId: optionalId,
-  notes: z.string().optional().default(""),
+  grossAmount: decimalLike,
+  description: z.string().max(500).optional().default(""),
 });
+
+const plannedProjectAllocationRowSchema = z.object({
+  projectId: z.string().min(1),
+  amount: decimalLike,
+  amountVat: decimalLike.optional().default("0"),
+  description: z.string().max(500).optional().default(""),
+});
+
+export const incomeInvoiceCreateSchema = z
+  .object({
+    invoiceNumber: z.string().min(1),
+    contractor: z.string().min(1),
+    description: z.string().optional().default(""),
+    vatRate: vatRateField.optional().default(23),
+    netAmount: decimalLike,
+    issueDate: isoDateTime,
+    paymentDueDate: isoDateTime,
+    plannedIncomeDate: isoDateTime,
+    status: z.enum(["PLANOWANA", "WYSTAWIONA", "PARTIALLY_RECEIVED", "OPLACONA"]),
+    vatDestination: z.enum(["MAIN", "VAT"]),
+    confirmedIncome: z.boolean().optional().default(false),
+    actualIncomeDate: optionalIsoNullable(),
+    incomeCategoryId: optionalId,
+    projectId: optionalId,
+    /** Po utworzeniu faktury — oznacza zdarzenie planowane jako CONVERTED (tylko PLANNED + typ INCOME). */
+    sourcePlannedEventId: optionalId,
+    notes: z.string().optional().default(""),
+  })
+  .extend({
+    projectAllocations: z.array(invoiceProjectAllocationRowSchema).optional(),
+  });
 
 export const incomeInvoiceUpdateSchema = incomeInvoiceCreateSchema.partial().extend({
   isRecurringDetached: z.boolean().optional(),
@@ -97,25 +115,32 @@ export const costInvoiceCreateSchema = z.object({
   /** Po utworzeniu faktury — oznacza zdarzenie planowane jako CONVERTED (tylko PLANNED + typ EXPENSE). */
   sourcePlannedEventId: optionalId,
   notes: z.string().optional().default(""),
-});
+})
+  .extend({
+    projectAllocations: z.array(invoiceProjectAllocationRowSchema).optional(),
+  });
 
 export const costInvoiceUpdateSchema = costInvoiceCreateSchema.partial().extend({
   isRecurringDetached: z.boolean().optional(),
 });
 
-export const plannedEventCreateSchema = z.object({
-  type: z.enum(["INCOME", "EXPENSE"]),
-  title: z.string().min(1),
-  description: z.string().optional().default(""),
-  amount: decimalLike,
-  amountVat: decimalLike.optional(),
-  plannedDate: isoDateTime,
-  status: z.enum(["PLANNED", "DONE", "CANCELLED"]),
-  incomeCategoryId: optionalId,
-  expenseCategoryId: optionalId,
-  projectId: optionalId,
-  notes: z.string().optional().default(""),
-});
+export const plannedEventCreateSchema = z
+  .object({
+    type: z.enum(["INCOME", "EXPENSE"]),
+    title: z.string().min(1),
+    description: z.string().optional().default(""),
+    amount: decimalLike,
+    amountVat: decimalLike.optional(),
+    plannedDate: isoDateTime,
+    status: z.enum(["PLANNED", "DONE", "CANCELLED"]),
+    incomeCategoryId: optionalId,
+    expenseCategoryId: optionalId,
+    projectId: optionalId,
+    notes: z.string().optional().default(""),
+  })
+  .extend({
+    projectAllocations: z.array(plannedProjectAllocationRowSchema).optional(),
+  });
 
 export const plannedEventUpdateSchema = plannedEventCreateSchema.partial();
 

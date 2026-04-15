@@ -65,60 +65,111 @@ export async function listProjectsEnriched(options: {
 
   const ids = projects.map((p) => p.id);
 
-  const [incomeNets, costNets, incInvoices, costInvs] = await Promise.all([
-    prisma.incomeInvoice.groupBy({
+  const [incomeAllocSums, costAllocSums, incInvoices, costInvs] = await Promise.all([
+    prisma.incomeInvoiceProjectAllocation.groupBy({
       by: ["projectId"],
       where: { projectId: { in: ids } },
       _sum: { netAmount: true },
     }),
-    prisma.costInvoice.groupBy({
+    prisma.costInvoiceProjectAllocation.groupBy({
       by: ["projectId"],
       where: { projectId: { in: ids } },
       _sum: { netAmount: true },
     }),
     prisma.incomeInvoice.findMany({
-      where: { projectId: { in: ids } },
-      select: { projectId: true, payments: { select: { amountGross: true } } },
+      where: {
+        projectId: { in: ids },
+        projectAllocations: { none: {} },
+      },
+      select: { projectId: true, netAmount: true, payments: { select: { amountGross: true } } },
     }),
     prisma.costInvoice.findMany({
-      where: { projectId: { in: ids } },
-      select: { projectId: true, payments: { select: { amountGross: true } } },
+      where: {
+        projectId: { in: ids },
+        projectAllocations: { none: {} },
+      },
+      select: { projectId: true, netAmount: true, payments: { select: { amountGross: true } } },
     }),
   ]);
 
   const incNet = new Map<string, number>();
-  for (const g of incomeNets) {
+  for (const id of ids) incNet.set(id, 0);
+  for (const g of incomeAllocSums) {
     if (g.projectId) incNet.set(g.projectId, decToNumber(g._sum.netAmount ?? 0));
   }
-  const coNet = new Map<string, number>();
-  for (const g of costNets) {
-    if (g.projectId) coNet.set(g.projectId, decToNumber(g._sum.netAmount ?? 0));
+  for (const row of incInvoices) {
+    if (!row.projectId) continue;
+    incNet.set(row.projectId, (incNet.get(row.projectId) ?? 0) + decToNumber(row.netAmount));
   }
 
+  const coNet = new Map<string, number>();
+  for (const id of ids) coNet.set(id, 0);
+  for (const g of costAllocSums) {
+    if (g.projectId) coNet.set(g.projectId, decToNumber(g._sum.netAmount ?? 0));
+  }
+  for (const row of costInvs) {
+    if (!row.projectId) continue;
+    coNet.set(row.projectId, (coNet.get(row.projectId) ?? 0) + decToNumber(row.netAmount));
+  }
+
+  const incForPaid = await prisma.incomeInvoice.findMany({
+    where: {
+      OR: [
+        { projectId: { in: ids }, projectAllocations: { none: {} } },
+        { projectAllocations: { some: { projectId: { in: ids } } } },
+      ],
+    },
+    select: {
+      projectId: true,
+      payments: { select: { amountGross: true } },
+      projectAllocations: { select: { projectId: true } },
+    },
+  });
+  const costForPaid = await prisma.costInvoice.findMany({
+    where: {
+      OR: [
+        { projectId: { in: ids }, projectAllocations: { none: {} } },
+        { projectAllocations: { some: { projectId: { in: ids } } } },
+      ],
+    },
+    select: {
+      projectId: true,
+      payments: { select: { amountGross: true } },
+      projectAllocations: { select: { projectId: true } },
+    },
+  });
+
   const paidIncome = new Map<string, number>();
-  for (const row of incInvoices) {
-    const pid = row.projectId;
-    if (!pid) continue;
+  for (const id of ids) paidIncome.set(id, 0);
+  for (const row of incForPaid) {
+    const alloc = row.projectAllocations;
+    if (alloc.length > 1) continue;
+    const targetPid = alloc.length === 1 ? alloc[0]!.projectId : row.projectId;
+    if (!targetPid || !ids.includes(targetPid)) continue;
     const s = row.payments.reduce((acc, p) => acc + decToNumber(p.amountGross), 0);
-    paidIncome.set(pid, (paidIncome.get(pid) ?? 0) + s);
+    paidIncome.set(targetPid, (paidIncome.get(targetPid) ?? 0) + s);
   }
   const paidCost = new Map<string, number>();
-  for (const row of costInvs) {
-    const pid = row.projectId;
-    if (!pid) continue;
+  for (const id of ids) paidCost.set(id, 0);
+  for (const row of costForPaid) {
+    const alloc = row.projectAllocations;
+    if (alloc.length > 1) continue;
+    const targetPid = alloc.length === 1 ? alloc[0]!.projectId : row.projectId;
+    if (!targetPid || !ids.includes(targetPid)) continue;
     const s = row.payments.reduce((acc, p) => acc + decToNumber(p.amountGross), 0);
-    paidCost.set(pid, (paidCost.get(pid) ?? 0) + s);
+    paidCost.set(targetPid, (paidCost.get(targetPid) ?? 0) + s);
   }
 
   const enriched: ProjectListRow[] = projects.map((p) => {
     const inN = incNet.get(p.id);
     const cN = coNet.get(p.id);
-    const hasInvoices = inN !== undefined || cN !== undefined;
     const incomeN = inN ?? 0;
     const costN = cN ?? 0;
+    const paidG = (paidIncome.get(p.id) ?? 0) + (paidCost.get(p.id) ?? 0);
+    const hasInvoices = incomeN !== 0 || costN !== 0 || paidG > 0;
     return {
       ...p,
-      paidTotalGross: (paidIncome.get(p.id) ?? 0) + (paidCost.get(p.id) ?? 0),
+      paidTotalGross: paidG,
       actualResultNet: hasInvoices ? incomeN - costN : null,
     };
   });

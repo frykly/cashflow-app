@@ -35,6 +35,60 @@ model Project {
   costInvoices       CostInvoice[]
   incomeInvoices     IncomeInvoice[]
   plannedEvents      PlannedFinancialEvent[]
+  costAllocations    CostInvoiceProjectAllocation[]
+  incomeAllocations  IncomeInvoiceProjectAllocation[]
+  plannedAllocations PlannedEventProjectAllocation[]
+}
+
+/// Rozbicie kosztu na wiele projektów — jeśli są wiersze, raportowanie używa ich zamiast legacy CostInvoice.projectId.
+model CostInvoiceProjectAllocation {
+  id            String      @id @default(cuid())
+  costInvoiceId String
+  costInvoice   CostInvoice @relation(fields: [costInvoiceId], references: [id], onDelete: Cascade)
+  projectId     String
+  project       Project     @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  netAmount     Decimal
+  grossAmount   Decimal
+  description   String      @default("")
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+
+  @@index([costInvoiceId])
+  @@index([projectId])
+}
+
+/// Rozbicie przychodu na wiele projektów — jeśli są wiersze, raportowanie używa ich zamiast legacy IncomeInvoice.projectId.
+model IncomeInvoiceProjectAllocation {
+  id              String        @id @default(cuid())
+  incomeInvoiceId String
+  incomeInvoice   IncomeInvoice @relation(fields: [incomeInvoiceId], references: [id], onDelete: Cascade)
+  projectId       String
+  project         Project       @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  netAmount       Decimal
+  grossAmount     Decimal
+  description     String        @default("")
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  @@index([incomeInvoiceId])
+  @@index([projectId])
+}
+
+/// Rozbicie zdarzenia planowanego na wiele projektów — kwoty jak w PlannedFinancialEvent (amount + amountVat).
+model PlannedEventProjectAllocation {
+  id                      String                @id @default(cuid())
+  plannedFinancialEventId String
+  plannedFinancialEvent   PlannedFinancialEvent @relation(fields: [plannedFinancialEventId], references: [id], onDelete: Cascade)
+  projectId               String
+  project                 Project               @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  amount                  Decimal
+  amountVat               Decimal               @default(0)
+  description             String                @default("")
+  createdAt               DateTime              @default(now())
+  updatedAt               DateTime              @updatedAt
+
+  @@index([plannedFinancialEventId])
+  @@index([projectId])
 }
 
 model IncomeCategory {
@@ -86,6 +140,7 @@ model IncomeInvoice {
   isRecurringDetached       Boolean  @default(false)
   sourceRecurringTemplate   RecurringTemplate? @relation("RecurringGeneratedIncome", fields: [sourceRecurringTemplateId], references: [id], onDelete: SetNull)
   linkedFromPlannedEvent    PlannedFinancialEvent? @relation("PlannedConvertedToIncome")
+  projectAllocations IncomeInvoiceProjectAllocation[]
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt
 
@@ -137,6 +192,7 @@ model CostInvoice {
   isRecurringDetached       Boolean  @default(false)
   sourceRecurringTemplate   RecurringTemplate? @relation("RecurringGeneratedCost", fields: [sourceRecurringTemplateId], references: [id], onDelete: SetNull)
   linkedFromPlannedEvent    PlannedFinancialEvent? @relation("PlannedConvertedToCost")
+  projectAllocations CostInvoiceProjectAllocation[]
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt
 
@@ -208,6 +264,7 @@ model PlannedFinancialEvent {
   convertedAt         DateTime?
   convertedToIncomeInvoice IncomeInvoice? @relation("PlannedConvertedToIncome", fields: [convertedToIncomeInvoiceId], references: [id], onDelete: SetNull)
   convertedToCostInvoice   CostInvoice?   @relation("PlannedConvertedToCost", fields: [convertedToCostInvoiceId], references: [id], onDelete: SetNull)
+  projectAllocations  PlannedEventProjectAllocation[]
   createdAt           DateTime           @default(now())
   updatedAt           DateTime           @updatedAt
 

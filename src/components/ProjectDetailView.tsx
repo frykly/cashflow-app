@@ -21,6 +21,38 @@ function moneyFromDecimal(v: Decimal | null | undefined): string {
   return formatMoney(decToNumber(v));
 }
 
+/** W widoku projektu: przy alokacji pokazuj netto przypisane do tego projektu; inaczej całość dokumentu (legacy). */
+function incomeNetSliceForProject(
+  r: ProjectDetailsResult["incomeInvoices"][number],
+): number {
+  const slices = r.projectAllocations;
+  if (slices && slices.length > 0) return decToNumber(slices[0]!.netAmount as Decimal);
+  return decToNumber(r.netAmount);
+}
+
+function costNetSliceForProject(r: ProjectDetailsResult["costInvoices"][number]): number {
+  const slices = r.projectAllocations;
+  if (slices && slices.length > 0) return decToNumber(slices[0]!.netAmount as Decimal);
+  return decToNumber(r.netAmount);
+}
+
+function plannedAmountSliceForProject(r: ProjectDetailsResult["plannedEvents"][number]): {
+  amount: number;
+  amountVat: number;
+} {
+  const slices = r.projectAllocations;
+  if (slices && slices.length > 0) {
+    return {
+      amount: decToNumber(slices[0]!.amount as Decimal),
+      amountVat: decToNumber(slices[0]!.amountVat as Decimal),
+    };
+  }
+  return {
+    amount: decToNumber(r.amount),
+    amountVat: decToNumber(r.amountVat ?? 0),
+  };
+}
+
 function plannedStatusLabel(s: string): string {
   if (s === "CONVERTED") return "Skonwertowane";
   if (s === "PLANNED") return "Zaplanowane";
@@ -226,7 +258,9 @@ export function ProjectDetailView({ data }: { data: ProjectDetailsResult }) {
       </section>
 
       <p className="text-xs text-zinc-500">
-        Tabele poniżej: do 250 ostatnich pozycji w każdej kategorii. Liczniki i sumy liczone są po całości danych.
+        Tabele poniżej: do 250 ostatnich pozycji w każdej kategorii. Liczniki i sumy liczone są po całości danych. Przy
+        fakturze lub zdarzeniu rozbitnym na kilka projektów w kolumnach kwot widać{" "}
+        <span className="font-medium">udział przypisany do tego projektu</span>, nie pełną kwotę dokumentu.
       </p>
 
       <section id="income">
@@ -255,7 +289,7 @@ export function ProjectDetailView({ data }: { data: ProjectDetailsResult }) {
                   <tr key={r.id} className="bg-white dark:bg-zinc-950">
                     <td className="px-3 py-2 font-mono text-xs">{r.invoiceNumber}</td>
                     <td className="max-w-[180px] truncate px-3 py-2">{r.contractor}</td>
-                    <td className="px-3 py-2 tabular-nums">{formatMoney(decToNumber(r.netAmount))}</td>
+                    <td className="px-3 py-2 tabular-nums">{formatMoney(incomeNetSliceForProject(r))}</td>
                     <td className="whitespace-nowrap px-3 py-2">{formatDate(r.plannedIncomeDate)}</td>
                     <td className="px-3 py-2 text-xs">{r.status}</td>
                     <td className="px-3 py-2 text-right">
@@ -300,7 +334,7 @@ export function ProjectDetailView({ data }: { data: ProjectDetailsResult }) {
                   <tr key={r.id} className="bg-white dark:bg-zinc-950">
                     <td className="px-3 py-2 font-mono text-xs">{r.documentNumber}</td>
                     <td className="max-w-[180px] truncate px-3 py-2">{r.supplier}</td>
-                    <td className="px-3 py-2 tabular-nums">{formatMoney(decToNumber(r.netAmount))}</td>
+                    <td className="px-3 py-2 tabular-nums">{formatMoney(costNetSliceForProject(r))}</td>
                     <td className="whitespace-nowrap px-3 py-2">{formatDate(r.plannedPaymentDate)}</td>
                     <td className="px-3 py-2 text-xs">{r.status}</td>
                     <td className="px-3 py-2 text-right">
@@ -342,14 +376,16 @@ export function ProjectDetailView({ data }: { data: ProjectDetailsResult }) {
                   </td>
                 </tr>
               ) : (
-                plannedEvents.map((r) => (
+                plannedEvents.map((r) => {
+                  const slice = plannedAmountSliceForProject(r);
+                  return (
                   <tr key={r.id} className="bg-white dark:bg-zinc-950">
                     <td className="max-w-[200px] truncate px-3 py-2 font-medium">{r.title}</td>
                     <td className="px-3 py-2 text-xs">{r.type}</td>
                     <td className="px-3 py-2 tabular-nums text-xs">
-                      {formatMoney(decToNumber(r.amount))}
-                      {decToNumber(r.amountVat ?? 0) > 0 ? (
-                        <span className="block text-zinc-500">+ VAT {formatMoney(decToNumber(r.amountVat ?? 0))}</span>
+                      {formatMoney(slice.amount)}
+                      {slice.amountVat > 0 ? (
+                        <span className="block text-zinc-500">+ VAT {formatMoney(slice.amountVat)}</span>
                       ) : null}
                     </td>
                     <td className="whitespace-nowrap px-3 py-2">{formatDate(r.plannedDate)}</td>
@@ -382,7 +418,8 @@ export function ProjectDetailView({ data }: { data: ProjectDetailsResult }) {
                       </Link>
                     </td>
                   </tr>
-                ))
+                  );
+                })
               )}
             </tbody>
           </table>

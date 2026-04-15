@@ -6,8 +6,9 @@ import { incomeInvoiceCreateSchema } from "@/lib/validation/schemas";
 import { buildIncomeWhere } from "@/lib/prisma-list-filters";
 import { ensureClosingIncomePaymentIfFullySettled } from "@/lib/cashflow/invoice-auto-settlement";
 import { syncIncomeInvoiceStatus } from "@/lib/invoice-status-sync";
-import { resolveProjectFields } from "@/lib/project-persist";
 import { finalizePlannedToIncomeConversion } from "@/lib/planned-event-conversion";
+import { replaceIncomeInvoiceAllocations, resolveLegacyProjectFieldsFromAllocations } from "@/lib/project-allocations/persist";
+import { validateCostOrIncomeAllocationSums } from "@/lib/project-allocations/validate";
 import { ZodError } from "zod";
 
 const sortable = new Set([
@@ -43,7 +44,12 @@ export async function GET(req: Request) {
   const rows = await prisma.incomeInvoice.findMany({
     where,
     orderBy: { [sort]: order },
-    include: { incomeCategory: true, project: true, payments: { orderBy: { paymentDate: "asc" } } },
+    include: {
+      incomeCategory: true,
+      project: true,
+      payments: { orderBy: { paymentDate: "asc" } },
+      projectAllocations: { include: { project: { select: { id: true, name: true, code: true } } } },
+    },
   });
   return jsonData(rows);
 }
@@ -60,9 +66,14 @@ export async function POST(req: Request) {
     const rate = data.vatRate;
     const vat = vatFromNetAndRate(data.netAmount, rate);
     const gross = grossFromNetAndRate(data.netAmount, rate);
+    const allocs = data.projectAllocations;
+    if (allocs?.length) {
+      const err = validateCostOrIncomeAllocationSums(allocs, String(data.netAmount), gross.toString());
+      if (err) return jsonError(err, 400);
+    }
     let pf: { projectId: string | null; projectName: string | null };
     try {
-      pf = await resolveProjectFields(prisma, data.projectId ?? null);
+      pf = await resolveLegacyProjectFieldsFromAllocations(prisma, data.projectId, allocs);
     } catch {
       return jsonError("Nieprawidłowy projekt", 400);
     }
@@ -90,6 +101,7 @@ export async function POST(req: Request) {
         },
         include: { incomeCategory: true, project: true, payments: true },
       });
+      await replaceIncomeInvoiceAllocations(tx, created.id, allocs ?? []);
       if (data.sourcePlannedEventId) {
         try {
           await finalizePlannedToIncomeConversion(tx, data.sourcePlannedEventId, created.id);
@@ -108,7 +120,12 @@ export async function POST(req: Request) {
     await syncIncomeInvoiceStatus(row.id);
     const fresh = await prisma.incomeInvoice.findUnique({
       where: { id: row.id },
-      include: { incomeCategory: true, project: true, payments: { orderBy: { paymentDate: "asc" } } },
+      include: {
+        incomeCategory: true,
+        project: true,
+        payments: { orderBy: { paymentDate: "asc" } },
+        projectAllocations: { include: { project: { select: { id: true, name: true, code: true } } } },
+      },
     });
     return jsonData(fresh ?? row, { status: 201 });
   } catch (e) {

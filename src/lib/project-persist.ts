@@ -1,8 +1,10 @@
-import type { PrismaClient } from "@prisma/client";
+import type { Prisma, PrismaClient } from "@prisma/client";
+
+type ProjectDb = PrismaClient | Prisma.TransactionClient;
 
 /** Zapis spójny: projectId + projectName (denormalizacja legacy dla starych odczytów). */
 export async function resolveProjectFields(
-  db: PrismaClient,
+  db: ProjectDb,
   projectId: string | null | undefined,
 ): Promise<{ projectId: string | null; projectName: string | null }> {
   if (projectId === null || projectId === undefined) {

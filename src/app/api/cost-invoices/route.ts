@@ -7,8 +7,9 @@ import { buildCostWhere } from "@/lib/prisma-list-filters";
 import type { VatRatePct } from "@/lib/vat-rate";
 import { ensureClosingCostPaymentIfFullySettled } from "@/lib/cashflow/invoice-auto-settlement";
 import { syncCostInvoiceStatus } from "@/lib/invoice-status-sync";
-import { resolveProjectFields } from "@/lib/project-persist";
 import { finalizePlannedToCostConversion } from "@/lib/planned-event-conversion";
+import { replaceCostInvoiceAllocations, resolveLegacyProjectFieldsFromAllocations } from "@/lib/project-allocations/persist";
+import { validateCostOrIncomeAllocationSums } from "@/lib/project-allocations/validate";
 import { ZodError } from "zod";
 
 const sortable = new Set([
@@ -44,7 +45,12 @@ export async function GET(req: Request) {
   const rows = await prisma.costInvoice.findMany({
     where,
     orderBy: { [sort]: order },
-    include: { expenseCategory: true, project: true, payments: { orderBy: { paymentDate: "asc" } } },
+    include: {
+      expenseCategory: true,
+      project: true,
+      payments: { orderBy: { paymentDate: "asc" } },
+      projectAllocations: { include: { project: { select: { id: true, name: true, code: true } } } },
+    },
   });
   return jsonData(rows);
 }
@@ -67,9 +73,14 @@ export async function POST(req: Request) {
     });
     if (!resolved.ok) return jsonError(resolved.message);
     const { net, vat, gross, storedVatRate } = resolved.amounts;
+    const allocs = data.projectAllocations;
+    if (allocs?.length) {
+      const err = validateCostOrIncomeAllocationSums(allocs, net.toString(), gross.toString());
+      if (err) return jsonError(err, 400);
+    }
     let pf: { projectId: string | null; projectName: string | null };
     try {
-      pf = await resolveProjectFields(prisma, data.projectId ?? null);
+      pf = await resolveLegacyProjectFieldsFromAllocations(prisma, data.projectId, allocs);
     } catch {
       return jsonError("Nieprawidłowy projekt", 400);
     }
@@ -97,6 +108,7 @@ export async function POST(req: Request) {
         },
         include: { expenseCategory: true, project: true, payments: true },
       });
+      await replaceCostInvoiceAllocations(tx, created.id, allocs ?? []);
       if (data.sourcePlannedEventId) {
         try {
           await finalizePlannedToCostConversion(tx, data.sourcePlannedEventId, created.id);
@@ -115,7 +127,12 @@ export async function POST(req: Request) {
     await syncCostInvoiceStatus(row.id);
     const fresh = await prisma.costInvoice.findUnique({
       where: { id: row.id },
-      include: { expenseCategory: true, project: true, payments: { orderBy: { paymentDate: "asc" } } },
+      include: {
+        expenseCategory: true,
+        project: true,
+        payments: { orderBy: { paymentDate: "asc" } },
+        projectAllocations: { include: { project: { select: { id: true, name: true, code: true } } } },
+      },
     });
     return jsonData(fresh ?? row, { status: 201 });
   } catch (e) {

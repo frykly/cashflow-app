@@ -27,7 +27,11 @@ export function buildIncomeWhere(sp: URLSearchParams): Prisma.IncomeInvoiceWhere
   if (status) filters.push({ status });
 
   const projectId = sp.get("projectId")?.trim();
-  if (projectId) filters.push({ projectId });
+  if (projectId) {
+    filters.push({
+      OR: [{ projectId }, { projectAllocations: { some: { projectId } } }],
+    });
+  }
 
   const categoryId = sp.get("categoryId")?.trim();
   if (categoryId) filters.push({ incomeCategoryId: categoryId });
@@ -82,7 +86,11 @@ export function buildCostWhere(sp: URLSearchParams): Prisma.CostInvoiceWhereInpu
   if (status) filters.push({ status });
 
   const projectId = sp.get("projectId")?.trim();
-  if (projectId) filters.push({ projectId });
+  if (projectId) {
+    filters.push({
+      OR: [{ projectId }, { projectAllocations: { some: { projectId } } }],
+    });
+  }
 
   const uncategorized = sp.get("uncategorized") === "1";
   if (uncategorized) {
@@ -151,7 +159,11 @@ export function buildPlannedWhere(sp: URLSearchParams): Prisma.PlannedFinancialE
   if (status) filters.push({ status });
 
   const projectId = sp.get("projectId")?.trim();
-  if (projectId) filters.push({ projectId });
+  if (projectId) {
+    filters.push({
+      OR: [{ projectId }, { projectAllocations: { some: { projectId } } }],
+    });
+  }
 
   const type = sp.get("type")?.trim();
   if (type === "INCOME" || type === "EXPENSE") filters.push({ type });

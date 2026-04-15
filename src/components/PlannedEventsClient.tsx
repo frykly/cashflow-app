@@ -11,7 +11,7 @@ import { readApiErrorBody } from "@/lib/api-client";
 import { normalizeDecimalInput } from "@/lib/decimal-input";
 import { useListQuery } from "@/hooks/useListQuery";
 import { isCalendarOverdue } from "@/lib/cashflow/overdue";
-import { projectDisplayLabel } from "@/lib/project-display";
+import { projectLinkTargetId, projectListLabel } from "@/lib/project-display";
 
 type ProjectOption = { id: string; name: string; isActive: boolean; code?: string | null };
 
@@ -34,6 +34,14 @@ type Row = {
   projectName?: string | null;
   convertedToIncomeInvoice?: { id: string; invoiceNumber: string } | null;
   convertedToCostInvoice?: { id: string; documentNumber: string } | null;
+  projectAllocations?: {
+    id: string;
+    projectId: string;
+    amount: unknown;
+    amountVat: unknown;
+    description: string;
+    project?: { id: string; name: string } | null;
+  }[];
 };
 
 type Draft = Omit<Row, "id"> & { id?: string };
@@ -112,6 +120,10 @@ export function PlannedEventsClient({ initialQueryString = "" }: { initialQueryS
   const [expenseCats, setExpenseCats] = useState<Cat[]>([]);
   const [importMsg, setImportMsg] = useState<string | null>(null);
   const [projects, setProjects] = useState<ProjectOption[]>([]);
+  const [projectAllocMode, setProjectAllocMode] = useState<"simple" | "multi">("simple");
+  const [projectAllocRows, setProjectAllocRows] = useState<
+    { projectId: string; amount: string; amountVat: string; description: string }[]
+  >([]);
 
   const expenseCatsForForm = useMemo(() => {
     const sel = editing.expenseCategoryId;
@@ -238,9 +250,13 @@ export function PlannedEventsClient({ initialQueryString = "" }: { initialQueryS
   function closeModal() {
     setOpen(false);
     setFormError(null);
+    setProjectAllocMode("simple");
+    setProjectAllocRows([]);
   }
 
   function openNew() {
+    setProjectAllocMode("simple");
+    setProjectAllocRows([]);
     setEditing(emptyDraft());
     setFormError(null);
     setOpen(true);
@@ -255,6 +271,21 @@ export function PlannedEventsClient({ initialQueryString = "" }: { initialQueryS
       amount: String(r.amount),
       amountVat: r.amountVat != null ? String(r.amountVat) : "0",
     });
+    const pa = r.projectAllocations;
+    if (pa && pa.length > 0) {
+      setProjectAllocMode("multi");
+      setProjectAllocRows(
+        pa.map((a) => ({
+          projectId: a.projectId,
+          amount: String(a.amount),
+          amountVat: String(a.amountVat ?? "0"),
+          description: a.description ?? "",
+        })),
+      );
+    } else {
+      setProjectAllocMode("simple");
+      setProjectAllocRows([]);
+    }
     setFormError(null);
     setOpen(true);
   }
@@ -298,6 +329,8 @@ export function PlannedEventsClient({ initialQueryString = "" }: { initialQueryS
           d.title = pn ? `Projekt: ${pn}` : d.title;
           if (pc) d.description = d.description ? `${d.description} · Numer zlecenia: ${pc}` : `Numer zlecenia: ${pc}`;
         }
+        setProjectAllocMode("simple");
+        setProjectAllocRows([]);
         setEditing(d);
         setFormError(null);
         setOpen(true);
@@ -329,6 +362,35 @@ export function PlannedEventsClient({ initialQueryString = "" }: { initialQueryS
       return;
     }
     const projectIdPayload = editing.projectId?.trim() || null;
+
+    if (projectAllocMode === "multi") {
+      const ok = projectAllocRows.filter((row) => row.projectId.trim());
+      if (ok.length === 0) {
+        setFormError("Tryb kilku projektów: dodaj co najmniej jeden wiersz z wybranym projektem.");
+        setSaving(false);
+        return;
+      }
+    }
+
+    const allocPart: Record<string, unknown> = (() => {
+      if (projectAllocMode === "multi") {
+        const ok = projectAllocRows.filter((row) => row.projectId.trim());
+        return {
+          projectAllocations: ok.map((row) => ({
+            projectId: row.projectId,
+            amount: normalizeDecimalInput(row.amount),
+            amountVat: normalizeDecimalInput(row.amountVat ?? "0"),
+            description: row.description.trim(),
+          })),
+        };
+      }
+      if (editing.id) return { projectAllocations: [] as never[] };
+      return {};
+    })();
+
+    const projectField =
+      projectAllocMode === "multi" ? { projectId: null } : { projectId: projectIdPayload };
+
     const body = {
       type: editing.type,
       title: editing.title,
@@ -338,9 +400,10 @@ export function PlannedEventsClient({ initialQueryString = "" }: { initialQueryS
       plannedDate,
       status: editing.status,
       notes: editing.notes,
-      projectId: projectIdPayload,
+      ...projectField,
       incomeCategoryId: editing.type === "INCOME" ? (editing.incomeCategoryId || null) : null,
       expenseCategoryId: editing.type === "EXPENSE" ? (editing.expenseCategoryId || null) : null,
+      ...allocPart,
     };
     const url = editing.id ? `/api/planned-events/${editing.id}` : "/api/planned-events";
     const method = editing.id ? "PATCH" : "POST";
@@ -634,16 +697,25 @@ export function PlannedEventsClient({ initialQueryString = "" }: { initialQueryS
                       {categoryCell(r)}
                     </td>
                     <td className="min-w-0 px-1 py-2 text-xs">
-                      {r.projectId ? (
-                        <Link
-                          href={`/projects/${r.projectId}`}
-                          className="line-clamp-2 break-words font-medium text-emerald-800 underline decoration-emerald-300 underline-offset-2 hover:decoration-emerald-600 dark:text-emerald-300 dark:decoration-emerald-700 dark:hover:decoration-emerald-400"
-                        >
-                          {projectDisplayLabel(r)}
-                        </Link>
-                      ) : (
-                        <span className="text-zinc-500 dark:text-zinc-400">—</span>
-                      )}
+                      {(() => {
+                        const hrefId = projectLinkTargetId({
+                          projectAllocations: r.projectAllocations?.map((a) => ({ projectId: a.projectId })),
+                          projectId: r.projectId,
+                        });
+                        const label = projectListLabel(r);
+                        return hrefId ? (
+                          <Link
+                            href={`/projects/${hrefId}`}
+                            className="line-clamp-2 break-words font-medium text-emerald-800 underline decoration-emerald-300 underline-offset-2 hover:decoration-emerald-600 dark:text-emerald-300 dark:decoration-emerald-700 dark:hover:decoration-emerald-400"
+                          >
+                            {label}
+                          </Link>
+                        ) : label !== "—" ? (
+                          <span className="line-clamp-2 break-words text-zinc-700 dark:text-zinc-300">{label}</span>
+                        ) : (
+                          <span className="text-zinc-500 dark:text-zinc-400">—</span>
+                        );
+                      })()}
                     </td>
                     <td className="min-w-0 whitespace-nowrap px-1 py-2 text-sm font-medium tabular-nums text-zinc-900 dark:text-zinc-100">
                       {formatDate(r.plannedDate)}
@@ -716,18 +788,153 @@ export function PlannedEventsClient({ initialQueryString = "" }: { initialQueryS
               disabled={saving || formLocked}
             />
           </Field>
-          <Field label="Projekt">
-            <ProjectSearchPicker
-              value={editing.projectId ?? null}
-              onChange={(id) => setEditing({ ...editing, projectId: id })}
-              disabled={saving || formLocked}
-            />
-            {!editing.projectId && (editing.projectName ?? "").trim() ? (
-              <p className="mt-1 text-xs text-amber-700 dark:text-amber-400">
-                Legacy: „{(editing.projectName ?? "").trim()}” — wybierz projekt z listy, aby powiązać rekord.
-              </p>
-            ) : null}
-          </Field>
+          <div className="rounded-lg border border-zinc-200 p-3 dark:border-zinc-700">
+            <label className="flex cursor-pointer items-center gap-2 text-sm font-medium text-zinc-800 dark:text-zinc-200">
+              <input
+                type="checkbox"
+                className="size-4 rounded border-zinc-300"
+                checked={projectAllocMode === "multi"}
+                disabled={saving || formLocked}
+                onChange={(e) => {
+                  const on = e.target.checked;
+                  setProjectAllocMode(on ? "multi" : "simple");
+                  if (on) {
+                    setProjectAllocRows((prev) => {
+                      if (prev.length > 0) return prev;
+                      const pid = editing.projectId?.trim();
+                      if (pid) {
+                        return [
+                          {
+                            projectId: pid,
+                            amount: editing.amount,
+                            amountVat: editing.amountVat ?? "0",
+                            description: "",
+                          },
+                        ];
+                      }
+                      return [
+                        {
+                          projectId: "",
+                          amount: editing.amount,
+                          amountVat: editing.amountVat ?? "0",
+                          description: "",
+                        },
+                      ];
+                    });
+                  } else {
+                    setProjectAllocRows([]);
+                  }
+                }}
+              />
+              Alokacja na kilka projektów (suma kwot gł. i VAT = dokument)
+            </label>
+            {projectAllocMode === "multi" ? (
+              <div className="mt-3 space-y-2">
+                {projectAllocRows.map((row, idx) => (
+                  <div
+                    key={idx}
+                    className="grid gap-2 rounded-md border border-zinc-100 p-2 dark:border-zinc-800 sm:grid-cols-2 lg:grid-cols-4"
+                  >
+                    <Field label="Projekt">
+                      <Select
+                        value={row.projectId}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          setProjectAllocRows((rows) => rows.map((x, i) => (i === idx ? { ...x, projectId: v } : x)));
+                        }}
+                        disabled={saving || formLocked}
+                      >
+                        <option value="">—</option>
+                        {projects
+                          .slice()
+                          .sort((a, b) => Number(b.isActive) - Number(a.isActive) || a.name.localeCompare(b.name, "pl"))
+                          .map((p) => (
+                            <option key={p.id} value={p.id}>
+                              {p.name}
+                            </option>
+                          ))}
+                      </Select>
+                    </Field>
+                    <Field label="Kwota gł. (alokacja)">
+                      <Input
+                        value={row.amount}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          setProjectAllocRows((rows) => rows.map((x, i) => (i === idx ? { ...x, amount: v } : x)));
+                        }}
+                        disabled={saving || formLocked}
+                      />
+                    </Field>
+                    <Field label="VAT (alokacja)">
+                      <Input
+                        value={row.amountVat}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          setProjectAllocRows((rows) => rows.map((x, i) => (i === idx ? { ...x, amountVat: v } : x)));
+                        }}
+                        disabled={saving || formLocked}
+                      />
+                    </Field>
+                    <Field label="Notatka (opcjonalnie)">
+                      <Input
+                        value={row.description}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          setProjectAllocRows((rows) => rows.map((x, i) => (i === idx ? { ...x, description: v } : x)));
+                        }}
+                        disabled={saving || formLocked}
+                      />
+                    </Field>
+                  </div>
+                ))}
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    className="!text-xs"
+                    disabled={saving || formLocked}
+                    onClick={() =>
+                      setProjectAllocRows((rows) => [
+                        ...rows,
+                        {
+                          projectId: "",
+                          amount: editing.amount,
+                          amountVat: editing.amountVat ?? "0",
+                          description: "",
+                        },
+                      ])
+                    }
+                  >
+                    + Wiersz
+                  </Button>
+                  {projectAllocRows.length > 1 ? (
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      className="!text-xs"
+                      disabled={saving || formLocked}
+                      onClick={() => setProjectAllocRows((rows) => rows.slice(0, -1))}
+                    >
+                      Usuń ostatni
+                    </Button>
+                  ) : null}
+                </div>
+              </div>
+            ) : (
+              <Field label="Projekt">
+                <ProjectSearchPicker
+                  value={editing.projectId ?? null}
+                  onChange={(id) => setEditing({ ...editing, projectId: id })}
+                  disabled={saving || formLocked}
+                />
+                {!editing.projectId && (editing.projectName ?? "").trim() ? (
+                  <p className="mt-1 text-xs text-amber-700 dark:text-amber-400">
+                    Legacy: „{(editing.projectName ?? "").trim()}” — wybierz projekt z listy, aby powiązać rekord.
+                  </p>
+                ) : null}
+              </Field>
+            )}
+          </div>
           <div className="grid gap-3 sm:grid-cols-2">
             <Field label="Typ">
               <Select
