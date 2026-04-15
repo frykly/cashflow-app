@@ -84,6 +84,8 @@ export async function POST(req: Request) {
 
   const filledLabels = filledFieldKeys.map((k) => KEY_LABEL[k] ?? k);
 
+  console.log("[invoice-pdf-e2e-api-response]", values);
+
   const body: InvoicePdfDraftResponse = {
     warnings,
     filledFieldKeys,

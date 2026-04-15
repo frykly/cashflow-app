@@ -387,6 +387,7 @@ export function IncomeInvoicesClient({ initialQueryString = "" }: { initialQuery
   }
 
   function applyIncomePdfDraft(res: InvoicePdfDraftResponse) {
+    console.log("[invoice-pdf-e2e-ui-before]", res);
     const v = res.values;
     setEditing((prev) => {
       const next = { ...prev };
@@ -399,12 +400,15 @@ export function IncomeInvoicesClient({ initialQueryString = "" }: { initialQuery
         next.plannedIncomeDate = v.paymentDueDate;
       }
       if (v.documentDate && !v.issueDate) next.issueDate = v.documentDate;
-      if (v.netAmount && v.vatAmount && v.grossAmount) {
-        next.netAmount = v.netAmount;
-        next.vatAmount = v.vatAmount;
-        next.grossAmount = v.grossAmount;
-        if (v.vatRate != null) next.vatRate = v.vatRate;
-      }
+      if (v.netAmount) next.netAmount = v.netAmount;
+      if (v.vatAmount) next.vatAmount = v.vatAmount;
+      if (v.grossAmount) next.grossAmount = v.grossAmount;
+      if (v.vatRate != null && v.netAmount && v.vatAmount) next.vatRate = v.vatRate;
+      console.log("[invoice-pdf-e2e-ui-after]", {
+        net: next.netAmount,
+        vat: next.vatAmount,
+        gross: next.grossAmount,
+      });
       return next;
     });
     if (res.values.netAmount) setAmountEntryMode("net");

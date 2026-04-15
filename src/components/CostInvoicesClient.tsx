@@ -532,12 +532,10 @@ export function CostInvoicesClient({ initialQueryString = "" }: { initialQuerySt
         next.paymentDueDate = v.paymentDueDate;
         next.plannedPaymentDate = v.paymentDueDate;
       }
-      if (v.netAmount && v.vatAmount && v.grossAmount) {
-        next.netAmount = v.netAmount;
-        next.vatAmount = v.vatAmount;
-        next.grossAmount = v.grossAmount;
-        if (v.vatRate != null) next.vatRate = v.vatRate;
-      }
+      if (v.netAmount) next.netAmount = v.netAmount;
+      if (v.vatAmount) next.vatAmount = v.vatAmount;
+      if (v.grossAmount) next.grossAmount = v.grossAmount;
+      if (v.vatRate != null && v.netAmount && v.vatAmount) next.vatRate = v.vatRate;
       return next;
     });
     if (res.values.netAmount) setAmountEntryMode("net");

@@ -1,8 +1,56 @@
-import { amountsFromGrossRate, inferVatRateFromAmounts, type VatRatePct } from "@/lib/vat-rate";
-import { normalizeDecimalInput } from "@/lib/decimal-input";
+import { inferVatRateFromAmounts, type VatRatePct } from "@/lib/vat-rate";
 import type { InvoicePdfParsedValues } from "./types";
+import { extractPlMoneyTokens } from "./pl-money";
 
 const EPS = 0.05;
+
+/**
+ * pdf-parse często skleja „12 040,82” + „2” + „769,39” → „12 040,822 769,39” (fałszywy milion).
+ * Wstawia spację przed pojedynczą cyfrą między groszami a kolejną kwotą.
+ */
+function fixGluedPlTotals(s: string): string {
+  return s.replace(
+    /(\d{1,3}(?:\s+\d{3})+,\d{2})(\d)\s+(\d{3},\d{2})/g,
+    "$1 $2 $3",
+  );
+}
+
+/** Pierwsza kwota z linii „Łącznie” (na realnych PDF brutto jest tu, a „Do zapłaty:” bywa puste / pod „Słownie”). */
+function extractGrossFromLacznie(lines: string[]): number | null {
+  for (const line of lines) {
+    if (!/łącznie/i.test(line)) continue;
+    const ts = extractPlMoneyTokens(line);
+    if (ts[0]) return ts[0].value;
+  }
+  return null;
+}
+
+/** Sam numer w formacie RRRR/MM/NN… — tylko dopasowanie, nie cała linia. */
+const INVOICE_NUM_STRUCTURED = /\b(\d{4})\/(\d{2})\/(\d+)\b/;
+
+function normalizeInvoiceNumberMatch(m: RegExpMatchArray): string {
+  return `${m[1]}/${m[2]}/${m[3]}`;
+}
+
+/** Linie wyraźnie niebędące nagłówkiem numeru (np. opis pozycji) — pomiń przy szukaniu numeru. */
+function isBlockedLineForInvoiceNumber(line: string): boolean {
+  const low = line.toLowerCase();
+  if (/rozliczenie\s+budow|rozliczenie\s+budowy/.test(low)) return true;
+  return false;
+}
+
+/**
+ * Wyłącznie match `\d{4}/\d{2}/\d+` — pierwsze sensowne wystąpienie spoza zablokowanych linii.
+ */
+function extractInvoiceNumber(text: string): string | null {
+  const lines = text.split(/\n/).map((l) => l.trim());
+  for (const line of lines) {
+    if (isBlockedLineForInvoiceNumber(line)) continue;
+    const m = line.match(INVOICE_NUM_STRUCTURED);
+    if (m) return normalizeInvoiceNumberMatch(m);
+  }
+  return null;
+}
 
 function ymdFromDmy(d: number, mo: number, y: number): string | null {
   if (!y || mo < 1 || mo > 12 || d < 1 || d > 31) return null;
@@ -10,151 +58,245 @@ function ymdFromDmy(d: number, mo: number, y: number): string | null {
   return `${y}-${pad(mo)}-${pad(d)}`;
 }
 
-/** Pierwsza sensowna data przy etykiecie (jedna linia). */
-function dateNearLabel(text: string, labelStr: string): string | null {
-  const re = new RegExp(labelStr + "\\s*[:\\s]+(\\d{1,2})[.\\-/](\\d{1,2})[.\\-/](\\d{4})", "i");
-  const m = text.match(re);
-  if (!m) return null;
-  return ymdFromDmy(Number(m[1]), Number(m[2]), Number(m[3]));
-}
-
-function parsePlAmountToken(raw: string): number | null {
-  const t = raw.replace(/\s/g, "").replace(",", ".");
-  const n = Number(normalizeDecimalInput(t));
-  return Number.isFinite(n) ? n : null;
-}
-
-/** Pierwsza kwota z linii (PL). */
-function firstAmountInLine(line: string): number | null {
-  const re = /(\d{1,3}(?:\s\d{3})*(?:,\d{2})?|\d+(?:,\d{2}))/g;
-  let best: number | null = null;
+function firstDateDmyInSegment(segment: string): string | null {
+  const re = /(\d{1,2})[.\-/](\d{1,2})[.\-/](\d{4})/g;
   let m: RegExpExecArray | null;
-  while ((m = re.exec(line)) !== null) {
-    const n = parsePlAmountToken(m[1]!);
-    if (n != null && n > 0 && (best == null || n > best)) best = n;
+  while ((m = re.exec(segment)) !== null) {
+    const ymd = ymdFromDmy(Number(m[1]), Number(m[2]), Number(m[3]));
+    if (ymd) return ymd;
   }
-  return best;
+  return null;
 }
 
-function findLabeledAmount(text: string, patterns: RegExp[]): number | null {
-  const lines = text.split(/\n/);
+function findDateOnLabeledLine(
+  lines: string[],
+  labelMatchers: RegExp[],
+): string | null {
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i] ?? "";
-    for (const p of patterns) {
-      if (p.test(line)) {
-        let n = firstAmountInLine(line);
-        if (n == null && i + 1 < lines.length) n = firstAmountInLine(lines[i + 1]!);
-        if (n != null) return n;
+    const hit = labelMatchers.some((re) => re.test(line));
+    if (!hit) continue;
+    const onLine = firstDateDmyInSegment(line);
+    if (onLine) return onLine;
+    const next = lines[i + 1] ?? "";
+    const onNext = firstDateDmyInSegment(next);
+    if (onNext) return onNext;
+  }
+  return null;
+}
+
+function moneyValuesFromLine(segment: string): number[] {
+  return extractPlMoneyTokens(segment).map((t) => t.value);
+}
+
+/** PDF często dzieli „Suma:” i kwoty na dwie linie — scalaj, aż będzie ≥3 kwoty lub limit. */
+function mergeLabelWithFollowingAmountLines(lines: string[], startIdx: number, maxExtra = 3): string {
+  let s = (lines[startIdx] ?? "").trim();
+  let j = startIdx;
+  let extra = 0;
+  while (extra < maxExtra && j + 1 < lines.length && moneyValuesFromLine(s).length < 3) {
+    const next = (lines[j + 1] ?? "").trim();
+    if (!next) {
+      j++;
+      extra++;
+      continue;
+    }
+    if (/^(nabywca|sprzedawca|odbiorca|dostawca|wystawca|nip\s*[:/]|do\s+zapłaty|do\s+zaplaty|pozycj|strona\s+\d)/i.test(next)) {
+      break;
+    }
+    s = `${s} ${next}`.trim();
+    j++;
+    extra++;
+  }
+  return s;
+}
+
+function firstAmountAfterDoZaplaty(line: string): number | null {
+  const re = /do\s+zapłaty|do\s+zaplaty/i;
+  const m = re.exec(line);
+  if (!m || m.index === undefined) return null;
+  const tail = line.slice(m.index + m[0].length);
+  const tailTokens = extractPlMoneyTokens(tail);
+  console.log("[invoice-pdf-money] raw line (Do zapłaty):", line);
+  console.log("[invoice-pdf-money] extracted money tokens:", tailTokens.map((x) => x.raw));
+  const gross = tailTokens[0]?.value ?? null;
+  console.log("[invoice-pdf-money] selected gross token:", gross);
+  if (gross != null) return gross;
+  const lineTokens = extractPlMoneyTokens(line);
+  console.log("[invoice-pdf-money] fallback tokens (full line):", lineTokens.map((x) => x.raw));
+  return lineTokens[0]?.value ?? null;
+}
+
+/** Blok „Suma …” — może obejmować kolejną linię z kwotami. */
+function findSumaSummaryLine(lines: string[]): string | null {
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i] ?? "";
+    if (!/\bsuma\b/i.test(line)) continue;
+    if (/podsumowanie/i.test(line)) continue;
+    const merged = mergeLabelWithFollowingAmountLines(lines, i);
+    if (moneyValuesFromLine(merged).length >= 3) return merged;
+  }
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i] ?? "";
+    if (!/\bsuma\b/i.test(line) || /podsumowanie/i.test(line)) continue;
+    return mergeLabelWithFollowingAmountLines(lines, i);
+  }
+  return null;
+}
+
+/** Gdy brak słowa „Suma” — „Razem”/„Łącznie” + opcjonalnie następna linia. */
+function findSumaLikeTotalLine(lines: string[]): string | null {
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i] ?? "";
+    if (/podsumowanie/i.test(line)) continue;
+    if (!/(?:\brazem\b|łącznie|lacznie)/i.test(line)) continue;
+    const merged = mergeLabelWithFollowingAmountLines(lines, i);
+    if (moneyValuesFromLine(merged).length >= 3) return merged;
+  }
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i] ?? "";
+    if (/podsumowanie/i.test(line)) continue;
+    if (!/(?:\brazem\b|łącznie|lacznie)/i.test(line)) continue;
+    return mergeLabelWithFollowingAmountLines(lines, i);
+  }
+  return null;
+}
+
+const SUM_CHECK = (a: number, b: number, c: number) =>
+  Math.abs(a + b - c) <= Math.max(EPS, c * 1e-9);
+
+/**
+ * Z linii „Suma …” — trzy kolejne kwoty spełniające net+VAT≈brutto;
+ * jeśli jest „Do zapłaty”, można podmienić brutto na kwotę z niej, gdy net+VAT się zgadza.
+ */
+function parseNetVatGrossFromSumaLine(
+  line: string,
+  grossFromDoZaplaty: number | null,
+): { net: number; vat: number; gross: number } | null {
+  const amounts = moneyValuesFromLine(line);
+  if (amounts.length < 3) return null;
+
+  for (let i = 0; i <= amounts.length - 3; i++) {
+    const net = amounts[i]!;
+    const vat = amounts[i + 1]!;
+    const gross = amounts[i + 2]!;
+    if (!SUM_CHECK(net, vat, gross)) continue;
+    if (
+      grossFromDoZaplaty != null &&
+      Math.abs(net + vat - grossFromDoZaplaty) <= Math.max(0.06, grossFromDoZaplaty * 1e-6)
+    ) {
+      return { net, vat, gross: grossFromDoZaplaty };
+    }
+    return { net, vat, gross };
+  }
+
+  const net = amounts[amounts.length - 3]!;
+  const vat = amounts[amounts.length - 2]!;
+  const gross = amounts[amounts.length - 1]!;
+  if (SUM_CHECK(net, vat, gross)) {
+    if (
+      grossFromDoZaplaty != null &&
+      Math.abs(net + vat - grossFromDoZaplaty) <= Math.max(0.06, grossFromDoZaplaty * 1e-6)
+    ) {
+      return { net, vat, gross: grossFromDoZaplaty };
+    }
+    return { net, vat, gross };
+  }
+
+  if (grossFromDoZaplaty != null) {
+    const g = grossFromDoZaplaty;
+    for (let i = 0; i <= amounts.length - 2; i++) {
+      const n = amounts[i]!;
+      const v = amounts[i + 1]!;
+      if (Math.abs(n + v - g) <= Math.max(0.06, g * 1e-6)) {
+        return { net: n, vat: v, gross: g };
       }
     }
   }
+
   return null;
 }
 
-function extractInvoiceNumber(text: string): string | null {
-  const patterns: RegExp[] = [
-    /Numer\s+faktury\s*[:\s]+([A-Z0-9][A-Z0-9\/\-\s]{1,45}?)(?:\s*$|\s*\n)/i,
-    /Faktura\s+(?:VAT\s+)?(?:nr\.?|Nr\.?)\s*[:\s]+([A-Z0-9][A-Z0-9\/\-\s]{1,45}?)(?:\s*$|\s*\n)/i,
-    /\b(FV\/\d{4}\/\d{1,2}\/\d+)\b/i,
-    /\b(FA\/\d{4}\/\d{1,2}\/\d+)\b/i,
-    /\b(FV\s*\d+\/\d+\/\d+)\b/i,
-  ];
-  for (const p of patterns) {
-    const m = text.match(p);
-    if (m?.[1]) {
-      const s = m[1].replace(/\s+/g, " ").trim();
-      if (s.length >= 3 && s.length <= 80) return s;
+function sanitizePartyName(raw: string | null): string | null {
+  if (!raw) return null;
+  const s = raw
+    .replace(/^[\s„""'«»]+|[\s„""'«»]+$/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (s.length < 2) return null;
+  return s.slice(0, 300);
+}
+
+/**
+ * Jedna linia po nagłówku sekcji (np. Nabywca): treść po `:` na tej samej linii, inaczej pierwsza następna sensowna.
+ */
+function firstLineAfterPartyHeader(
+  lines: string[],
+  header: "nabywca" | "odbiorca" | "sprzedawca" | "dostawca" | "wystawca",
+): string | null {
+  const startRe = new RegExp(`^\\s*${header}\\s*(?:[:\\s]|$)`, "i");
+  const captureRe = new RegExp(`^\\s*${header}\\s*[:\\s]\\s*(.+)$`, "i");
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = (lines[i] ?? "").trim();
+    if (!startRe.test(line)) continue;
+
+    const cap = line.match(captureRe);
+    const rest = cap?.[1]?.trim() ?? "";
+    if (
+      rest.length >= 2 &&
+      !/^nip\s*[:/]/i.test(rest) &&
+      !/^ul\.?\s/i.test(rest) &&
+      !/^\d{2}-\d{3}\s/.test(rest)
+    ) {
+      return sanitizePartyName(rest);
     }
-  }
-  return null;
-}
 
-function firstMeaningfulLineAfter(header: string, text: string): string | null {
-  const low = text.toLowerCase();
-  const idx = low.indexOf(header.toLowerCase());
-  if (idx < 0) return null;
-  const tail = text.slice(idx + header.length);
-  const lines = tail
-    .split(/\n/)
-    .map((l) => l.trim())
-    .filter((l) => l.length > 2);
-  for (const line of lines.slice(0, 8)) {
-    if (/^nip\s*[:/]/i.test(line)) continue;
-    if (/^\d{3}-\d{3}-\d{2}-\d{2}$/.test(line.replace(/\s/g, ""))) continue;
-    if (/^ul\.|^\d{2}-\d{3}\s/i.test(line)) continue;
-    if (line.length > 120) continue;
-    return line.slice(0, 200);
+    const next = (lines[i + 1] ?? "").trim();
+    if (
+      next.length >= 2 &&
+      !/^nip\s*[:/]/i.test(next) &&
+      !/^ul\.?\s/i.test(next) &&
+      !/^\d{2}-\d{3}\s/.test(next)
+    ) {
+      return sanitizePartyName(next);
+    }
   }
   return null;
 }
 
 function pickParty(text: string, kind: "cost" | "income"): string | null {
+  const lines = text.split(/\n/).map((l) => l.trim());
   if (kind === "cost") {
     return (
-      firstMeaningfulLineAfter("sprzedawca", text) ??
-      firstMeaningfulLineAfter("dostawca", text) ??
-      firstMeaningfulLineAfter("wystawca", text)
+      firstLineAfterPartyHeader(lines, "sprzedawca") ??
+      firstLineAfterPartyHeader(lines, "dostawca") ??
+      firstLineAfterPartyHeader(lines, "wystawca")
     );
   }
-  return firstMeaningfulLineAfter("nabywca", text) ?? firstMeaningfulLineAfter("odbiorca", text);
+  return firstLineAfterPartyHeader(lines, "nabywca") ?? firstLineAfterPartyHeader(lines, "odbiorca");
 }
 
-function reconcileAmounts(
-  net: number | null,
-  vat: number | null,
-  gross: number | null,
-  warnings: string[],
-): { net: string; vat: string; gross: string; vatRate: VatRatePct } | null {
-  if (gross != null && gross > 0 && net != null && vat != null) {
-    if (Math.abs(net + vat - gross) <= EPS) {
-      const rate = inferVatRateFromAmounts(net, vat);
-      return {
-        net: net.toFixed(2),
-        vat: vat.toFixed(2),
-        gross: gross.toFixed(2),
-        vatRate: rate,
-      };
-    }
-    warnings.push("Kwoty netto, VAT i brutto z PDF nie sumują się — pominięto automatyczne uzupełnianie kwot (sprawdź ręcznie).");
-  }
-
-  if (gross != null && gross > 0 && net != null && vat == null) {
-    const impliedVat = gross - net;
-    if (impliedVat >= -EPS) {
-      const rate = inferVatRateFromAmounts(net, Math.max(0, impliedVat));
-      const { netAmount, vatAmount } = amountsFromGrossRate(gross.toFixed(2), rate);
-      return { net: netAmount, vat: vatAmount, gross: gross.toFixed(2), vatRate: rate };
-    }
-  }
-
-  if (gross != null && gross > 0) {
-    const rate: VatRatePct = 23;
-    const { netAmount, vatAmount } = amountsFromGrossRate(gross.toFixed(2), rate);
-    warnings.push("Domyślnie przyjęto stawkę VAT 23% do rozłożenia brutto (PDF nie dostarczył pełnego zestawu kwot).");
-    return { net: netAmount, vat: vatAmount, gross: gross.toFixed(2), vatRate: rate };
-  }
-
-  if (net != null && net > 0 && vat != null && vat >= 0) {
-    const g = net + vat;
-    const rate = inferVatRateFromAmounts(net, vat);
-    return { net: net.toFixed(2), vat: vat.toFixed(2), gross: g.toFixed(2), vatRate: rate };
-  }
-
-  return null;
-}
-
-export function parsePolishInvoiceText(text: string, kind: "cost" | "income"): InvoicePdfParsedValues & { warnings: string[]; filledFieldKeys: string[] } {
+export function parsePolishInvoiceText(
+  text: string,
+  kind: "cost" | "income",
+): InvoicePdfParsedValues & { warnings: string[]; filledFieldKeys: string[] } {
   const warnings: string[] = [];
   const filledFieldKeys: string[] = [];
   const out: InvoicePdfParsedValues = {};
 
-  const t = text.replace(/\r/g, "\n");
-  if (t.trim().length < 40) {
+  let normalized = String(text)
+    .replace(/\r\n?/g, "\n")
+    .replace(/[\u00a0\u202f\u2009\u2007\ufeff]/g, " ");
+  normalized = fixGluedPlTotals(normalized);
+  if (normalized.trim().length < 40) {
     warnings.push("Za mało tekstu z PDF (być może skan bez OCR) — wypełnij formularz ręcznie.");
     return { ...out, warnings, filledFieldKeys };
   }
 
-  const invNo = extractInvoiceNumber(t);
+  const lines = normalized.split(/\n/).map((l) => l.trim());
+
+  const invNo = extractInvoiceNumber(normalized);
   if (invNo) {
     if (kind === "cost") {
       out.documentNumber = invNo;
@@ -165,7 +307,7 @@ export function parsePolishInvoiceText(text: string, kind: "cost" | "income"): I
     }
   }
 
-  const party = pickParty(t, kind);
+  const party = pickParty(normalized, kind);
   if (party) {
     if (kind === "cost") {
       out.supplier = party;
@@ -176,11 +318,18 @@ export function parsePolishInvoiceText(text: string, kind: "cost" | "income"): I
     }
   }
 
-  const issue =
-    dateNearLabel(t, "Data\\s+wystawienia") ??
-    dateNearLabel(t, "Data\\s+sprzedaży") ??
-    dateNearLabel(t, "Data\\s+faktury");
-  const due = dateNearLabel(t, "Termin\\s+płatności") ?? dateNearLabel(t, "Płatność\\s+do");
+  const issueDate = findDateOnLabeledLine(lines, [
+    /data\s+wystawienia/i,
+    /data\s+wystawienia\s+faktury/i,
+  ]);
+  const saleDate = findDateOnLabeledLine(lines, [/data\s+sprzedaży/i, /data\s+sprzedazy/i]);
+  const issue = issueDate ?? saleDate;
+  const due = findDateOnLabeledLine(lines, [
+    /termin\s+płatności/i,
+    /termin\s+platnosci/i,
+    /płatność\s+do/i,
+    /platnosc\s+do/i,
+  ]);
 
   if (issue) {
     if (kind === "cost") {
@@ -196,21 +345,125 @@ export function parsePolishInvoiceText(text: string, kind: "cost" | "income"): I
     filledFieldKeys.push("paymentDueDate");
   }
 
-  const netAmt = findLabeledAmount(t, [
-    /razem\s+netto|wartość\s+netto|suma\s+netto|netto\s*$/i,
-    /netto\s+pln/i,
-  ]);
-  const vatAmt = findLabeledAmount(t, [/kwota\s+vat|podatek\s+vat|vat\s+23|vat\s+8/i, /razem\s+vat/i]);
-  const grossAmt = findLabeledAmount(t, [/razem\s+brutto|do\s+zapłaty|kwota\s+brutto|brutto\s+pln/i, /zapłacono|należność/i]);
+  let grossDoZaplaty: number | null = extractGrossFromLacznie(lines);
+  let doZaplatyBlock: string | null = null;
 
-  const rec = reconcileAmounts(netAmt, vatAmt, grossAmt, warnings);
-  if (rec) {
-    out.netAmount = rec.net;
-    out.vatAmount = rec.vat;
-    out.grossAmount = rec.gross;
-    out.vatRate = rec.vatRate;
-    filledFieldKeys.push("netAmount", "vatAmount", "grossAmount", "vatRate");
+  for (let li = 0; li < lines.length; li++) {
+    const line = lines[li] ?? "";
+    if (!/do\s+zapłaty|do\s+zaplaty/i.test(line)) continue;
+    let block = line.trim();
+    let g = firstAmountAfterDoZaplaty(block);
+    if (g == null && li + 1 < lines.length) {
+      const nxt = (lines[li + 1] ?? "").trim();
+      if (!/^słownie:|^numer\s+konta|^\d{2}\s+\d{4}/i.test(nxt)) {
+        block = `${block} ${nxt}`.trim();
+        console.log("[invoice-pdf-money] Do zapłaty merged block (2 lines):", block);
+        g = firstAmountAfterDoZaplaty(block);
+      }
+    }
+    if (g == null) {
+      for (let b = li - 1; b >= Math.max(0, li - 10); b--) {
+        const prev = lines[b] ?? "";
+        if (/łącznie/i.test(prev)) {
+          const ts = extractPlMoneyTokens(prev);
+          if (ts[0]) {
+            g = ts[0].value;
+            console.log("[invoice-pdf-money] brutto z linii przed „Do zapłaty” (Łącznie):", g);
+            break;
+          }
+        }
+        const ts = extractPlMoneyTokens(prev);
+        const big = ts.filter((t) => t.value >= 100);
+        if (big.length) {
+          g = big[big.length - 1]!.value;
+          console.log("[invoice-pdf-money] brutto ze skanu wstecz (linia przed Do zapłaty):", g);
+          break;
+        }
+      }
+    }
+    if (g == null && li + 1 < lines.length) {
+      const nextTok = extractPlMoneyTokens(lines[li + 1] ?? "");
+      if (nextTok[0]) g = nextTok[0]!.value;
+    }
+    doZaplatyBlock = block;
+    if (g != null) {
+      grossDoZaplaty = g;
+      break;
+    }
   }
+  if (grossDoZaplaty == null) {
+    grossDoZaplaty = extractGrossFromLacznie(lines);
+  }
+  console.log("[invoice-pdf-money] Do zapłaty block used:", doZaplatyBlock ?? "(brak)");
+  console.log("[invoice-pdf-money] brutto final (Łącznie / Do zapłaty):", grossDoZaplaty);
+
+  const sumaLine = findSumaSummaryLine(lines) ?? findSumaLikeTotalLine(lines);
+  if (sumaLine) {
+    const st = extractPlMoneyTokens(sumaLine);
+    console.log("[invoice-pdf-money] raw block (Suma / Razem, może łączone linie):", sumaLine);
+    console.log("[invoice-pdf-money] Suma money tokens:", st.map((x) => `${x.raw}=>${x.value}`));
+  }
+  const triple = sumaLine ? parseNetVatGrossFromSumaLine(sumaLine, grossDoZaplaty) : null;
+
+  console.log("[invoice-pdf] numer:", invNo ?? "(brak)");
+  console.log("[invoice-pdf] brutto (Do zapłaty):", grossDoZaplaty ?? "(brak)");
+  console.log("[invoice-pdf] linia Suma:", sumaLine ?? "(brak)");
+  console.log("[invoice-pdf] triple z Suma:", triple);
+
+  if (grossDoZaplaty != null && triple) {
+    const g =
+      Math.abs(triple.gross - grossDoZaplaty) <= Math.max(1, grossDoZaplaty * 0.0001)
+        ? triple.gross
+        : grossDoZaplaty;
+    const net = triple.net;
+    const vat = triple.vat;
+    const sumOk = Math.abs(net + vat - g) <= Math.max(0.06, g * 0.0001);
+    console.log("[invoice-pdf-money] consistency net+vat vs g:", { net, vat, g, sumOk, diff: Math.abs(net + vat - g) });
+    if (sumOk) {
+      out.netAmount = net.toFixed(2);
+      out.vatAmount = vat.toFixed(2);
+      out.grossAmount = g.toFixed(2);
+      out.vatRate = inferVatRateFromAmounts(net, vat);
+      filledFieldKeys.push("netAmount", "vatAmount", "grossAmount", "vatRate");
+    } else {
+      console.log("[invoice-pdf-money] REJECTED triple+doZapłaty: sum check failed");
+      warnings.push(
+        "Kwoty z linii „Suma” i „Do zapłaty” nie są spójne — uzupełniono tylko brutto z „Do zapłaty”.",
+      );
+      out.grossAmount = grossDoZaplaty.toFixed(2);
+      filledFieldKeys.push("grossAmount");
+    }
+  } else if (grossDoZaplaty != null) {
+    warnings.push(
+      "Znaleziono „Do zapłaty”, ale nie udało się odczytać spójnego zestawu netto/VAT z linii „Suma” — uzupełniono tylko brutto.",
+    );
+    out.grossAmount = grossDoZaplaty.toFixed(2);
+    filledFieldKeys.push("grossAmount");
+  } else if (triple) {
+    const { net, vat, gross } = triple;
+    if (Math.abs(net + vat - gross) <= Math.max(0.06, gross * 0.0001)) {
+      out.netAmount = net.toFixed(2);
+      out.vatAmount = vat.toFixed(2);
+      out.grossAmount = gross.toFixed(2);
+      out.vatRate = inferVatRateFromAmounts(net, vat);
+      filledFieldKeys.push("netAmount", "vatAmount", "grossAmount", "vatRate");
+    }
+  }
+
+  console.log("[invoice-pdf-e2e-parse]", {
+    kind,
+    documentNumber: out.documentNumber,
+    invoiceNumber: out.invoiceNumber,
+    supplier: out.supplier,
+    contractor: out.contractor,
+    issueDate: out.issueDate,
+    documentDate: out.documentDate,
+    paymentDueDate: out.paymentDueDate,
+    netAmount: out.netAmount,
+    vatAmount: out.vatAmount,
+    grossAmount: out.grossAmount,
+    warnings,
+  });
 
   return { ...out, warnings, filledFieldKeys: [...new Set(filledFieldKeys)] };
 }
