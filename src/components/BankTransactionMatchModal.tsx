@@ -498,7 +498,7 @@ export function BankTransactionMatchModal({
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" role="dialog">
       <div className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-lg border border-zinc-200 bg-white p-4 shadow-lg dark:border-zinc-700 dark:bg-zinc-900">
         <div className="mb-3 flex items-start justify-between gap-2">
-          <h2 className="text-lg font-semibold text-zinc-900 dark:text-zinc-50">Dopasuj do dokumentu</h2>
+          <h2 className="text-lg font-semibold text-zinc-900 dark:text-zinc-50">Dopasuj do istniejącego dokumentu</h2>
           <button
             type="button"
             onClick={onClose}

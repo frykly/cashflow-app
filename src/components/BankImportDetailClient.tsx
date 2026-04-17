@@ -217,7 +217,7 @@ export function BankImportDetailClient({ importId }: { importId: string }) {
                           }
                           className="rounded border border-emerald-600 bg-white px-2 py-1 text-xs text-emerald-900 hover:bg-emerald-50 disabled:opacity-50 dark:border-emerald-700 dark:bg-zinc-950 dark:text-emerald-200 dark:hover:bg-emerald-950/40"
                         >
-                          Dopasuj do dokumentu
+                          Dopasuj do istniejącego dokumentu
                         </button>
                       ) : null}
                       <button
@@ -227,7 +227,7 @@ export function BankImportDetailClient({ importId }: { importId: string }) {
                         className="rounded border border-blue-300 bg-white px-2 py-1 text-xs text-blue-900 hover:bg-blue-50 disabled:opacity-50 dark:border-blue-800 dark:bg-zinc-950 dark:text-blue-200 dark:hover:bg-blue-950/40"
                         title={!createOk ? "Powiązanie z kosztem już istnieje lub status blokuje" : undefined}
                       >
-                        Utwórz koszt…
+                        Utwórz nowy koszt
                       </button>
                       <button
                         type="button"

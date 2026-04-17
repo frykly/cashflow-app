@@ -17,22 +17,28 @@ export async function GET(req: Request) {
     const qPicker = searchParams.get("q")?.trim() ?? "";
     const selectedId = searchParams.get("selectedId")?.trim();
     const sortByCode = searchParams.get("sort") === "code";
+    /** Koszty z importu: wyszukaj także nieaktywne / zakończone projekty. */
+    const includeInactive = searchParams.get("includeInactive") === "1";
 
     const where: Prisma.ProjectWhereInput = qPicker
       ? {
-          isActive: true,
+          ...(!includeInactive ? { isActive: true } : {}),
           OR: [
             { name: { contains: qPicker } },
             { code: { contains: qPicker } },
             { clientName: { contains: qPicker } },
           ],
         }
-      : { isActive: true };
+      : includeInactive
+        ? {}
+        : { isActive: true };
+
+    const takeCap = sortByCode || includeInactive ? 250 : 60;
 
     let rows = await prisma.project.findMany({
       where,
       ...(sortByCode ? {} : { orderBy: { name: "asc" as const } }),
-      take: sortByCode ? 250 : 60,
+      take: takeCap,
     });
 
     if (sortByCode) {

@@ -243,7 +243,7 @@ export function BankTransactionDetailClient({ importId, transactionId }: Props) 
 
       {canCreateCost(data.status, hasCostLink) ? (
         <Button type="button" onClick={() => setCostOpen(true)}>
-          Utwórz koszt z tej transakcji…
+          Utwórz nowy koszt
         </Button>
       ) : null}
     </div>

@@ -19,6 +19,8 @@ type Props = {
   placeholder?: string;
   /** `code` — sort jak w alokacji wieloprojektowej (numer zlecenia rosnąco); domyślnie po nazwie. */
   listSort?: "name" | "code";
+  /** Wyszukiwarka obejmuje też nieaktywne projekty (np. koszt z importu na zakończony projekt). */
+  includeInactive?: boolean;
 };
 
 export function ProjectSearchPicker({
@@ -27,6 +29,7 @@ export function ProjectSearchPicker({
   disabled,
   placeholder = "Szukaj projektu…",
   listSort = "name",
+  includeInactive = false,
 }: Props) {
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState("");
@@ -43,6 +46,7 @@ export function ProjectSearchPicker({
       const sp = new URLSearchParams({ picker: "1", q: search });
       if (value) sp.set("selectedId", value);
       if (listSort === "code") sp.set("sort", "code");
+      if (includeInactive) sp.set("includeInactive", "1");
         const r = await fetch(`/api/projects?${sp}`);
         const j = await r.json();
         setRows(Array.isArray(j) ? j : []);
@@ -52,7 +56,7 @@ export function ProjectSearchPicker({
         setLoading(false);
       }
     },
-    [value, listSort],
+    [value, listSort, includeInactive],
   );
 
   useEffect(() => {
@@ -67,6 +71,7 @@ export function ProjectSearchPicker({
       try {
         const sp = new URLSearchParams({ picker: "1", q: "", selectedId: value });
         if (listSort === "code") sp.set("sort", "code");
+        if (includeInactive) sp.set("includeInactive", "1");
         const r = await fetch(`/api/projects?${sp}`);
         const j = await r.json();
         if (cancelled) return;
@@ -81,7 +86,7 @@ export function ProjectSearchPicker({
     return () => {
       cancelled = true;
     };
-  }, [value, listSort]);
+  }, [value, listSort, includeInactive]);
 
   useEffect(() => {
     if (!open) return;
@@ -167,7 +172,11 @@ export function ProjectSearchPicker({
             </button>
           ))}
           {!loading && rows.length === 0 ? (
-            <div className="px-3 py-2 text-xs text-zinc-500">Brak wyników (tylko aktywne, dopisz frazę lub wybierz z listy).</div>
+            <div className="px-3 py-2 text-xs text-zinc-500">
+              {includeInactive ?
+                "Brak wyników — dopisz frazę (nazwa, numer zlecenia, klient)."
+              : "Brak wyników (domyślnie aktywne projekty; dopisz frazę lub wybierz z listy)."}
+            </div>
           ) : null}
         </div>
       ) : null}

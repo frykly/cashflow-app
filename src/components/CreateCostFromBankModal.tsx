@@ -14,7 +14,6 @@ import { normalizeDecimalInput } from "@/lib/decimal-input";
 import { decToNumber } from "@/lib/cashflow/money";
 
 type ExpCat = { id: string; name: string; slug: string; isActive?: boolean };
-type Proj = { id: string; name: string; isActive: boolean };
 
 type TxPayload = {
   id: string;
@@ -55,7 +54,6 @@ export function CreateCostFromBankModal({ transactionId, open, onClose, onCreate
   const [err, setErr] = useState<string | null>(null);
   const [tx, setTx] = useState<TxPayload | null>(null);
   const [categories, setCategories] = useState<ExpCat[]>([]);
-  const [projects, setProjects] = useState<Proj[]>([]);
 
   const [documentNumber, setDocumentNumber] = useState("");
   const [supplier, setSupplier] = useState("");
@@ -90,10 +88,9 @@ export function CreateCostFromBankModal({ transactionId, open, onClose, onCreate
     setErr(null);
     void (async () => {
       try {
-        const [rTx, rCat, rProj] = await Promise.all([
+        const [rTx, rCat] = await Promise.all([
           fetch(`/api/bank-transactions/${transactionId}`),
           fetch("/api/expense-categories"),
-          fetch("/api/projects"),
         ]);
         if (!rTx.ok) {
           const j = await rTx.json().catch(() => ({}));
@@ -115,11 +112,9 @@ export function CreateCostFromBankModal({ transactionId, open, onClose, onCreate
         setAllocRows(emptyAllocRows(txJson));
 
         const cats = rCat.ok ? ((await rCat.json()) as ExpCat[]) : [];
-        const projs = rProj.ok ? ((await rProj.json()) as Proj[]) : [];
         const catList = Array.isArray(cats) ? cats : [];
         if (!cancelled) {
           setCategories(catList);
-          setProjects(Array.isArray(projs) ? projs : []);
           if (looksLikeBankFeeDescription(txJson.description)) {
             const sug = suggestBankFeeCategoryId(catList.filter((c) => c.isActive !== false));
             if (sug) setExpenseCategoryId(sug);
@@ -316,6 +311,7 @@ export function CreateCostFromBankModal({ transactionId, open, onClose, onCreate
                           setAllocRows((rows) => rows.map((x, i) => (i === idx ? { ...x, projectId: id ?? "" } : x)))
                         }
                         listSort="code"
+                        includeInactive
                         disabled={saving}
                       />
                     </Field>
@@ -361,18 +357,13 @@ export function CreateCostFromBankModal({ transactionId, open, onClose, onCreate
             ) : (
               <div className="mt-3">
                 <Field label="Projekt">
-                  <Select value={projectId} onChange={(e) => setProjectId(e.target.value)} disabled={saving}>
-                    <option value="">(brak)</option>
-                    {projects
-                      .slice()
-                      .sort((a, b) => Number(b.isActive) - Number(a.isActive) || a.name.localeCompare(b.name, "pl"))
-                      .map((p) => (
-                        <option key={p.id} value={p.id}>
-                          {p.name}
-                          {!p.isActive ? " (nieaktywny)" : ""}
-                        </option>
-                      ))}
-                  </Select>
+                  <ProjectSearchPicker
+                    value={projectId.trim() || null}
+                    onChange={(id) => setProjectId(id ?? "")}
+                    listSort="code"
+                    includeInactive
+                    disabled={saving}
+                  />
                 </Field>
               </div>
             )}
