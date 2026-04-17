@@ -12,6 +12,8 @@ import { normalizeDecimalInput } from "@/lib/decimal-input";
 import { finalizeNewCostPaymentAllocations } from "@/lib/payment-project-allocation/finalize";
 import { inferDocumentNumberFromBankText } from "@/lib/bank-import/parse-document-number";
 import { isExpenseCategoryBankFeesLike, looksLikeBankFeeDescription } from "@/lib/bank-import/bank-fee-heuristic";
+import { finalizePlannedToCostConversion } from "@/lib/planned-event-conversion";
+import { decToNumber } from "@/lib/cashflow/money";
 import { z } from "zod";
 
 /** ID rekordów Prisma to CUID, nie UUID — `.uuid()` odrzucało poprawne kategorie. */
@@ -26,6 +28,8 @@ const createCostBodySchema = z.object({
   description: z.string().max(2000).optional().nullable(),
   expenseCategoryId: optionalCuidLike,
   projectId: z.string().min(1).optional().nullable(),
+  /** Utwórz koszt wg pól z planu; przy zgodności kwoty zamyka zdarzenie planowane (CONVERTED). */
+  plannedEventId: optionalCuidLike,
 });
 
 export async function POST(req: Request, ctx: { params: Promise<{ id: string }> }) {
@@ -95,12 +99,57 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
   const { net, vat, gross, storedVatRate } = resolved.amounts;
 
   const b = parsedBody.data;
+
+  const plannedPe =
+    b.plannedEventId ?
+      await prisma.plannedFinancialEvent.findUnique({
+        where: { id: b.plannedEventId },
+        include: { projectAllocations: { select: { projectId: true } } },
+      })
+    : null;
+
+  if (b.plannedEventId) {
+    if (!plannedPe) return jsonError("Nie znaleziono zdarzenia planowanego", 404);
+    if (plannedPe.type !== "EXPENSE") return jsonError("Tylko planowany koszt (EXPENSE) może być powiązany z importem.", 400);
+    if (plannedPe.status !== "PLANNED") {
+      return jsonError("Zdarzenie planowe musi mieć status PLANNED (np. już skonwertowane).", 400);
+    }
+    if (plannedPe.convertedToCostInvoiceId || plannedPe.convertedToIncomeInvoiceId) {
+      return jsonError("To zdarzenie planowe jest już powiązane z dokumentem księgowym.", 409);
+    }
+  }
+
+  const plannedTotalGrosze = plannedPe
+    ? Math.round((decToNumber(plannedPe.amount as never) + decToNumber(plannedPe.amountVat as never)) * 100)
+    : 0;
+  const closePlannedOnMatch =
+    Boolean(plannedPe) && Math.abs(plannedTotalGrosze - absGrosze) <= 2;
+
   const inferredDoc = inferDocumentNumberFromBankText(fresh.description);
   const docInput = b.documentNumber?.trim();
   const documentNumber = (docInput || inferredDoc || `BANK-${fresh.id.slice(0, 12)}`).slice(0, 120);
-  const description = (b.description?.trim() ?? fresh.description.trim()).slice(0, 2000);
+
+  let projectIdForResolve: string | null = b.projectId?.trim() || null;
+  if (plannedPe && !projectIdForResolve) {
+    const allocs = plannedPe.projectAllocations ?? [];
+    if (allocs.length === 1) projectIdForResolve = allocs[0]!.projectId;
+    else if (allocs.length > 1) projectIdForResolve = plannedPe.projectId ?? allocs[0]?.projectId ?? null;
+    else projectIdForResolve = plannedPe.projectId;
+  }
+
+  let description: string;
+  if (plannedPe && !b.description?.trim()) {
+    description = `${plannedPe.title}${plannedPe.description?.trim() ? `\n${plannedPe.description.trim()}` : ""}`
+      .trim()
+      .slice(0, 2000);
+    if (!description) description = (fresh.description.trim()).slice(0, 2000);
+  } else {
+    description = (b.description?.trim() ?? fresh.description.trim()).slice(0, 2000);
+  }
 
   let expenseCategoryId: string | null = b.expenseCategoryId ?? null;
+  if (plannedPe && !expenseCategoryId) expenseCategoryId = plannedPe.expenseCategoryId;
+
   let categoryRow: { id: string; name: string; slug: string } | null = null;
   if (expenseCategoryId) {
     const cat = await prisma.expenseCategory.findUnique({
@@ -127,20 +176,35 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     (categoryRow && isExpenseCategoryBankFeesLike(categoryRow)) || looksLikeBankFeeDescription(descForHeur);
 
   const supplierTrim = b.supplier?.trim() ?? "";
-  const supplier = (
-    supplierTrim ||
-    (bankFeeContext ? "Bank (opłata lub prowizja)" : fresh.counterpartyName?.trim() || "Wyciąg bankowy")
-  ).slice(0, 500);
+  let supplier: string;
+  if (supplierTrim) {
+    supplier = supplierTrim.slice(0, 500);
+  } else if (plannedPe) {
+    try {
+      const pfS = await resolveProjectFields(prisma, projectIdForResolve);
+      supplier = (pfS.projectName ?? plannedPe.title ?? "Wyciąg bankowy").slice(0, 500);
+    } catch {
+      return jsonError("Nieprawidłowy projekt (plan)", 400);
+    }
+  } else {
+    supplier = (
+      bankFeeContext ? "Bank (opłata lub prowizja)" : fresh.counterpartyName?.trim() || "Wyciąg bankowy"
+    ).slice(0, 500);
+  }
 
   let pf: { projectId: string | null; projectName: string | null };
   try {
-    const pid = b.projectId?.trim() || null;
-    pf = await resolveProjectFields(prisma, pid);
+    pf = await resolveProjectFields(prisma, projectIdForResolve);
   } catch {
     return jsonError("Nieprawidłowy projekt", 400);
   }
 
   const docDate = fresh.bookingDate;
+
+  const plannedMismatchNote =
+    plannedPe && !closePlannedOnMatch ?
+      `Z planu „${plannedPe.title}”: kwota wyciągu ${(absGrosze / 100).toFixed(2)} PLN ≠ suma planu ${(plannedTotalGrosze / 100).toFixed(2)} PLN — zdarzenie planowe pozostaje PLANNED (dopasuj lub zamknij ręcznie).`
+    : "";
 
   const row = await prisma.$transaction(async (trx) => {
     const cost = await trx.costInvoice.create({
@@ -159,7 +223,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
         paid: false,
         actualPaymentDate: null,
         paymentSource: fresh.accountType === "VAT" ? "VAT" : "MAIN",
-        notes: "",
+        notes: plannedMismatchNote.slice(0, 2000),
         projectId: pf.projectId,
         projectName: pf.projectName,
         expenseCategoryId,
@@ -177,6 +241,10 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
       select: { id: true },
     });
     await finalizeNewCostPaymentAllocations(trx, cost.id, pay.id, normalizeDecimalInput(gross.toString()), null);
+
+    if (plannedPe && closePlannedOnMatch) {
+      await finalizePlannedToCostConversion(trx, plannedPe.id, cost.id);
+    }
 
     const bankRow = await trx.bankTransaction.update({
       where: { id: fresh.id },

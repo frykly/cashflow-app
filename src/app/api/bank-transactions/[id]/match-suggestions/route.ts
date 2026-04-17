@@ -1,9 +1,11 @@
 import { prisma } from "@/lib/db";
 import { jsonData } from "@/lib/api/json-response";
 import { jsonError } from "@/lib/api/errors";
-import { rankCosts, rankIncomes } from "@/lib/bank-import/match-suggestions";
+import { rankCosts, rankIncomes, rankPlannedExpenses } from "@/lib/bank-import/match-suggestions";
 
 const RANGE_DAYS = 90;
+/** Planowane koszty mogą mieć datę planu dalej od daty operacji bankowej — szersze okno niż dla faktur. */
+const PLANNED_RANGE_DAYS = 400;
 
 export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> }) {
   const { id } = await ctx.params;
@@ -15,7 +17,12 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
   const end = new Date(tx.bookingDate);
   end.setDate(end.getDate() + RANGE_DAYS);
 
-  const [costRows, incomeRows] = await Promise.all([
+  const plannedStart = new Date(tx.bookingDate);
+  plannedStart.setDate(plannedStart.getDate() - PLANNED_RANGE_DAYS);
+  const plannedEnd = new Date(tx.bookingDate);
+  plannedEnd.setDate(plannedEnd.getDate() + PLANNED_RANGE_DAYS);
+
+  const [costRows, incomeRows, plannedExpenseRows] = await Promise.all([
     prisma.costInvoice.findMany({
       where: { documentDate: { gte: start, lte: end } },
       orderBy: { documentDate: "desc" },
@@ -25,6 +32,20 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
       where: { issueDate: { gte: start, lte: end } },
       orderBy: { issueDate: "desc" },
       take: 400,
+      include: { projectAllocations: { select: { projectId: true, grossAmount: true } } },
+    }),
+    prisma.plannedFinancialEvent.findMany({
+      where: {
+        type: "EXPENSE",
+        status: "PLANNED",
+        plannedDate: { gte: plannedStart, lte: plannedEnd },
+      },
+      orderBy: { plannedDate: "desc" },
+      take: 500,
+      include: {
+        project: { select: { name: true, code: true } },
+        expenseCategory: { select: { name: true } },
+      },
     }),
   ]);
 
@@ -46,8 +67,11 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
       status: tx.status,
     },
     suggestions: {
-      costs: rankCosts(t, costRows, 15, { demote: preferPrimaryDocument === "income" }),
-      incomes: rankIncomes(t, incomeRows, 15, { demote: preferPrimaryDocument === "cost" }),
+      costs: rankCosts(t, costRows, 200, { demote: preferPrimaryDocument === "income" }),
+      incomes: rankIncomes(t, incomeRows, 200, { demote: preferPrimaryDocument === "cost" }),
+      plannedExpenses: rankPlannedExpenses(t, plannedExpenseRows, 200, {
+        demote: preferPrimaryDocument === "income",
+      }),
       preferPrimaryDocument,
     },
   });

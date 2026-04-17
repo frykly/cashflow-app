@@ -1,14 +1,53 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { readApiError } from "@/lib/api-client";
 import { formatPlnFromGrosze } from "@/lib/bank-import/format-pln";
 import { formatMoney, safeFormatDate } from "@/lib/format";
+import { round2 } from "@/lib/cashflow/money";
+import { Input } from "@/components/ui";
 
 type Suggestion = { id: string; score: number; grossAmount: string };
 
 type CostS = Suggestion & { documentNumber: string; supplier: string; documentDate: string };
-type IncS = Suggestion & { invoiceNumber: string; contractor: string; issueDate: string };
+type IncS = Suggestion & {
+  invoiceNumber: string;
+  contractor: string;
+  issueDate: string;
+  vatDestination: string;
+  netAmount: string;
+  vatAmount: string;
+  splitBlocked: boolean;
+};
+
+type PlannedE = {
+  id: string;
+  title: string;
+  plannedDate: string;
+  totalGross: string;
+  score: number;
+  projectLabel: string;
+  categoryName: string | null;
+};
+
+function rowMatchesQuery(q: string, parts: (string | null | undefined)[]): boolean {
+  const needle = q.trim().toLowerCase();
+  if (!needle) return true;
+  const hay = parts.filter(Boolean).join(" ").toLowerCase();
+  return hay.includes(needle);
+}
+
+function defaultBankIncomeSplit(inv: IncS, paymentGrossPln: number): { main: string; vat: string } {
+  if (inv.vatDestination !== "VAT") return { main: "", vat: "" };
+  const G = Number(inv.grossAmount);
+  if (!(G > 0) || !Number.isFinite(paymentGrossPln)) return { main: "0.00", vat: "0.00" };
+  const net = Number(inv.netAmount);
+  const vat = Number(inv.vatAmount);
+  const ratio = paymentGrossPln / G;
+  const vPart = round2(vat * ratio);
+  const mPart = round2(paymentGrossPln - vPart);
+  return { main: mPart.toFixed(2), vat: vPart.toFixed(2) };
+}
 
 type Props = {
   transactionId: string;
@@ -35,9 +74,13 @@ export function BankTransactionMatchModal({
   const [error, setError] = useState<string | null>(null);
   const [costs, setCosts] = useState<CostS[]>([]);
   const [incomes, setIncomes] = useState<IncS[]>([]);
+  const [plannedExpenses, setPlannedExpenses] = useState<PlannedE[]>([]);
+  const [listFilter, setListFilter] = useState("");
   const [busy, setBusy] = useState(false);
   /** Kwota VAT (PLN) dla przychodu bez faktury — puste = 0 */
   const [otherIncomeVat, setOtherIncomeVat] = useState("");
+  /** Podział MAIN/VAT dla wpłaty na fakturę VAT (kwota z transakcji) */
+  const [incomeSplitDraft, setIncomeSplitDraft] = useState<Record<string, { main: string; vat: string }>>({});
 
   const load = useCallback(async () => {
     if (!open || !transactionId) return;
@@ -50,10 +93,11 @@ export function BankTransactionMatchModal({
         return;
       }
       const data = (await res.json()) as {
-        suggestions: { costs: CostS[]; incomes: IncS[] };
+        suggestions: { costs: CostS[]; incomes: IncS[]; plannedExpenses?: PlannedE[] };
       };
       setCosts(data.suggestions.costs ?? []);
       setIncomes(data.suggestions.incomes ?? []);
+      setPlannedExpenses(data.suggestions.plannedExpenses ?? []);
     } finally {
       setLoading(false);
     }
@@ -64,8 +108,60 @@ export function BankTransactionMatchModal({
   }, [load]);
 
   useEffect(() => {
-    if (open) setOtherIncomeVat("");
+    if (open) {
+      setOtherIncomeVat("");
+      setIncomeSplitDraft({});
+      setListFilter("");
+    }
   }, [open]);
+
+  const filteredCosts = useMemo(
+    () =>
+      costs.filter((c) =>
+        rowMatchesQuery(listFilter, [
+          c.documentNumber,
+          c.supplier,
+          c.grossAmount,
+          safeFormatDate(c.documentDate),
+        ]),
+      ),
+    [costs, listFilter],
+  );
+
+  const filteredIncomes = useMemo(
+    () =>
+      incomes.filter((c) =>
+        rowMatchesQuery(listFilter, [
+          c.invoiceNumber,
+          c.contractor,
+          c.grossAmount,
+          safeFormatDate(c.issueDate),
+        ]),
+      ),
+    [incomes, listFilter],
+  );
+
+  const filteredPlanned = useMemo(
+    () =>
+      plannedExpenses.filter((p) =>
+        rowMatchesQuery(listFilter, [p.title, p.projectLabel, p.categoryName, p.totalGross, safeFormatDate(p.plannedDate)]),
+      ),
+    [plannedExpenses, listFilter],
+  );
+
+  useEffect(() => {
+    if (!open || incomes.length === 0) return;
+    const payPln = Math.abs(transactionAmountGrosze) / 100;
+    setIncomeSplitDraft((prev) => {
+      const next = { ...prev };
+      for (const row of incomes) {
+        if (row.vatDestination === "VAT" && !row.splitBlocked && next[row.id] == null) {
+          next[row.id] = defaultBankIncomeSplit(row, payPln);
+        }
+      }
+      return next;
+    });
+  }, [open, incomes, transactionAmountGrosze]);
 
   async function linkCost(id: string) {
     setBusy(true);
@@ -91,10 +187,40 @@ export function BankTransactionMatchModal({
     setBusy(true);
     setError(null);
     try {
+      const inv = incomes.find((r) => r.id === id);
+      const payPln = Math.abs(transactionAmountGrosze) / 100;
+      const body: Record<string, unknown> = { incomeInvoiceId: id };
+      if (inv?.vatDestination === "VAT" && !inv.splitBlocked) {
+        const d = incomeSplitDraft[id] ?? defaultBankIncomeSplit(inv, payPln);
+        body.incomeSplit = {
+          allocatedMainAmount: d.main,
+          allocatedVatAmount: d.vat,
+        };
+      }
       const res = await fetch(`/api/bank-transactions/${transactionId}/link-document`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ incomeInvoiceId: id }),
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) {
+        setError(await readApiError(res));
+        return;
+      }
+      onLinked();
+      onClose();
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function createCostFromPlanned(plannedEventId: string) {
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/bank-transactions/${transactionId}/create-cost`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ plannedEventId }),
       });
       if (!res.ok) {
         setError(await readApiError(res));
@@ -150,26 +276,89 @@ export function BankTransactionMatchModal({
         <p className="mb-2 text-xs text-zinc-500 dark:text-zinc-400">
           Kwota brutto z dokumentu — saldo po wcześniejszych wpłatach sprawdzisz w module przychodów.
         </p>
+        <label className="mb-2 block text-xs text-zinc-600 dark:text-zinc-400">
+          <span className="mb-0.5 block font-medium text-zinc-700 dark:text-zinc-300">Szukaj na liście</span>
+          <Input
+            value={listFilter}
+            onChange={(e) => setListFilter(e.target.value)}
+            placeholder="Numer, kontrahent, kwota, tytuł planu…"
+            className="!mt-1 !text-sm"
+            disabled={busy}
+          />
+        </label>
         {incomes.length === 0 ? (
           <p className="text-xs text-zinc-500">Brak oczywistych dopasowań w oknie dat.</p>
+        ) : filteredIncomes.length === 0 ? (
+          <p className="text-xs text-zinc-500">Brak pozycji pasujących do filtra ({incomes.length} w bazie okna).</p>
         ) : (
           <ul className="max-h-40 space-y-1 overflow-y-auto text-sm">
-            {incomes.map((c) => (
-              <li key={c.id} className="flex flex-wrap items-center justify-between gap-2 border-b border-zinc-100 py-1 dark:border-zinc-800">
-                <span className="text-zinc-700 dark:text-zinc-300">
-                  {c.invoiceNumber} · {c.contractor} · {safeFormatDate(c.issueDate)} · brutto {formatMoney(c.grossAmount)}
-                  <span className="ml-1 text-xs text-zinc-400" title={scoreHint}>
-                    (dopasowanie {c.score})
+            {filteredIncomes.map((c) => (
+              <li
+                key={c.id}
+                className="space-y-1 border-b border-zinc-100 py-2 dark:border-zinc-800"
+              >
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="text-zinc-700 dark:text-zinc-300">
+                    {c.invoiceNumber} · {c.contractor} · {safeFormatDate(c.issueDate)} · brutto{" "}
+                    {formatMoney(c.grossAmount)}
+                    <span className="ml-1 text-xs text-zinc-400" title={scoreHint}>
+                      (dopasowanie {c.score})
+                    </span>
                   </span>
-                </span>
-                <button
-                  type="button"
-                  disabled={busy}
-                  onClick={() => void linkIncome(c.id)}
-                  className="shrink-0 rounded border border-emerald-600 px-2 py-0.5 text-xs text-emerald-800 hover:bg-emerald-50 disabled:opacity-50 dark:border-emerald-700 dark:text-emerald-200 dark:hover:bg-emerald-950/40"
-                >
-                  Połącz + wpłata
-                </button>
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() => void linkIncome(c.id)}
+                    className="shrink-0 rounded border border-emerald-600 px-2 py-0.5 text-xs text-emerald-800 hover:bg-emerald-50 disabled:opacity-50 dark:border-emerald-700 dark:text-emerald-200 dark:hover:bg-emerald-950/40"
+                  >
+                    Połącz + wpłata
+                  </button>
+                </div>
+                {c.vatDestination === "VAT" && c.splitBlocked ? (
+                  <p className="text-xs text-amber-700 dark:text-amber-300">
+                    Jawny podział MAIN/VAT niedostępny (faktura z wieloma projektami) — użyj modułu przychodów.
+                  </p>
+                ) : null}
+                {c.vatDestination === "VAT" && !c.splitBlocked ? (
+                  <div className="flex flex-wrap items-end gap-2 pl-0 text-xs">
+                    <span className="text-zinc-500">Cashflow z tej wpłaty (suma = kwota z wyciągu):</span>
+                    <label className="flex flex-col gap-0.5">
+                      <span className="text-zinc-500">MAIN (netto)</span>
+                      <input
+                        type="text"
+                        inputMode="decimal"
+                        value={incomeSplitDraft[c.id]?.main ?? ""}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          setIncomeSplitDraft((prev) => ({
+                            ...prev,
+                            [c.id]: { main: v, vat: prev[c.id]?.vat ?? "" },
+                          }));
+                        }}
+                        className="w-28 rounded border border-zinc-300 bg-white px-1.5 py-0.5 font-mono dark:border-zinc-600 dark:bg-zinc-950"
+                      />
+                    </label>
+                    <label className="flex flex-col gap-0.5">
+                      <span className="text-zinc-500">VAT</span>
+                      <input
+                        type="text"
+                        inputMode="decimal"
+                        value={incomeSplitDraft[c.id]?.vat ?? ""}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          setIncomeSplitDraft((prev) => ({
+                            ...prev,
+                            [c.id]: { main: prev[c.id]?.main ?? "", vat: v },
+                          }));
+                        }}
+                        className="w-28 rounded border border-zinc-300 bg-white px-1.5 py-0.5 font-mono dark:border-zinc-600 dark:bg-zinc-950"
+                      />
+                    </label>
+                    <span className="pb-1 text-zinc-400">
+                      = {formatPlnFromGrosze(transactionAmountGrosze)}
+                    </span>
+                  </div>
+                ) : null}
               </li>
             ))}
           </ul>
@@ -212,43 +401,97 @@ export function BankTransactionMatchModal({
   );
 
   const costSection = (
-    <div>
-      <h3 className="mb-1 text-sm font-medium text-zinc-800 dark:text-zinc-200">Faktury kosztowe</h3>
-      <p className="mb-2 text-xs text-zinc-500 dark:text-zinc-400">
-        Kwota brutto z dokumentu — pozostało do zapłaty (po wcześniejszych przelewach) sprawdzisz w module kosztów.
-      </p>
-      {costs.length === 0 ? (
-        <p className="text-xs text-zinc-500">Brak oczywistych dopasowań w oknie dat.</p>
-      ) : (
-        <ul className="max-h-40 space-y-1 overflow-y-auto text-sm">
-          {costs.map((c) => (
-            <li key={c.id} className="flex flex-wrap items-center justify-between gap-2 border-b border-zinc-100 py-1 dark:border-zinc-800">
-              <span className="text-zinc-700 dark:text-zinc-300">
-                {c.documentNumber} · {c.supplier} · {safeFormatDate(c.documentDate)} · brutto {formatMoney(c.grossAmount)}
-                <span className="ml-1 text-xs text-zinc-400" title={scoreHint}>
-                  (dopasowanie {c.score})
+    <div className="space-y-4">
+      <label className="block text-xs text-zinc-600 dark:text-zinc-400">
+        <span className="mb-0.5 block font-medium text-zinc-700 dark:text-zinc-300">Szukaj na liście</span>
+        <Input
+          value={listFilter}
+          onChange={(e) => setListFilter(e.target.value)}
+          placeholder="Numer faktury, dostawca, kwota, plan…"
+          className="!mt-1 !text-sm"
+          disabled={busy}
+        />
+      </label>
+      <div>
+        <h3 className="mb-1 text-sm font-medium text-zinc-800 dark:text-zinc-200">Faktury kosztowe</h3>
+        <p className="mb-2 text-xs text-zinc-500 dark:text-zinc-400">
+          Kwota brutto z dokumentu — pozostało do zapłaty (po wcześniejszych przelewach) sprawdzisz w module kosztów.
+        </p>
+        {costs.length === 0 ? (
+          <p className="text-xs text-zinc-500">Brak faktur kosztowych w oknie dat (±90 dni od operacji).</p>
+        ) : filteredCosts.length === 0 ? (
+          <p className="text-xs text-zinc-500">Brak faktur pasujących do filtra ({costs.length} w oknie).</p>
+        ) : (
+          <ul className="max-h-40 space-y-1 overflow-y-auto text-sm">
+            {filteredCosts.map((c) => (
+              <li key={c.id} className="flex flex-wrap items-center justify-between gap-2 border-b border-zinc-100 py-1 dark:border-zinc-800">
+                <span className="text-zinc-700 dark:text-zinc-300">
+                  {c.documentNumber} · {c.supplier} · {safeFormatDate(c.documentDate)} · brutto {formatMoney(c.grossAmount)}
+                  <span className="ml-1 text-xs text-zinc-400" title={scoreHint}>
+                    (dopasowanie {c.score})
+                  </span>
                 </span>
-              </span>
-              <button
-                type="button"
-                disabled={busy}
-                onClick={() => void linkCost(c.id)}
-                className="shrink-0 rounded border border-emerald-600 px-2 py-0.5 text-xs text-emerald-800 hover:bg-emerald-50 disabled:opacity-50 dark:border-emerald-700 dark:text-emerald-200 dark:hover:bg-emerald-950/40"
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => void linkCost(c.id)}
+                  className="shrink-0 rounded border border-emerald-600 px-2 py-0.5 text-xs text-emerald-800 hover:bg-emerald-50 disabled:opacity-50 dark:border-emerald-700 dark:text-emerald-200 dark:hover:bg-emerald-950/40"
+                >
+                  Połącz + płatność
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+      <div>
+        <h3 className="mb-1 text-sm font-medium text-zinc-800 dark:text-zinc-200">Planowane koszty (nie faktury)</h3>
+        <p className="mb-2 text-xs text-zinc-500 dark:text-zinc-400">
+          Zdarzenia z modułu planu (status PLANNED).{" "}
+          <strong className="font-medium text-zinc-600 dark:text-zinc-300">Utwórz koszt z wyciągu</strong> — powstanie
+          dokument kosztowy z płatnością jak przy „Utwórz koszt”; jeśli kwota transakcji = suma planu (±0,02 zł), plan
+          zostanie oznaczony jako skonwertowany. Przy innej kwocie plan zostaje otwarty (notatka na koszcie).
+        </p>
+        {plannedExpenses.length === 0 ? (
+          <p className="text-xs text-zinc-500">Brak planowanych kosztów w oknie (±400 dni od daty operacji).</p>
+        ) : filteredPlanned.length === 0 ? (
+          <p className="text-xs text-zinc-500">Brak planów pasujących do filtra ({plannedExpenses.length} w oknie).</p>
+        ) : (
+          <ul className="max-h-36 space-y-1 overflow-y-auto text-sm">
+            {filteredPlanned.map((p) => (
+              <li
+                key={p.id}
+                className="flex flex-wrap items-center justify-between gap-2 border-b border-zinc-100 py-1 dark:border-zinc-800"
               >
-                Połącz + płatność
-              </button>
-            </li>
-          ))}
-        </ul>
-      )}
+                <span className="text-zinc-700 dark:text-zinc-300">
+                  {p.title} · {p.projectLabel}
+                  {p.categoryName ? ` · ${p.categoryName}` : ""} · plan {safeFormatDate(p.plannedDate)} ·{" "}
+                  {formatMoney(p.totalGross)} PLN
+                  <span className="ml-1 text-xs text-zinc-400" title={scoreHint}>
+                    (dopasowanie {p.score})
+                  </span>
+                </span>
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => void createCostFromPlanned(p.id)}
+                  className="shrink-0 rounded border border-sky-600 px-2 py-0.5 text-xs text-sky-900 hover:bg-sky-50 disabled:opacity-50 dark:border-sky-600 dark:text-sky-100 dark:hover:bg-sky-950/40"
+                >
+                  Utwórz koszt z planu
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
     </div>
   );
 
   const introHint =
     showIncome ?
       "Wpłata — wybierz fakturę przychodu, do której dopisujemy tę kwotę."
-    : showCost ?
-      "Wydatek — wybierz fakturę kosztową, do której dopisujemy tę płatność."
+    :     showCost ?
+      "Wydatek — wybierz fakturę kosztową albo planowany koszt (utworzenie dokumentu z wyciągu)."
     : "Kwota zerowa — brak podziału na przychód / koszt w tym widoku.";
 
   return (
@@ -266,7 +509,7 @@ export function BankTransactionMatchModal({
         </div>
         <p className="mb-2 text-sm text-zinc-600 dark:text-zinc-400">
           Po potwierdzeniu zostanie utworzony <strong className="font-medium">realny zapis płatności</strong> na fakturze (wpłata
-          / wypłata), zgodny z kwotą i datą z wyciągu.
+          / wypłata) albo nowy koszt z wyciągu przy wyborze planu — zgodnie z kwotą i datą z wyciągu.
         </p>
         <p className="mb-3 text-xs text-zinc-500 dark:text-zinc-400">{introHint}</p>
 

@@ -1,5 +1,6 @@
-import type { CostInvoice, IncomeInvoice } from "@prisma/client";
+import type { CostInvoice, IncomeInvoice, PlannedFinancialEvent } from "@prisma/client";
 import { decToNumber } from "@/lib/cashflow/money";
+import { documentGrossSlicesFromInvoice } from "@/lib/payment-project-allocation/distribute-read";
 
 const DAY_MS = 86_400_000;
 const GROSZ_EPS = 2;
@@ -73,6 +74,22 @@ export type IncomeSuggestion = {
   grossAmount: string;
   issueDate: string;
   score: number;
+  vatDestination: string;
+  netAmount: string;
+  vatAmount: string;
+  /** true = wiele projektów — jawny podział MAIN/VAT na wpłacie jest zablokowany */
+  splitBlocked: boolean;
+};
+
+export type PlannedExpenseSuggestion = {
+  id: string;
+  title: string;
+  plannedDate: string;
+  /** Suma główna + VAT (PLN) jako string */
+  totalGross: string;
+  score: number;
+  projectLabel: string;
+  categoryName: string | null;
 };
 
 export function scoreCostMatch(
@@ -88,6 +105,27 @@ export function scoreCostMatch(
   score += dateScore(dd);
   score += tokenOverlap(tx.description, `${inv.supplier} ${inv.description} ${inv.documentNumber}`);
   score += docHintScore(extractDocHints(tx.description), inv.documentNumber);
+  return score;
+}
+
+function plannedExpenseTotalGrosze(ev: Pick<PlannedFinancialEvent, "amount" | "amountVat">): number {
+  const main = decToNumber(ev.amount as never);
+  const vat = decToNumber(ev.amountVat as never);
+  return Math.round((main + vat) * 100);
+}
+
+export function scorePlannedExpenseMatch(
+  tx: { amount: number; bookingDate: Date; description: string },
+  ev: Pick<PlannedFinancialEvent, "amount" | "amountVat" | "plannedDate" | "title" | "description">,
+): number {
+  const ag = Math.abs(tx.amount);
+  const eg = plannedExpenseTotalGrosze(ev);
+  let score = 0;
+  if (Math.abs(ag - eg) <= GROSZ_EPS) score += 6;
+  else if (Math.abs(ag - eg) <= 100) score += 2;
+  const dd = daysApart(tx.bookingDate, ev.plannedDate);
+  score += dateScore(dd);
+  score += tokenOverlap(tx.description, `${ev.title} ${ev.description}`);
   return score;
 }
 
@@ -130,9 +168,41 @@ export function rankCosts(
   return scored.slice(0, take);
 }
 
+export function rankPlannedExpenses(
+  tx: { amount: number; bookingDate: Date; description: string },
+  list: (PlannedFinancialEvent & {
+    project?: { name: string; code: string | null } | null;
+    expenseCategory?: { name: string } | null;
+  })[],
+  take = 200,
+  opts?: { demote?: boolean },
+): PlannedExpenseSuggestion[] {
+  const mul = opts?.demote ? DEMOTE_FACTOR : 1;
+  const scored = list
+    .map((ev) => {
+      const tg = (decToNumber(ev.amount as never) + decToNumber(ev.amountVat as never)).toFixed(2);
+      const pl = ev.project
+        ? `${ev.project.code ? `${ev.project.code} · ` : ""}${ev.project.name}`
+        : "(brak projektu)";
+      return {
+        id: ev.id,
+        title: ev.title,
+        plannedDate: ev.plannedDate.toISOString(),
+        totalGross: tg,
+        score: Math.round(scorePlannedExpenseMatch(tx, ev) * mul * 100) / 100,
+        projectLabel: pl,
+        categoryName: ev.expenseCategory?.name ?? null,
+      };
+    })
+    .sort((a, b) => b.score - a.score);
+  return scored.slice(0, take);
+}
+
 export function rankIncomes(
   tx: { amount: number; bookingDate: Date; description: string },
-  list: IncomeInvoice[],
+  list: (IncomeInvoice & {
+    projectAllocations?: { projectId: string; grossAmount: unknown }[];
+  })[],
   take = 15,
   opts?: { demote?: boolean },
 ): IncomeSuggestion[] {
@@ -145,6 +215,14 @@ export function rankIncomes(
       grossAmount: inv.grossAmount.toString(),
       issueDate: inv.issueDate.toISOString(),
       score: Math.round(scoreIncomeMatch(tx, inv) * mul * 100) / 100,
+      vatDestination: inv.vatDestination,
+      netAmount: inv.netAmount.toString(),
+      vatAmount: inv.vatAmount.toString(),
+      splitBlocked: documentGrossSlicesFromInvoice({
+        projectAllocations: inv.projectAllocations ?? [],
+        grossAmount: inv.grossAmount,
+        projectId: inv.projectId,
+      }).length > 1,
     }))
     .sort((a, b) => b.score - a.score);
   return scored.slice(0, take);
