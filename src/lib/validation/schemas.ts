@@ -93,6 +93,29 @@ export const incomeInvoiceUpdateSchema = incomeInvoiceCreateSchema.partial().ext
   isRecurringDetached: z.boolean().optional(),
 });
 
+/** Wiersz harmonogramu wpłat (plan MAIN/VAT) — osobno od rzeczywistych wpłat. */
+export const incomePaymentPlanRowSchema = z
+  .object({
+    dueDate: isoDateTime,
+    plannedMainAmount: decimalLike,
+    plannedVatAmount: decimalLike,
+    note: z.string().max(500).optional().default(""),
+    sortOrder: z.number().int().optional(),
+    status: z.enum(["PLANNED", "DONE", "CANCELLED"]).optional().default("PLANNED"),
+  })
+  .superRefine((row, ctx) => {
+    if (Number(row.plannedMainAmount) < 0) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "MAIN nie może być ujemna", path: ["plannedMainAmount"] });
+    }
+    if (Number(row.plannedVatAmount) < 0) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "VAT nie może być ujemna", path: ["plannedVatAmount"] });
+    }
+  });
+
+export const incomePaymentPlanReplaceSchema = z.object({
+  rows: z.array(incomePaymentPlanRowSchema),
+});
+
 export const costInvoiceCreateSchema = z.object({
   documentNumber: z.string().min(1),
   supplier: z.string().min(1),
@@ -215,9 +238,22 @@ export const incomePaymentCreateSchema = z
     amountGross: decimalLike,
     paymentDate: isoDateTime,
     notes: z.string().optional().default(""),
+    allocatedMainAmount: decimalLike.optional(),
+    allocatedVatAmount: decimalLike.optional(),
   })
   .extend({
     projectAllocations: z.array(paymentProjectAllocationRowSchema).optional(),
+  })
+  .superRefine((data, ctx) => {
+    const hasM = data.allocatedMainAmount != null;
+    const hasV = data.allocatedVatAmount != null;
+    if (hasM !== hasV) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Podaj razem oba pola podziału (MAIN i VAT) albo żadnego.",
+        path: ["allocatedMainAmount"],
+      });
+    }
   });
 
 export const costPaymentCreateSchema = z

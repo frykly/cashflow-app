@@ -1,3 +1,4 @@
+import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { jsonData } from "@/lib/api/json-response";
 import { jsonError } from "@/lib/api/errors";
@@ -13,14 +14,29 @@ import {
 } from "@/lib/bank-import/payment-from-bank";
 import { normalizeDecimalInput } from "@/lib/decimal-input";
 import { finalizeNewCostPaymentAllocations, finalizeNewIncomePaymentAllocations } from "@/lib/payment-project-allocation/finalize";
+import { decToNumber } from "@/lib/cashflow/money";
+import { validateIncomeManualSplit } from "@/lib/cashflow/validate-income-payment-split";
 
 const bodySchema = z
   .object({
     costInvoiceId: z.string().min(1).optional(),
     incomeInvoiceId: z.string().min(1).optional(),
+    incomeSplit: z
+      .object({
+        allocatedMainAmount: z.union([z.number(), z.string()]),
+        allocatedVatAmount: z.union([z.number(), z.string()]),
+      })
+      .optional(),
   })
   .refine((b) => Boolean(b.costInvoiceId) !== Boolean(b.incomeInvoiceId), {
     message: "Podaj dokładnie jeden: costInvoiceId albo incomeInvoiceId",
+  })
+  .superRefine((b, ctx) => {
+    const hasI = Boolean(b.incomeInvoiceId);
+    const hasS = b.incomeSplit != null;
+    if (hasS && !hasI) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "incomeSplit tylko z incomeInvoiceId", path: ["incomeSplit"] });
+    }
   });
 
 export async function POST(req: Request, ctx: { params: Promise<{ id: string }> }) {
@@ -132,11 +148,30 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     return jsonError("Suma wpłat przekroczyłaby kwotę brutto faktury przychodu.", 400);
   }
 
+  let allocMain: Prisma.Decimal | null = null;
+  let allocVat: Prisma.Decimal | null = null;
+  if (parsed.data.incomeSplit) {
+    const mNorm = normalizeDecimalInput(String(parsed.data.incomeSplit.allocatedMainAmount));
+    const vNorm = normalizeDecimalInput(String(parsed.data.incomeSplit.allocatedVatAmount));
+    const splitErr = validateIncomeManualSplit(
+      inv,
+      decToNumber(amountGross),
+      decToNumber(mNorm),
+      decToNumber(vNorm),
+      inv.payments,
+    );
+    if (splitErr) return jsonError(splitErr, 400);
+    allocMain = new Prisma.Decimal(mNorm);
+    allocVat = new Prisma.Decimal(vNorm);
+  }
+
   const updated = await prisma.$transaction(async (trx) => {
     const payment = await trx.incomeInvoicePayment.create({
       data: {
         incomeInvoiceId: inv.id,
         amountGross,
+        allocatedMainAmount: allocMain,
+        allocatedVatAmount: allocVat,
         paymentDate: tx.bookingDate,
         notes: `${BANK_LINK_PAYMENT_NOTE} (${bankTxId.slice(0, 8)}…)`,
         bankTransactionId: bankTxId,

@@ -4,6 +4,7 @@ import type { Project } from "@prisma/client";
 export function incomeInvoiceNewFromProjectQuery(project: Pick<Project, "id" | "name" | "clientName" | "code">): string {
   const sp = new URLSearchParams();
   sp.set("new", "1");
+  sp.set("returnTo", `/projects/${project.id}`);
   sp.set("projectId", project.id);
   sp.set("projectName", project.name);
   if (project.clientName?.trim()) sp.set("clientName", project.clientName.trim());
@@ -15,6 +16,7 @@ export function incomeInvoiceNewFromProjectQuery(project: Pick<Project, "id" | "
 export function costInvoiceNewFromProjectQuery(project: Pick<Project, "id" | "name" | "clientName" | "code">): string {
   const sp = new URLSearchParams();
   sp.set("new", "1");
+  sp.set("returnTo", `/projects/${project.id}`);
   sp.set("projectId", project.id);
   sp.set("projectName", project.name);
   if (project.clientName?.trim()) sp.set("clientName", project.clientName.trim());
@@ -26,6 +28,7 @@ export function costInvoiceNewFromProjectQuery(project: Pick<Project, "id" | "na
 export function plannedEventNewFromProjectQuery(project: Pick<Project, "id" | "name" | "clientName" | "code">): string {
   const sp = new URLSearchParams();
   sp.set("new", "1");
+  sp.set("returnTo", `/projects/${project.id}`);
   sp.set("projectId", project.id);
   sp.set("projectName", project.name);
   if (project.clientName?.trim()) sp.set("clientName", project.clientName.trim());

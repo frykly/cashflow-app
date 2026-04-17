@@ -1,3 +1,4 @@
+import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { jsonData } from "@/lib/api/json-response";
 import { jsonError, zodErrorResponse } from "@/lib/api/errors";
@@ -5,6 +6,7 @@ import { incomePaymentCreateSchema } from "@/lib/validation/schemas";
 import { syncIncomeInvoiceStatus } from "@/lib/invoice-status-sync";
 import { decToNumber } from "@/lib/cashflow/money";
 import { PAY_EPS, sumIncomePaymentsGross } from "@/lib/cashflow/settlement";
+import { validateIncomeManualSplit } from "@/lib/cashflow/validate-income-payment-split";
 import { ZodError } from "zod";
 import { normalizeDecimalInput } from "@/lib/decimal-input";
 import { finalizeNewIncomePaymentAllocations } from "@/lib/payment-project-allocation/finalize";
@@ -61,12 +63,31 @@ export async function POST(req: Request, ctx: Ctx) {
       if (err) return jsonError(err, 400);
     }
 
+    let allocMain: Prisma.Decimal | null = null;
+    let allocVat: Prisma.Decimal | null = null;
+    if (data.allocatedMainAmount != null && data.allocatedVatAmount != null) {
+      const mNorm = normalizeDecimalInput(String(data.allocatedMainAmount));
+      const vNorm = normalizeDecimalInput(String(data.allocatedVatAmount));
+      const splitErr = validateIncomeManualSplit(
+        inv,
+        decToNumber(gNorm),
+        decToNumber(mNorm),
+        decToNumber(vNorm),
+        inv.payments,
+      );
+      if (splitErr) return jsonError(splitErr, 400);
+      allocMain = new Prisma.Decimal(mNorm);
+      allocVat = new Prisma.Decimal(vNorm);
+    }
+
     try {
       const row = await prisma.$transaction(async (tx) => {
         const created = await tx.incomeInvoicePayment.create({
           data: {
             incomeInvoiceId: id,
             amountGross: data.amountGross,
+            allocatedMainAmount: allocMain,
+            allocatedVatAmount: allocVat,
             paymentDate: new Date(data.paymentDate),
             notes: data.notes ?? "",
           },

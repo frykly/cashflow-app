@@ -4,6 +4,7 @@ import type {
   CostInvoicePayment,
   IncomeInvoice,
   IncomeInvoicePayment,
+  IncomeInvoicePlannedPayment,
   OtherIncome,
   PlannedFinancialEvent,
 } from "@prisma/client";
@@ -15,7 +16,9 @@ import {
   costPaymentDeltasVatFirst,
   costRemainingGross,
   incomePaymentDeltas,
+  incomePaymentMainVatParts,
   incomeRemainingGross,
+  incomeRemainingMainVat,
   isCostFullyPaid,
   isIncomeFullyPaid,
   PAY_EPS,
@@ -73,8 +76,48 @@ function plannedEventMovement(ev: PlannedFinancialEvent): CashflowMovement | nul
   };
 }
 
+/** Wiersze harmonogramu używane w prognozie — tylko status PLANNED. */
+export function activeIncomePlanRows(
+  inv: IncomeInvoice & { plannedPayments?: IncomeInvoicePlannedPayment[] },
+): IncomeInvoicePlannedPayment[] {
+  return (inv.plannedPayments ?? [])
+    .filter((p) => p.status === "PLANNED")
+    .sort((a, b) => a.sortOrder - b.sortOrder);
+}
+
+/**
+ * Rozkłada pozostałe MAIN/VAT proporcjonalnie do kwot w planie — suma zwróconych wierszy ≈ reszta po wpłatach,
+ * bez „podwójnego” liczenia przy częściowych wpłatach rzeczywistych.
+ */
+export function remainderSplitByIncomePlan(
+  inv: IncomeInvoice,
+  payments: IncomeInvoicePayment[],
+  rows: IncomeInvoicePlannedPayment[],
+): { dueDate: Date; main: number; vat: number; idx: number }[] {
+  const { remMain, remVat } = incomeRemainingMainVat(inv, payments);
+  if (remMain <= PAY_EPS && remVat <= PAY_EPS) return [];
+  let sumM = 0;
+  let sumV = 0;
+  for (const r of rows) {
+    sumM += decToNumber(r.plannedMainAmount);
+    sumV += decToNumber(r.plannedVatAmount);
+  }
+  const n = rows.length;
+  if (n === 0) return [];
+
+  return rows.map((r, idx) => {
+    const pm = decToNumber(r.plannedMainAmount);
+    const pv = decToNumber(r.plannedVatAmount);
+    const main =
+      sumM > PAY_EPS ? round2(remMain * (pm / sumM)) : n > 0 ? round2(remMain / n) : 0;
+    const vat =
+      sumV > PAY_EPS ? round2(remVat * (pv / sumV)) : n > 0 ? round2(remVat / n) : 0;
+    return { dueDate: r.dueDate, main, vat, idx };
+  });
+}
+
 function appendIncomeMovements(
-  inv: IncomeInvoice & { payments: IncomeInvoicePayment[] },
+  inv: IncomeInvoice & { payments: IncomeInvoicePayment[]; plannedPayments?: IncomeInvoicePlannedPayment[] },
   out: CashflowMovement[],
 ) {
   const label = `Przychód ${inv.invoiceNumber}`;
@@ -94,8 +137,7 @@ function appendIncomeMovements(
   }
 
   for (const p of inv.payments) {
-    const amt = decToNumber(p.amountGross);
-    const { main, vat } = incomePaymentDeltas(inv, amt);
+    const { main, vat } = incomePaymentMainVatParts(inv, p);
     out.push({
       kind: "income",
       refId: `${inv.id}-p-${p.id}`,
@@ -106,18 +148,36 @@ function appendIncomeMovements(
     });
   }
 
-  const rem = incomeRemainingGross(inv, inv.payments);
-  if (rem > PAY_EPS) {
-    const { main, vat } = incomePaymentDeltas(inv, rem);
-    out.push({
-      kind: "income",
-      refId: `${inv.id}-rem`,
-      label: `${label} (pozostało)`,
-      dayKey: dayKey(inv.plannedIncomeDate),
-      mainDelta: round2(main),
-      vatDelta: round2(vat),
-    });
+  const { remMain, remVat } = incomeRemainingMainVat(inv, inv.payments);
+  if (remMain <= PAY_EPS && remVat <= PAY_EPS) return;
+
+  const planRows = activeIncomePlanRows(inv);
+  if (planRows.length > 0) {
+    const splits = remainderSplitByIncomePlan(inv, inv.payments, planRows);
+    if (splits.length > 0) {
+      for (const s of splits) {
+        if (s.main <= PAY_EPS && s.vat <= PAY_EPS) continue;
+        out.push({
+          kind: "income",
+          refId: `${inv.id}-plan-${s.idx}`,
+          label: `${label} (plan ${s.idx + 1})`,
+          dayKey: dayKey(s.dueDate),
+          mainDelta: round2(s.main),
+          vatDelta: round2(s.vat),
+        });
+      }
+      return;
+    }
   }
+
+  out.push({
+    kind: "income",
+    refId: `${inv.id}-rem`,
+    label: `${label} (pozostało)`,
+    dayKey: dayKey(inv.plannedIncomeDate),
+    mainDelta: round2(remMain),
+    vatDelta: round2(remVat),
+  });
 }
 
 function pushCostMovement(
@@ -189,7 +249,7 @@ function appendCostMovements(inv: CostInvoice & { payments: CostInvoicePayment[]
 }
 
 export function collectMovements(
-  incomes: (IncomeInvoice & { payments: IncomeInvoicePayment[] })[],
+  incomes: (IncomeInvoice & { payments: IncomeInvoicePayment[]; plannedPayments?: IncomeInvoicePlannedPayment[] })[],
   costs: (CostInvoice & { payments: CostInvoicePayment[] })[],
   events: PlannedFinancialEvent[],
   otherIncomes: OtherIncome[] = [],
@@ -526,11 +586,21 @@ export function plannedMainFlowsInWindow(
 
   for (const inv of incomes) {
     if (isIncomeFullyPaid(inv, inv.payments)) continue;
-    const d = inv.plannedIncomeDate;
-    if (isBefore(d, start) || !isBefore(d, end)) continue;
-    const rem = incomeRemainingGross(inv, inv.payments);
-    const { main } = incomePaymentDeltas(inv, rem);
-    if (main > 0) plannedInflowTotal += main;
+    const { remMain } = incomeRemainingMainVat(inv, inv.payments);
+    if (remMain <= 0) continue;
+    const rows = activeIncomePlanRows(inv);
+    if (rows.length > 0) {
+      const splits = remainderSplitByIncomePlan(inv, inv.payments, rows);
+      for (const s of splits) {
+        if (s.main <= PAY_EPS) continue;
+        if (isBefore(s.dueDate, start) || !isBefore(s.dueDate, end)) continue;
+        plannedInflowTotal += s.main;
+      }
+    } else {
+      const d = inv.plannedIncomeDate;
+      if (isBefore(d, start) || !isBefore(d, end)) continue;
+      plannedInflowTotal += remMain;
+    }
   }
 
   for (const inv of costs) {

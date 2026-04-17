@@ -1,26 +1,65 @@
 import { prisma } from "@/lib/db";
 import { decToNumber } from "@/lib/cashflow/money";
 import {
+  activeIncomePlanRows,
   buildDailyForecast,
   collectMovements,
   costInvoiceMap,
   currentBalances,
   mainAccountNegativeInForecast,
   plannedMainFlowsInWindow,
+  remainderSplitByIncomePlan,
 } from "@/lib/cashflow/forecast";
 import { breakdownExpenseByCategory30, breakdownIncomeByCategory30 } from "@/lib/cashflow/category-breakdown";
 import {
   costPaymentDeltas,
   costRemainingGross,
-  incomePaymentDeltas,
-  incomeRemainingGross,
+  incomeRemainingMainVat,
   isCostFullyPaid,
   isIncomeFullyPaid,
+  PAY_EPS,
 } from "@/lib/cashflow/settlement";
 import { isCostInvoiceOverdue, isIncomeInvoiceOverdue, isPlannedEventOverdue } from "@/lib/cashflow/overdue";
-import { addDays, startOfDay } from "date-fns";
+import { addDays, isBefore, startOfDay } from "date-fns";
 import { jsonData } from "@/lib/api/json-response";
-import type { PlannedFinancialEvent } from "@prisma/client";
+import type {
+  IncomeInvoice,
+  IncomeInvoicePayment,
+  IncomeInvoicePlannedPayment,
+  PlannedFinancialEvent,
+} from "@prisma/client";
+
+function incomeUpcomingSlices(
+  i: IncomeInvoice & { payments: IncomeInvoicePayment[]; plannedPayments?: IncomeInvoicePlannedPayment[] },
+  now: Date,
+  horizonEnd: Date,
+): { id: string; date: string; label: string; mainAmount: number }[] {
+  if (isIncomeFullyPaid(i, i.payments)) return [];
+  const start = startOfDay(now);
+  const rem = incomeRemainingMainVat(i, i.payments);
+  const rows = activeIncomePlanRows(i);
+  if (rows.length > 0) {
+    const splits = remainderSplitByIncomePlan(i, i.payments, rows);
+    return splits
+      .filter((s) => s.main > PAY_EPS && !isBefore(s.dueDate, start) && isBefore(s.dueDate, horizonEnd))
+      .map((s) => ({
+        id: `${i.id}-plan-${s.idx}`,
+        date: s.dueDate.toISOString(),
+        label: `${i.invoiceNumber} — ${i.contractor} (plan ${s.idx + 1})`,
+        mainAmount: s.main,
+      }));
+  }
+  if (rem.remMain <= PAY_EPS) return [];
+  if (isBefore(i.plannedIncomeDate, start) || !isBefore(i.plannedIncomeDate, horizonEnd)) return [];
+  return [
+    {
+      id: i.id,
+      date: i.plannedIncomeDate.toISOString(),
+      label: `${i.invoiceNumber} — ${i.contractor}`,
+      mainAmount: rem.remMain,
+    },
+  ];
+}
 
 function plannedLiquidity(ev: PlannedFinancialEvent): number {
   return decToNumber(ev.amount) + decToNumber(ev.amountVat ?? 0);
@@ -32,7 +71,9 @@ export async function GET(req: Request) {
 
   const [settings, incomes, costs, events, otherIncomes, incomeCats, expenseCats] = await Promise.all([
     prisma.appSettings.findUnique({ where: { id: 1 } }),
-    prisma.incomeInvoice.findMany({ include: { payments: true } }),
+    prisma.incomeInvoice.findMany({
+      include: { payments: true, plannedPayments: { orderBy: { sortOrder: "asc" } } },
+    }),
     prisma.costInvoice.findMany({ include: { payments: true } }),
     prisma.plannedFinancialEvent.findMany(),
     prisma.otherIncome.findMany(),
@@ -60,16 +101,9 @@ export async function GET(req: Request) {
   const horizon30 = addDays(startOfDay(now), 30);
   const horizon7 = addDays(startOfDay(now), 7);
 
-  const incomeCandidates = incomes
-    .filter((i) => !isIncomeFullyPaid(i, i.payments))
-    .filter((i) => i.plannedIncomeDate >= startOfDay(now) && i.plannedIncomeDate < horizon30)
-    .map((i) => ({
-      kind: "income" as const,
-      id: i.id,
-      date: i.plannedIncomeDate.toISOString(),
-      label: `${i.invoiceNumber} — ${i.contractor}`,
-      mainAmount: incomePaymentDeltas(i, incomeRemainingGross(i, i.payments)).main,
-    }));
+  const incomeCandidates = incomes.flatMap((i) =>
+    incomeUpcomingSlices(i, now, horizon30).map((x) => ({ kind: "income" as const, ...x })),
+  );
 
   const plannedIncomeCandidates = events
     .filter((e) => e.type === "INCOME" && e.status === "PLANNED")
@@ -112,16 +146,9 @@ export async function GET(req: Request) {
     .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
     .slice(0, 15);
 
-  const incomeCandidates7 = incomes
-    .filter((i) => !isIncomeFullyPaid(i, i.payments))
-    .filter((i) => i.plannedIncomeDate >= startOfDay(now) && i.plannedIncomeDate < horizon7)
-    .map((i) => ({
-      kind: "income" as const,
-      id: i.id,
-      date: i.plannedIncomeDate.toISOString(),
-      label: `${i.invoiceNumber} — ${i.contractor}`,
-      mainAmount: incomePaymentDeltas(i, incomeRemainingGross(i, i.payments)).main,
-    }));
+  const incomeCandidates7 = incomes.flatMap((i) =>
+    incomeUpcomingSlices(i, now, horizon7).map((x) => ({ kind: "income" as const, ...x })),
+  );
 
   const plannedIncome7 = events
     .filter((e) => e.type === "INCOME" && e.status === "PLANNED")

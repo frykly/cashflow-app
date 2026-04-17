@@ -52,6 +52,7 @@ export async function GET(req: Request) {
         include: { projectAllocations: { include: { project: { select: { id: true, name: true } } } } },
       },
       projectAllocations: { include: { project: { select: { id: true, name: true, code: true } } } },
+      plannedPayments: { orderBy: { sortOrder: "asc" } },
     },
   });
   return jsonData(rows);
@@ -131,6 +132,7 @@ export async function POST(req: Request) {
         include: { projectAllocations: { include: { project: { select: { id: true, name: true } } } } },
       },
         projectAllocations: { include: { project: { select: { id: true, name: true, code: true } } } },
+        plannedPayments: { orderBy: { sortOrder: "asc" } },
       },
     });
     return jsonData(fresh ?? row, { status: 201 });

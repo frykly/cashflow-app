@@ -165,6 +165,8 @@ model IncomeInvoice {
   sourceRecurringTemplate   RecurringTemplate? @relation("RecurringGeneratedIncome", fields: [sourceRecurringTemplateId], references: [id], onDelete: SetNull)
   linkedFromPlannedEvent    PlannedFinancialEvent? @relation("PlannedConvertedToIncome")
   projectAllocations IncomeInvoiceProjectAllocation[]
+  /// Harmonogram planowanych wpłat (MAIN/VAT) — nie są to rzeczywiste wpłaty (`payments`).
+  plannedPayments    IncomeInvoicePlannedPayment[]
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt
 
@@ -173,11 +175,33 @@ model IncomeInvoice {
   @@index([projectId])
 }
 
+/// Plan wpłat na fakturze (termin + podział MAIN/VAT) — informacyjnie, bez powiązania z realnymi wpłatami.
+model IncomeInvoicePlannedPayment {
+  id                  String        @id @default(cuid())
+  incomeInvoiceId     String
+  incomeInvoice       IncomeInvoice @relation(fields: [incomeInvoiceId], references: [id], onDelete: Cascade)
+  dueDate             DateTime
+  plannedMainAmount   Decimal
+  plannedVatAmount    Decimal
+  note                String        @default("")
+  sortOrder           Int           @default(0)
+  /// PLANNED | DONE | CANCELLED
+  status              String        @default("PLANNED")
+  createdAt           DateTime      @default(now())
+  updatedAt           DateTime      @updatedAt
+
+  @@index([incomeInvoiceId])
+}
+
 model IncomeInvoicePayment {
   id                 String           @id @default(cuid())
   incomeInvoiceId    String
   incomeInvoice      IncomeInvoice    @relation(fields: [incomeInvoiceId], references: [id], onDelete: Cascade)
   amountGross        Decimal
+  /// Ręczny podział kwoty brutto wpłaty na cashflow MAIN (netto) — tylko razem z allocatedVatAmount; null = proporcje z faktury.
+  allocatedMainAmount Decimal?
+  /// Ręczny podział na konto VAT; null = proporcje z faktury.
+  allocatedVatAmount  Decimal?
   paymentDate        DateTime
   notes              String           @default("")
   /// Powiązanie z wierszem importu bankowego (jedna płatność na transakcję)
@@ -363,4 +387,45 @@ model BankTransaction {
 
   @@index([importId])
   @@index([status])
+}
+
+/// Staging dokumentów KSeF (etap 1 — bez powiązań z fakturami domenowymi).
+model KsefSyncSession {
+  id          String    @id @default(cuid())
+  status      String // RUNNING | SUCCEEDED | FAILED
+  environment String    @default("test")
+  startedAt   DateTime  @default(now())
+  finishedAt  DateTime?
+  message     String?
+  documents   KsefDocument[]
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+}
+
+model KsefDocument {
+  id                         String    @id @default(cuid())
+  ksefId                     String    @unique
+  source                     String // MOCK | KSEF
+  status                     String
+  documentType               String
+  issueDate                  DateTime
+  saleDate                   DateTime?
+  sellerName                 String
+  sellerTaxId                String    @default("")
+  buyerName                  String
+  buyerTaxId                 String    @default("")
+  netAmount                  Decimal
+  vatAmount                  Decimal
+  grossAmount                Decimal
+  currency                   String    @default("PLN")
+  rawPayload                 String
+  importedAsCostInvoiceId    String?
+  importedAsRevenueInvoiceId String?
+  syncSessionId              String?
+  syncSession                KsefSyncSession? @relation(fields: [syncSessionId], references: [id], onDelete: SetNull)
+  createdAt                  DateTime  @default(now())
+  updatedAt                  DateTime  @updatedAt
+
+  @@index([syncSessionId])
+  @@index([issueDate])
 }

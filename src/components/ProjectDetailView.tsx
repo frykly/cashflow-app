@@ -21,38 +21,6 @@ function moneyFromDecimal(v: Decimal | null | undefined): string {
   return formatMoney(decToNumber(v));
 }
 
-/** W widoku projektu: przy alokacji pokazuj netto przypisane do tego projektu; inaczej całość dokumentu (legacy). */
-function incomeNetSliceForProject(
-  r: ProjectDetailsResult["incomeInvoices"][number],
-): number {
-  const slices = r.projectAllocations;
-  if (slices && slices.length > 0) return decToNumber(slices[0]!.netAmount as Decimal);
-  return decToNumber(r.netAmount);
-}
-
-function costNetSliceForProject(r: ProjectDetailsResult["costInvoices"][number]): number {
-  const slices = r.projectAllocations;
-  if (slices && slices.length > 0) return decToNumber(slices[0]!.netAmount as Decimal);
-  return decToNumber(r.netAmount);
-}
-
-function plannedAmountSliceForProject(r: ProjectDetailsResult["plannedEvents"][number]): {
-  amount: number;
-  amountVat: number;
-} {
-  const slices = r.projectAllocations;
-  if (slices && slices.length > 0) {
-    return {
-      amount: decToNumber(slices[0]!.amount as Decimal),
-      amountVat: decToNumber(slices[0]!.amountVat as Decimal),
-    };
-  }
-  return {
-    amount: decToNumber(r.amount),
-    amountVat: decToNumber(r.amountVat ?? 0),
-  };
-}
-
 function plannedStatusLabel(s: string): string {
   if (s === "CONVERTED") return "Skonwertowane";
   if (s === "PLANNED") return "Zaplanowane";
@@ -62,7 +30,7 @@ function plannedStatusLabel(s: string): string {
 }
 
 export function ProjectDetailView({ data }: { data: ProjectDetailsResult }) {
-  const { project, counts, real, forecast, progress, incomeInvoices, costInvoices, plannedEvents } = data;
+  const { project, counts, balance, incomeInvoices, costInvoices, plannedEvents } = data;
 
   return (
     <div className="space-y-8">
@@ -102,7 +70,63 @@ export function ProjectDetailView({ data }: { data: ProjectDetailsResult }) {
       </div>
 
       <section className="rounded-xl border border-zinc-200 bg-zinc-50/80 p-4 dark:border-zinc-800 dark:bg-zinc-900/40">
-        <h2 className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">Plan i opis</h2>
+        <h2 className="text-base font-semibold text-zinc-900 dark:text-zinc-50">Bilans projektu</h2>
+        <p className="mt-1 text-xs text-zinc-500">
+          KPI w netto. Przychód „Wpłynęło” = część MAIN z wpłat (respektuje podział MAIN/VAT). Koszty „Zapłacono” =
+          netto proporcjonalnie do wpłat. „Planowane bez faktur” = zdarzenia PLANNED jeszcze niezamienione na fakturę.
+        </p>
+        <p className="mt-2 text-xs text-zinc-500">
+          Powiązane dokumenty: {counts.income} faktur przychodowych · {counts.cost} kosztowych · {counts.planned}{" "}
+          zdarzeń planowanych.
+        </p>
+
+        <div className="mt-4 space-y-6">
+          <div>
+            <h3 className="mb-2 text-sm font-medium text-zinc-800 dark:text-zinc-200">Przychody</h3>
+            <div className="grid gap-3 sm:grid-cols-3">
+              <KpiTile label="Wpłynęło (MAIN z wpłat)" value={balance.receivedMain} variant="emerald" />
+              <KpiTile label="Do wpłaty z faktur (netto)" value={balance.incomeRemainingFromInvoices} variant="white" />
+              <KpiTile
+                label="Planowane bez faktur (netto)"
+                value={balance.plannedIncomeWithoutInvoice}
+                variant="white"
+              />
+            </div>
+          </div>
+          <div>
+            <h3 className="mb-2 text-sm font-medium text-zinc-800 dark:text-zinc-200">Koszty</h3>
+            <div className="grid gap-3 sm:grid-cols-3">
+              <KpiTile label="Zapłacono (netto)" value={balance.costNetPaid} variant="red" />
+              <KpiTile label="Do zapłaty z faktur (netto)" value={balance.costRemainingFromInvoices} variant="white" />
+              <KpiTile
+                label="Planowane bez faktur (netto)"
+                value={balance.plannedCostWithoutInvoice}
+                variant="white"
+              />
+            </div>
+          </div>
+          <div>
+            <h3 className="mb-2 text-sm font-medium text-zinc-800 dark:text-zinc-200">Wynik</h3>
+            <div className="grid gap-3 sm:grid-cols-3">
+              <KpiTile
+                label="Wynik realny (wpłynęło − zapłacono)"
+                value={balance.resultReal}
+                variant="indigo"
+              />
+              <KpiTile
+                label="Wynik oczekiwany (reszty + plany bez FV)"
+                value={balance.resultExpected}
+                variant="indigo"
+              />
+              <KpiTile label="Wynik końcowy projektu" value={balance.resultFinal} variant="indigoStrong" />
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section className="rounded-xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-950">
+        <h2 className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">Plan bazowy projektu</h2>
+        <p className="mt-1 text-xs text-zinc-500">Dane wpisane ręcznie przy edycji projektu (nie są nadpisywane przez faktury).</p>
         <dl className="mt-3 grid gap-3 sm:grid-cols-2">
           <div>
             <dt className="text-xs font-medium text-zinc-500">Planowany przychód netto</dt>
@@ -120,6 +144,10 @@ export function ProjectDetailView({ data }: { data: ProjectDetailsResult }) {
             <dt className="text-xs font-medium text-zinc-500">Data zakończenia</dt>
             <dd className="text-sm">{project.endDate ? formatDate(project.endDate) : "—"}</dd>
           </div>
+          <div className="sm:col-span-2">
+            <dt className="text-xs font-medium text-zinc-500">Planowany wynik bazowy (przychód − koszt planu)</dt>
+            <dd className="text-sm font-semibold tabular-nums">{formatMoney(balance.planBaseResult)}</dd>
+          </div>
         </dl>
         <div className="mt-4">
           <p className="text-xs font-medium text-zinc-500">Opis</p>
@@ -129,8 +157,27 @@ export function ProjectDetailView({ data }: { data: ProjectDetailsResult }) {
         </div>
       </section>
 
+      <section className="rounded-xl border border-zinc-200 bg-zinc-50/60 p-4 dark:border-zinc-800 dark:bg-zinc-900/30">
+        <h2 className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">Odchylenie od planu bazowego</h2>
+        <p className="mt-1 text-xs text-zinc-500">Porównanie wyniku końcowego (Bilans) z planowanym wynikiem bazowym.</p>
+        <div className="mt-3 grid gap-3 sm:grid-cols-3">
+          <div className="rounded-lg border border-zinc-200 bg-white p-3 dark:border-zinc-800 dark:bg-zinc-950">
+            <p className="text-xs text-zinc-500">Plan bazowy wyniku</p>
+            <p className="mt-1 text-sm font-semibold tabular-nums">{formatMoney(balance.planBaseResult)}</p>
+          </div>
+          <div className="rounded-lg border border-zinc-200 bg-white p-3 dark:border-zinc-800 dark:bg-zinc-950">
+            <p className="text-xs text-zinc-500">Aktualny wynik końcowy</p>
+            <p className="mt-1 text-sm font-semibold tabular-nums">{formatMoney(balance.resultFinal)}</p>
+          </div>
+          <div className="rounded-lg border border-zinc-200 bg-white p-3 dark:border-zinc-800 dark:bg-zinc-950">
+            <p className="text-xs text-zinc-500">Odchylenie od planu</p>
+            <p className="mt-1 text-sm font-semibold tabular-nums">{formatMoney(balance.deviationFromPlan)}</p>
+          </div>
+        </div>
+      </section>
+
       <section>
-        <h2 className="mb-3 text-sm font-semibold text-zinc-800 dark:text-zinc-200">Szybkie akcje</h2>
+        <h2 className="mb-2 text-sm font-semibold text-zinc-800 dark:text-zinc-200">Szybkie akcje</h2>
         <div className="flex flex-wrap gap-2">
           <Link
             href={`/income-invoices?${incomeInvoiceNewFromProjectQuery(project)}`}
@@ -153,126 +200,22 @@ export function ProjectDetailView({ data }: { data: ProjectDetailsResult }) {
         </div>
       </section>
 
-      <section>
-        <h2 className="mb-1 text-sm font-semibold text-zinc-800 dark:text-zinc-200">Wynik rzeczywisty (faktury)</h2>
-        <p className="mb-3 text-xs text-zinc-500">Tylko zafakturowane przychody i koszty — bez zdarzeń planowanych.</p>
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          <div className="rounded-lg border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-950">
-            <p className="text-xs text-zinc-500">Liczba faktur przychodowych</p>
-            <p className="mt-1 text-2xl font-semibold tabular-nums">{counts.income}</p>
-          </div>
-          <div className="rounded-lg border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-950">
-            <p className="text-xs text-zinc-500">Liczba faktur kosztowych</p>
-            <p className="mt-1 text-2xl font-semibold tabular-nums">{counts.cost}</p>
-          </div>
-          <div className="rounded-lg border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-950">
-            <p className="text-xs text-zinc-500">Zdarzenia planowane (łącznie)</p>
-            <p className="mt-1 text-2xl font-semibold tabular-nums">{counts.planned}</p>
-          </div>
-          <div className="rounded-lg border border-emerald-200 bg-emerald-50/50 p-4 dark:border-emerald-900/40 dark:bg-emerald-950/20">
-            <p className="text-xs text-emerald-800 dark:text-emerald-300">Przychody netto (faktury)</p>
-            <p className="mt-1 text-lg font-semibold tabular-nums text-emerald-800 dark:text-emerald-300">
-              {formatMoney(real.incomeNet)}
-            </p>
-          </div>
-          <div className="rounded-lg border border-red-200 bg-red-50/50 p-4 dark:border-red-900/40 dark:bg-red-950/20">
-            <p className="text-xs text-red-800 dark:text-red-300">Koszty netto (faktury)</p>
-            <p className="mt-1 text-lg font-semibold tabular-nums text-red-800 dark:text-red-300">
-              {formatMoney(real.costNet)}
-            </p>
-          </div>
-          <div className="rounded-lg border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-950">
-            <p className="text-xs text-zinc-500">Wynik netto rzeczywisty</p>
-            <p className="mt-1 text-lg font-semibold tabular-nums">{formatMoney(real.netResult)}</p>
-          </div>
-        </div>
-      </section>
-
-      <section>
-        <h2 className="mb-1 text-sm font-semibold text-zinc-800 dark:text-zinc-200">Plan / forecast projektu</h2>
-        <p className="mb-3 text-xs text-zinc-500">
-          Łączny plan (pole projektu + aktywne zdarzenia „Zaplanowane”) vs faktury. Forecast netto = (plan przychodu − faktyczny przychód) − (plan kosztu − faktyczny koszt) — pokazuje, ile zostało do
-          „domknięcia” względem planu przy już zaksięgowanych kwotach.
-        </p>
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          <div className="rounded-lg border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-950">
-            <p className="text-xs text-zinc-500">Plan przychodu (pole projektu)</p>
-            <p className="mt-1 text-sm font-semibold tabular-nums">{formatMoney(forecast.manualPlannedRevenueNet)}</p>
-          </div>
-          <div className="rounded-lg border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-950">
-            <p className="text-xs text-zinc-500">Plan kosztu (pole projektu)</p>
-            <p className="mt-1 text-sm font-semibold tabular-nums">{formatMoney(forecast.manualPlannedCostNet)}</p>
-          </div>
-          <div className="rounded-lg border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-950">
-            <p className="text-xs text-zinc-500">Plan z zdarzeń (wpływy netto)</p>
-            <p className="mt-1 text-sm font-semibold tabular-nums text-emerald-800 dark:text-emerald-300">
-              +{formatMoney(forecast.plannedEventsIncomeNet)}
-            </p>
-          </div>
-          <div className="rounded-lg border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-950">
-            <p className="text-xs text-zinc-500">Plan z zdarzeń (wydatki netto)</p>
-            <p className="mt-1 text-sm font-semibold tabular-nums text-red-800 dark:text-red-300">
-              {formatMoney(forecast.plannedEventsExpenseNet)}
-            </p>
-          </div>
-          <div className="rounded-lg border border-indigo-200 bg-indigo-50/60 p-4 dark:border-indigo-900/40 dark:bg-indigo-950/30">
-            <p className="text-xs text-indigo-900 dark:text-indigo-200">Łączny plan przychodu</p>
-            <p className="mt-1 text-lg font-semibold tabular-nums text-indigo-900 dark:text-indigo-100">
-              {formatMoney(forecast.totalPlannedRevenue)}
-            </p>
-          </div>
-          <div className="rounded-lg border border-indigo-200 bg-indigo-50/60 p-4 dark:border-indigo-900/40 dark:bg-indigo-950/30">
-            <p className="text-xs text-indigo-900 dark:text-indigo-200">Łączny plan kosztu</p>
-            <p className="mt-1 text-lg font-semibold tabular-nums text-indigo-900 dark:text-indigo-100">
-              {formatMoney(forecast.totalPlannedCost)}
-            </p>
-          </div>
-          <div className="rounded-lg border border-indigo-200 bg-indigo-50/80 p-4 dark:border-indigo-900/40 dark:bg-indigo-950/40 sm:col-span-2 lg:col-span-3">
-            <p className="text-xs text-indigo-900 dark:text-indigo-200">Forecast netto (pozostało vs plan)</p>
-            <p className="mt-1 text-xl font-semibold tabular-nums text-indigo-950 dark:text-indigo-50">
-              {formatMoney(forecast.forecastNet)}
-            </p>
-          </div>
-        </div>
-      </section>
-
-      <section>
-        <h2 className="mb-1 text-sm font-semibold text-zinc-800 dark:text-zinc-200">Plan vs rzeczywistość</h2>
-        <p className="mb-3 text-xs text-zinc-500">
-          Odchylenia faktur netto od łącznego planu. Ostatnia kolumna: wynik rzeczywisty minus początkowy bilans planowany (bez uwzględnienia odchyleń częściowych w forecast powyżej).
-        </p>
-        <div className="grid gap-3 sm:grid-cols-3">
-          <div className="rounded-lg border border-zinc-200 bg-white p-3 dark:border-zinc-800 dark:bg-zinc-950">
-            <p className="text-xs text-zinc-500">Przychód: fakty − plan</p>
-            <p className="mt-1 text-sm font-semibold tabular-nums">{formatMoney(progress.revenueActualVsPlanned)}</p>
-          </div>
-          <div className="rounded-lg border border-zinc-200 bg-white p-3 dark:border-zinc-800 dark:bg-zinc-950">
-            <p className="text-xs text-zinc-500">Koszt: fakty − plan</p>
-            <p className="mt-1 text-sm font-semibold tabular-nums">{formatMoney(progress.costActualVsPlanned)}</p>
-          </div>
-          <div className="rounded-lg border border-zinc-200 bg-white p-3 dark:border-zinc-800 dark:bg-zinc-950">
-            <p className="text-xs text-zinc-500">Wynik − początkowy plan bilansu</p>
-            <p className="mt-1 text-sm font-semibold tabular-nums">{formatMoney(progress.netActualVsForecast)}</p>
-          </div>
-        </div>
-      </section>
-
       <p className="text-xs text-zinc-500">
-        Tabele poniżej: do 250 ostatnich pozycji w każdej kategorii. Liczniki i sumy liczone są po całości danych. Przy
-        fakturze lub zdarzeniu rozbitnym na kilka projektów w kolumnach kwot widać{" "}
-        <span className="font-medium">udział przypisany do tego projektu</span>, nie pełną kwotę dokumentu.
+        Tabele: do {250} ostatnich pozycji w każdej kategorii. Sumy w bilansie liczone są po wszystkich powiązanych
+        dokumentach. Przy dokumencie rozbitnym na wiele projektów widać udział przypisany do tego projektu.
       </p>
 
       <section id="income">
         <h2 className="mb-2 text-lg font-semibold text-zinc-900 dark:text-zinc-50">Faktury przychodowe</h2>
         <div className="overflow-x-auto rounded-xl border border-zinc-200 dark:border-zinc-800">
-          <table className="w-full min-w-[640px] text-left text-sm">
+          <table className="w-full min-w-[760px] text-left text-sm">
             <thead className="bg-zinc-50 dark:bg-zinc-900">
               <tr>
                 <th className="px-3 py-2 font-medium">Numer</th>
                 <th className="px-3 py-2 font-medium">Kontrahent</th>
                 <th className="px-3 py-2 font-medium">Netto</th>
-                <th className="px-3 py-2 font-medium">Plan. wpływ</th>
+                <th className="px-3 py-2 font-medium">Wpłynęło (MAIN)</th>
+                <th className="px-3 py-2 font-medium">Pozostało netto</th>
                 <th className="px-3 py-2 font-medium">Status</th>
                 <th className="px-3 py-2 text-right font-medium"> </th>
               </tr>
@@ -280,7 +223,7 @@ export function ProjectDetailView({ data }: { data: ProjectDetailsResult }) {
             <tbody className="divide-y divide-zinc-200 dark:divide-zinc-800">
               {incomeInvoices.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="px-3 py-8 text-center text-zinc-500">
+                  <td colSpan={7} className="px-3 py-8 text-center text-zinc-500">
                     Brak powiązań
                   </td>
                 </tr>
@@ -288,9 +231,10 @@ export function ProjectDetailView({ data }: { data: ProjectDetailsResult }) {
                 incomeInvoices.map((r) => (
                   <tr key={r.id} className="bg-white dark:bg-zinc-950">
                     <td className="px-3 py-2 font-mono text-xs">{r.invoiceNumber}</td>
-                    <td className="max-w-[180px] truncate px-3 py-2">{r.contractor}</td>
-                    <td className="px-3 py-2 tabular-nums">{formatMoney(incomeNetSliceForProject(r))}</td>
-                    <td className="whitespace-nowrap px-3 py-2">{formatDate(r.plannedIncomeDate)}</td>
+                    <td className="max-w-[160px] truncate px-3 py-2">{r.contractor}</td>
+                    <td className="px-3 py-2 tabular-nums">{formatMoney(r.row?.netSlice ?? 0)}</td>
+                    <td className="px-3 py-2 tabular-nums">{formatMoney(r.row?.mainReceived ?? 0)}</td>
+                    <td className="px-3 py-2 tabular-nums">{formatMoney(r.row?.netRemaining ?? 0)}</td>
                     <td className="px-3 py-2 text-xs">{r.status}</td>
                     <td className="px-3 py-2 text-right">
                       <Link
@@ -311,13 +255,14 @@ export function ProjectDetailView({ data }: { data: ProjectDetailsResult }) {
       <section id="cost">
         <h2 className="mb-2 text-lg font-semibold text-zinc-900 dark:text-zinc-50">Faktury kosztowe</h2>
         <div className="overflow-x-auto rounded-xl border border-zinc-200 dark:border-zinc-800">
-          <table className="w-full min-w-[640px] text-left text-sm">
+          <table className="w-full min-w-[760px] text-left text-sm">
             <thead className="bg-zinc-50 dark:bg-zinc-900">
               <tr>
                 <th className="px-3 py-2 font-medium">Numer</th>
                 <th className="px-3 py-2 font-medium">Dostawca</th>
                 <th className="px-3 py-2 font-medium">Netto</th>
-                <th className="px-3 py-2 font-medium">Plan. zapłata</th>
+                <th className="px-3 py-2 font-medium">Zapłacono netto</th>
+                <th className="px-3 py-2 font-medium">Pozostało netto</th>
                 <th className="px-3 py-2 font-medium">Status</th>
                 <th className="px-3 py-2 text-right font-medium"> </th>
               </tr>
@@ -325,7 +270,7 @@ export function ProjectDetailView({ data }: { data: ProjectDetailsResult }) {
             <tbody className="divide-y divide-zinc-200 dark:divide-zinc-800">
               {costInvoices.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="px-3 py-8 text-center text-zinc-500">
+                  <td colSpan={7} className="px-3 py-8 text-center text-zinc-500">
                     Brak powiązań
                   </td>
                 </tr>
@@ -333,9 +278,10 @@ export function ProjectDetailView({ data }: { data: ProjectDetailsResult }) {
                 costInvoices.map((r) => (
                   <tr key={r.id} className="bg-white dark:bg-zinc-950">
                     <td className="px-3 py-2 font-mono text-xs">{r.documentNumber}</td>
-                    <td className="max-w-[180px] truncate px-3 py-2">{r.supplier}</td>
-                    <td className="px-3 py-2 tabular-nums">{formatMoney(costNetSliceForProject(r))}</td>
-                    <td className="whitespace-nowrap px-3 py-2">{formatDate(r.plannedPaymentDate)}</td>
+                    <td className="max-w-[160px] truncate px-3 py-2">{r.supplier}</td>
+                    <td className="px-3 py-2 tabular-nums">{formatMoney(r.row?.netSlice ?? 0)}</td>
+                    <td className="px-3 py-2 tabular-nums">{formatMoney(r.row?.netPaid ?? 0)}</td>
+                    <td className="px-3 py-2 tabular-nums">{formatMoney(r.row?.netRemaining ?? 0)}</td>
                     <td className="px-3 py-2 text-xs">{r.status}</td>
                     <td className="px-3 py-2 text-right">
                       <Link
@@ -356,12 +302,14 @@ export function ProjectDetailView({ data }: { data: ProjectDetailsResult }) {
       <section id="planned">
         <h2 className="mb-2 text-lg font-semibold text-zinc-900 dark:text-zinc-50">Zdarzenia planowane</h2>
         <div className="overflow-x-auto rounded-xl border border-zinc-200 dark:border-zinc-800">
-          <table className="w-full min-w-[640px] text-left text-sm">
+          <table className="w-full min-w-[900px] text-left text-sm">
             <thead className="bg-zinc-50 dark:bg-zinc-900">
               <tr>
                 <th className="px-3 py-2 font-medium">Tytuł</th>
                 <th className="px-3 py-2 font-medium">Typ</th>
-                <th className="px-3 py-2 font-medium">Kwota</th>
+                <th className="px-3 py-2 font-medium">Kwota netto</th>
+                <th className="px-3 py-2 font-medium">VAT</th>
+                <th className="px-3 py-2 font-medium">Brutto</th>
                 <th className="px-3 py-2 font-medium">Data</th>
                 <th className="px-3 py-2 font-medium">Status</th>
                 <th className="px-3 py-2 font-medium">Powiązanie</th>
@@ -371,23 +319,18 @@ export function ProjectDetailView({ data }: { data: ProjectDetailsResult }) {
             <tbody className="divide-y divide-zinc-200 dark:divide-zinc-800">
               {plannedEvents.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="px-3 py-8 text-center text-zinc-500">
+                  <td colSpan={9} className="px-3 py-8 text-center text-zinc-500">
                     Brak powiązań
                   </td>
                 </tr>
               ) : (
-                plannedEvents.map((r) => {
-                  const slice = plannedAmountSliceForProject(r);
-                  return (
+                plannedEvents.map((r) => (
                   <tr key={r.id} className="bg-white dark:bg-zinc-950">
                     <td className="max-w-[200px] truncate px-3 py-2 font-medium">{r.title}</td>
                     <td className="px-3 py-2 text-xs">{r.type}</td>
-                    <td className="px-3 py-2 tabular-nums text-xs">
-                      {formatMoney(slice.amount)}
-                      {slice.amountVat > 0 ? (
-                        <span className="block text-zinc-500">+ VAT {formatMoney(slice.amountVat)}</span>
-                      ) : null}
-                    </td>
+                    <td className="px-3 py-2 tabular-nums">{formatMoney(r.row?.netAmount ?? 0)}</td>
+                    <td className="px-3 py-2 tabular-nums">{formatMoney(r.row?.vatAmount ?? 0)}</td>
+                    <td className="px-3 py-2 tabular-nums">{formatMoney(r.row?.grossAmount ?? 0)}</td>
                     <td className="whitespace-nowrap px-3 py-2">{formatDate(r.plannedDate)}</td>
                     <td className="px-3 py-2 text-xs">{plannedStatusLabel(r.status)}</td>
                     <td className="max-w-[140px] px-3 py-2 text-xs">
@@ -418,13 +361,39 @@ export function ProjectDetailView({ data }: { data: ProjectDetailsResult }) {
                       </Link>
                     </td>
                   </tr>
-                  );
-                })
+                ))
               )}
             </tbody>
           </table>
         </div>
       </section>
+    </div>
+  );
+}
+
+function KpiTile({
+  label,
+  value,
+  variant,
+}: {
+  label: string;
+  value: number;
+  variant: "emerald" | "red" | "white" | "indigo" | "indigoStrong";
+}) {
+  const wrap =
+    variant === "emerald"
+      ? "border-emerald-200 bg-emerald-50/50 dark:border-emerald-900/40 dark:bg-emerald-950/20"
+      : variant === "red"
+        ? "border-red-200 bg-red-50/50 dark:border-red-900/40 dark:bg-red-950/20"
+        : variant === "indigo"
+          ? "border-indigo-200 bg-indigo-50/60 dark:border-indigo-900/40 dark:bg-indigo-950/30"
+          : variant === "indigoStrong"
+            ? "border-indigo-300 bg-indigo-100/70 dark:border-indigo-800 dark:bg-indigo-950/50"
+            : "border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950";
+  return (
+    <div className={`rounded-lg border p-4 ${wrap}`}>
+      <p className="text-xs text-zinc-600 dark:text-zinc-400">{label}</p>
+      <p className="mt-1 text-lg font-semibold tabular-nums text-zinc-900 dark:text-zinc-50">{formatMoney(value)}</p>
     </div>
   );
 }

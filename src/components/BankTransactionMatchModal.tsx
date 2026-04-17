@@ -165,7 +165,12 @@ export function BankTransactionMatchModal({
     setIncomeSplitDraft((prev) => {
       const next = { ...prev };
       for (const row of incomes) {
-        if (row.vatDestination === "VAT" && !row.splitBlocked && next[row.id] == null) {
+        if (
+          row.vatDestination === "VAT" &&
+          !row.splitBlocked &&
+          row.canFitFullPayment &&
+          next[row.id] == null
+        ) {
           next[row.id] = defaultBankIncomeSplit(row, payPln);
         }
       }
@@ -200,7 +205,7 @@ export function BankTransactionMatchModal({
       const inv = incomes.find((r) => r.id === id);
       const payPln = Math.abs(transactionAmountGrosze) / 100;
       const body: Record<string, unknown> = { incomeInvoiceId: id };
-      if (inv?.vatDestination === "VAT" && !inv.splitBlocked) {
+      if (inv?.vatDestination === "VAT" && !inv.splitBlocked && inv.canFitFullPayment) {
         const d = incomeSplitDraft[id] ?? defaultBankIncomeSplit(inv, payPln);
         body.incomeSplit = {
           allocatedMainAmount: d.main,
@@ -289,6 +294,9 @@ export function BankTransactionMatchModal({
           {formatPlnFromGrosze(transactionAmountGrosze)}) na jedną fakturę — nie da się tą samą transakcją jednocześnie
           domknąć dwóch faktur. Przy wpłacie rozłożonej na kilka FV zrób osobne wpłaty w module przychodów lub podziel
           zapis w banku. W tabeli szukaj „pozostało brutto”: musi być ≥ kwota z wyciągu, inaczej przycisk jest wyłączony.
+          Pola <strong className="font-medium text-zinc-700 dark:text-zinc-300">MAIN / VAT</strong> pokazują się tylko przy fakturze z{" "}
+          <strong className="font-medium text-zinc-700 dark:text-zinc-300">celem płatności VAT</strong>, pojedynczym projekcie
+          i gdy pozostało brutto obejmuje całą kwotę z wyciągu — przy celu MAIN komunikat zamiast pól.
         </p>
         <label className="mb-2 block text-xs text-zinc-600 dark:text-zinc-400">
           <span className="mb-0.5 block font-medium text-zinc-700 dark:text-zinc-300">Szukaj na liście</span>
@@ -341,12 +349,22 @@ export function BankTransactionMatchModal({
                     Połącz + wpłata
                   </button>
                 </div>
-                {c.vatDestination === "VAT" && c.splitBlocked ? (
+                {c.vatDestination !== "VAT" ? (
+                  <p className="text-xs text-zinc-500 dark:text-zinc-400">
+                    Cel płatności: <strong className="font-medium text-zinc-700 dark:text-zinc-300">MAIN</strong> — całe
+                    brutto na konto główne; w tym kroku nie ma pól podziału MAIN/VAT (są tylko przy fakturach z celem VAT).
+                  </p>
+                ) : c.splitBlocked ? (
                   <p className="text-xs text-amber-700 dark:text-amber-300">
                     Jawny podział MAIN/VAT niedostępny (faktura z wieloma projektami) — użyj modułu przychodów.
                   </p>
-                ) : null}
-                {c.vatDestination === "VAT" && !c.splitBlocked ? (
+                ) : !c.canFitFullPayment ? (
+                  <p className="text-xs text-zinc-500 dark:text-zinc-400">
+                    Pola MAIN/VAT pojawiłyby się tutaj, gdyby <strong className="font-medium text-zinc-700 dark:text-zinc-300">pozostało brutto</strong>{" "}
+                    było ≥ kwota z wyciągu — przy częściowej kwocie najpierw zaksięguj wpłaty w module przychodów (bez
+                    pełnego powiązania z tą linią banku) lub podziel zapis w imporcie.
+                  </p>
+                ) : (
                   <div className="flex flex-wrap items-end gap-2 pl-0 text-xs">
                     <span className="text-zinc-500">Cashflow z tej wpłaty (suma = kwota z wyciągu):</span>
                     <label className="flex flex-col gap-0.5">
@@ -385,7 +403,7 @@ export function BankTransactionMatchModal({
                       = {formatPlnFromGrosze(transactionAmountGrosze)}
                     </span>
                   </div>
-                ) : null}
+                )}
               </li>
             ))}
           </ul>

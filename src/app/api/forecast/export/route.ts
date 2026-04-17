@@ -72,7 +72,9 @@ export async function GET(req: Request) {
 
   const [settings, incomes, costs, events, otherIncomes] = await Promise.all([
     prisma.appSettings.findUnique({ where: { id: 1 } }),
-    prisma.incomeInvoice.findMany({ include: { payments: true } }),
+    prisma.incomeInvoice.findMany({
+      include: { payments: true, plannedPayments: { orderBy: { sortOrder: "asc" } } },
+    }),
     prisma.costInvoice.findMany({ include: { payments: true } }),
     prisma.plannedFinancialEvent.findMany(),
     prisma.otherIncome.findMany(),

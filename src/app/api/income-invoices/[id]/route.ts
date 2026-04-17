@@ -32,6 +32,7 @@ export async function GET(_req: Request, ctx: Ctx) {
         include: { projectAllocations: { include: { project: { select: { id: true, name: true } } } } },
       },
       projectAllocations: { include: { project: { select: { id: true, name: true, code: true } } } },
+      plannedPayments: { orderBy: { sortOrder: "asc" } },
     },
   });
   if (!row) return jsonError("Nie znaleziono", 404);
@@ -172,6 +173,7 @@ export async function PATCH(req: Request, ctx: Ctx) {
           include: { projectAllocations: { include: { project: { select: { id: true, name: true } } } } },
         },
         projectAllocations: { include: { project: { select: { id: true, name: true, code: true } } } },
+        plannedPayments: { orderBy: { sortOrder: "asc" } },
       },
     });
     return jsonData(fresh ?? row);

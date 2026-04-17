@@ -53,6 +53,59 @@ export function incomePaymentDeltas(inv: IncomeInvoice, amountGross: number): { 
   return { main: round2(net * ratio), vat: round2(vat * ratio) };
 }
 
+/** Docelowe kwoty netto / VAT faktury przychodu dla cashflow (pełne rozliczenie dokumentu). */
+export function incomeInvoiceCashTargets(inv: IncomeInvoice): { main: number; vat: number } {
+  if (inv.vatDestination === "MAIN") {
+    return { main: decToNumber(inv.grossAmount), vat: 0 };
+  }
+  return { main: decToNumber(inv.netAmount), vat: decToNumber(inv.vatAmount) };
+}
+
+type IncomePaySplit = Pick<
+  IncomeInvoicePayment,
+  "amountGross" | "allocatedMainAmount" | "allocatedVatAmount"
+>;
+
+/**
+ * MAIN/VAT dla pojedynczej wpłaty — jawny podział (oba pola) albo dotychczasowe proporcje.
+ */
+export function incomePaymentMainVatParts(inv: IncomeInvoice, payment: IncomePaySplit): { main: number; vat: number } {
+  const gross = decToNumber(payment.amountGross);
+  const oMain = payment.allocatedMainAmount != null ? decToNumber(payment.allocatedMainAmount) : null;
+  const oVat = payment.allocatedVatAmount != null ? decToNumber(payment.allocatedVatAmount) : null;
+  if (oMain != null && oVat != null) {
+    return { main: round2(oMain), vat: round2(oVat) };
+  }
+  return incomePaymentDeltas(inv, gross);
+}
+
+export function sumIncomePaymentsMainVat(
+  inv: IncomeInvoice,
+  payments: IncomePaySplit[],
+): { main: number; vat: number } {
+  let main = 0;
+  let vat = 0;
+  for (const p of payments) {
+    const d = incomePaymentMainVatParts(inv, p);
+    main = round2(main + d.main);
+    vat = round2(vat + d.vat);
+  }
+  return { main, vat };
+}
+
+/** Pozostało do wpływu na MAIN / VAT po uwzględnieniu jawnych podziałów lub proporcji. */
+export function incomeRemainingMainVat(
+  inv: IncomeInvoice,
+  payments: IncomePaySplit[],
+): { remMain: number; remVat: number } {
+  const t = incomeInvoiceCashTargets(inv);
+  const s = sumIncomePaymentsMainVat(inv, payments);
+  return {
+    remMain: round2(Math.max(0, t.main - s.main)),
+    remVat: round2(Math.max(0, t.vat - s.vat)),
+  };
+}
+
 /** Skalowanie pełnych delt kosztu do części kwoty brutto. */
 export function costPaymentDeltas(inv: CostInvoice, amountGross: number): { main: number; vat: number } {
   const gross = decToNumber(inv.grossAmount);

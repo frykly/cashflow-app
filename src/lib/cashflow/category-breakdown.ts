@@ -1,19 +1,27 @@
-import type { CostInvoice, CostInvoicePayment, IncomeInvoice, IncomeInvoicePayment, PlannedFinancialEvent } from "@prisma/client";
+import type {
+  CostInvoice,
+  CostInvoicePayment,
+  IncomeInvoice,
+  IncomeInvoicePayment,
+  IncomeInvoicePlannedPayment,
+  PlannedFinancialEvent,
+} from "@prisma/client";
 import { addDays, isBefore, startOfDay } from "date-fns";
+import { activeIncomePlanRows, remainderSplitByIncomePlan } from "./forecast";
 import { decToNumber } from "./money";
 import {
   costPaymentDeltas,
   costRemainingGross,
-  incomePaymentDeltas,
-  incomeRemainingGross,
+  incomeRemainingMainVat,
   isCostFullyPaid,
   isIncomeFullyPaid,
+  PAY_EPS,
 } from "./settlement";
 
 export type CategoryRow = { categoryId: string | null; name: string; mainAmount: number };
 
 export function breakdownIncomeByCategory30(
-  incomes: (IncomeInvoice & { payments: IncomeInvoicePayment[] })[],
+  incomes: (IncomeInvoice & { payments: IncomeInvoicePayment[]; plannedPayments?: IncomeInvoicePlannedPayment[] })[],
   events: PlannedFinancialEvent[],
   incomeCategoryName: (id: string | null) => string,
   now = new Date(),
@@ -24,13 +32,22 @@ export function breakdownIncomeByCategory30(
 
   for (const inv of incomes) {
     if (isIncomeFullyPaid(inv, inv.payments)) continue;
-    const d = inv.plannedIncomeDate;
-    if (isBefore(d, start) || !isBefore(d, end)) continue;
-    const rem = incomeRemainingGross(inv, inv.payments);
-    const { main } = incomePaymentDeltas(inv, rem);
-    if (main <= 0) continue;
+    const { remMain } = incomeRemainingMainVat(inv, inv.payments);
+    if (remMain <= PAY_EPS) continue;
     const cid = inv.incomeCategoryId ?? null;
-    map.set(cid, (map.get(cid) ?? 0) + main);
+    const rows = activeIncomePlanRows(inv);
+    if (rows.length > 0) {
+      const splits = remainderSplitByIncomePlan(inv, inv.payments, rows);
+      for (const s of splits) {
+        if (s.main <= PAY_EPS) continue;
+        if (isBefore(s.dueDate, start) || !isBefore(s.dueDate, end)) continue;
+        map.set(cid, (map.get(cid) ?? 0) + s.main);
+      }
+    } else {
+      const d = inv.plannedIncomeDate;
+      if (isBefore(d, start) || !isBefore(d, end)) continue;
+      map.set(cid, (map.get(cid) ?? 0) + remMain);
+    }
   }
 
   for (const ev of events) {
