@@ -156,10 +156,21 @@ export async function PATCH(req: Request, ctx: Ctx) {
 
 export async function DELETE(_req: Request, ctx: Ctx) {
   const { id } = await ctx.params;
+  const existing = await prisma.plannedFinancialEvent.findUnique({
+    where: { id },
+    select: { id: true, status: true, title: true },
+  });
+  if (!existing) return jsonError("Nie znaleziono", 404);
+  if (existing.status === "CONVERTED") {
+    return jsonError(
+      "Zdarzenie skonwertowane na fakturę — usuń lub popraw dokument księgowy; rekord planu nie może być usunięty.",
+      409,
+    );
+  }
   try {
     await prisma.plannedFinancialEvent.delete({ where: { id } });
     return new NextResponse(null, { status: 204 });
   } catch {
-    return jsonError("Nie znaleziono", 404);
+    return jsonError("Nie udało się usunąć (np. powiązania z innymi danymi).", 500);
   }
 }

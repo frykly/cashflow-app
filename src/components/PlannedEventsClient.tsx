@@ -474,10 +474,15 @@ export function PlannedEventsClient({ initialQueryString = "" }: { initialQueryS
   }
 
   async function remove(id: string) {
-    if (!confirm("Usunąć to zdarzenie?")) return;
+    if (!confirm("Trwale usunąć to zdarzenie z planu? Tej operacji nie cofniesz (to nie jest anulowanie).")) return;
     const res = await fetch(`/api/planned-events/${id}`, { method: "DELETE" });
+    if (res.status === 204) {
+      if (open && editing.id === id) closeModal();
+      load();
+      return;
+    }
+    const j = await res.json().catch(() => ({}));
     if (!res.ok) {
-      const j = await res.json();
       alert(readApiErrorBody(j));
       return;
     }
@@ -751,9 +756,11 @@ export function PlannedEventsClient({ initialQueryString = "" }: { initialQueryS
                       <Button variant="ghost" className="!py-1 text-xs" onClick={() => openEdit(r)}>
                         Edytuj
                       </Button>
-                      <Button variant="ghost" className="!py-1 text-xs text-red-600 dark:text-red-400" onClick={() => remove(r.id)}>
-                        Usuń
-                      </Button>
+                      {r.status !== "CONVERTED" ? (
+                        <Button variant="ghost" className="!py-1 text-xs text-red-600 dark:text-red-400" onClick={() => remove(r.id)}>
+                          Usuń
+                        </Button>
+                      ) : null}
                     </td>
                   </tr>
                 );
@@ -1076,6 +1083,19 @@ export function PlannedEventsClient({ initialQueryString = "" }: { initialQueryS
               {saving ? <Spinner className="!size-4" /> : null}
               Zapisz
             </Button>
+            {editing.id && !formLocked ? (
+              <Button
+                type="button"
+                variant="secondary"
+                className="border-red-200 text-red-700 hover:bg-red-50 dark:border-red-900 dark:text-red-300 dark:hover:bg-red-950/40"
+                disabled={saving}
+                onClick={() => {
+                  if (editing.id) void remove(editing.id);
+                }}
+              >
+                Usuń z planu
+              </Button>
+            ) : null}
             <Button type="button" variant="secondary" onClick={closeModal} disabled={saving}>
               Anuluj
             </Button>
