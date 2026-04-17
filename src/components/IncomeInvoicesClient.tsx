@@ -17,10 +17,17 @@ import { isCalendarOverdue } from "@/lib/cashflow/overdue";
 import type { IncomeInvoice, IncomeInvoicePayment } from "@prisma/client";
 
 type PayPick = Pick<IncomeInvoicePayment, "amountGross">;
-import { incomeRemainingGross, isIncomeFullyPaid, sumIncomePaymentsGross } from "@/lib/cashflow/settlement";
+import { round2 } from "@/lib/cashflow/money";
+import {
+  incomeRemainingGross,
+  isIncomeFullyPaid,
+  PAY_EPS,
+  sumIncomePaymentsGross,
+} from "@/lib/cashflow/settlement";
 import { DueDateOffsetControls } from "@/components/DueDateOffsetControls";
 import { normalizeDecimalInput } from "@/lib/decimal-input";
 import { projectLinkTargetId, projectListLabel } from "@/lib/project-display";
+import { postCreateReturnFromSearchParams, type PostCreateReturnCapture } from "@/lib/safe-internal-return-path";
 import { documentGrossSlicesFromInvoice } from "@/lib/payment-project-allocation/distribute-read";
 import { defaultProportionalPaymentAllocationRows } from "@/lib/payment-project-allocation/default-rows";
 import { InvoicePdfDraftSection } from "@/components/InvoicePdfDraftSection";
@@ -52,6 +59,8 @@ type Row = {
     amountGross: string;
     paymentDate: string;
     notes: string;
+    allocatedMainAmount?: string | null;
+    allocatedVatAmount?: string | null;
     projectAllocations?: { projectId: string; grossAmount: unknown; project?: { id: string; name: string } | null }[];
   }[];
   isGeneratedFromRecurring?: boolean;
@@ -67,6 +76,18 @@ type Row = {
     description: string;
     project?: { id: string; name: string } | null;
   }[];
+  /** Harmonogram planowanych wpłat (MAIN/VAT) — nie są to rzeczywiste wpłaty. */
+  plannedPayments?: {
+    id?: string;
+    /** Stabilny klucz React dla nowych wierszy (bez id z API). */
+    clientKey?: string;
+    dueDate: string;
+    plannedMainAmount: string;
+    plannedVatAmount: string;
+    note: string;
+    sortOrder: number;
+    status: string;
+  }[];
 };
 
 type Draft = Omit<Row, "id"> & { id?: string };
@@ -77,6 +98,25 @@ function todayYmd(): string {
 
 function incomeInvoiceMultiProject(editing: Pick<Draft, "projectAllocations" | "projectId">): boolean {
   return (editing.projectAllocations?.length ?? 0) > 1;
+}
+
+/** Domyślny podział cashflow MAIN/VAT dla kwoty brutto wpłaty (faktura VAT, jeden projekt). */
+function prefillIncomePaymentCashflowSplit(
+  editing: Draft,
+  grossStr: string,
+): { main: string; vat: string } {
+  if (editing.vatDestination !== "VAT" || incomeInvoiceMultiProject(editing)) {
+    return { main: "", vat: "" };
+  }
+  const gInv = Number(editing.grossAmount);
+  const pay = Number(normalizeDecimalInput(grossStr));
+  if (!(gInv > 0) || !Number.isFinite(pay)) return { main: "0.00", vat: "0.00" };
+  const net = Number(editing.netAmount);
+  const vat = Number(editing.vatAmount);
+  const ratio = pay / gInv;
+  const vPart = round2(vat * ratio);
+  const mPart = round2(pay - vPart);
+  return { main: mPart.toFixed(2), vat: vPart.toFixed(2) };
 }
 
 function prefillIncomePaymentProjectRows(editing: Draft, amountGrossStr: string) {
@@ -90,6 +130,39 @@ function prefillIncomePaymentProjectRows(editing: Draft, amountGrossStr: string)
   };
   const slices = documentGrossSlicesFromInvoice(inv);
   return defaultProportionalPaymentAllocationRows(slices, amountGrossStr);
+}
+
+function normalizePlannedFromApi(raw: Row["plannedPayments"] | undefined): NonNullable<Row["plannedPayments"]> {
+  if (!raw?.length) return [];
+  return [...raw]
+    .slice()
+    .sort((a, b) => a.sortOrder - b.sortOrder)
+    .map((p) => ({
+      id: p.id,
+      clientKey: p.clientKey,
+      dueDate: isoToDateInputValue(typeof p.dueDate === "string" ? p.dueDate : String(p.dueDate)),
+      plannedMainAmount: String(p.plannedMainAmount ?? "0"),
+      plannedVatAmount: String(p.plannedVatAmount ?? "0"),
+      note: p.note ?? "",
+      sortOrder: p.sortOrder ?? 0,
+      status: p.status ?? "PLANNED",
+    }));
+}
+
+function newPlanRow(sortOrder: number): NonNullable<Row["plannedPayments"]>[number] {
+  const ck =
+    typeof globalThis.crypto !== "undefined" && typeof globalThis.crypto.randomUUID === "function"
+      ? globalThis.crypto.randomUUID()
+      : `ck-${sortOrder}-${Date.now()}`;
+  return {
+    clientKey: ck,
+    dueDate: todayYmd(),
+    plannedMainAmount: "0",
+    plannedVatAmount: "0",
+    note: "",
+    sortOrder,
+    status: "PLANNED",
+  };
 }
 
 function emptyDraft(): Draft {
@@ -112,6 +185,7 @@ function emptyDraft(): Draft {
     notes: "",
     incomeCategoryId: null,
     projectId: null,
+    plannedPayments: [],
   };
 }
 
@@ -229,7 +303,12 @@ export function IncomeInvoicesClient({ initialQueryString = "" }: { initialQuery
   const [payDraft, setPayDraft] = useState({ amountGross: "", paymentDate: "", notes: "" });
   const [payProjectRows, setPayProjectRows] = useState<{ projectId: string; grossAmount: string }[]>([]);
   const [payProjectManual, setPayProjectManual] = useState(false);
+  const [paySplitMain, setPaySplitMain] = useState("");
+  const [paySplitVat, setPaySplitVat] = useState("");
   const [paySaving, setPaySaving] = useState(false);
+  const [planSaving, setPlanSaving] = useState(false);
+  /** Wiersz planu wpłat do szybkich akcji (focus z inputów). */
+  const planRowFocusIdxRef = useRef(0);
   const [importMsg, setImportMsg] = useState<string | null>(null);
   const [contractorSuggestions, setContractorSuggestions] = useState<string[]>([]);
   const [projects, setProjects] = useState<ProjectOption[]>([]);
@@ -237,6 +316,7 @@ export function IncomeInvoicesClient({ initialQueryString = "" }: { initialQuery
   const plannedIncomeManualRef = useRef(false);
   /** Po utworzeniu faktury z zdarzenia planowanego — wysłane w POST, potem czyszczone. */
   const sourcePlannedEventIdRef = useRef<string | null>(null);
+  const postCreateReturnRef = useRef<PostCreateReturnCapture>({ returnTo: null, sourceProjectId: null });
   const [amountEntryMode, setAmountEntryMode] = useState<AmountEntryMode>("net");
   const [projectAllocMode, setProjectAllocMode] = useState<"simple" | "multi">("simple");
   const [projectAllocRows, setProjectAllocRows] = useState<
@@ -370,6 +450,7 @@ export function IncomeInvoicesClient({ initialQueryString = "" }: { initialQuery
     setPdfDraftNote(null);
     setPayOpen(false);
     sourcePlannedEventIdRef.current = null;
+    postCreateReturnRef.current = { returnTo: null, sourceProjectId: null };
     setProjectAllocMode("simple");
     setProjectAllocRows([]);
   }
@@ -377,6 +458,7 @@ export function IncomeInvoicesClient({ initialQueryString = "" }: { initialQuery
   function openNew() {
     plannedIncomeManualRef.current = false;
     sourcePlannedEventIdRef.current = null;
+    postCreateReturnRef.current = { returnTo: null, sourceProjectId: null };
     setAmountEntryMode("net");
     setProjectAllocMode("simple");
     setProjectAllocRows([]);
@@ -457,6 +539,7 @@ export function IncomeInvoicesClient({ initialQueryString = "" }: { initialQuery
       netAmount: String(r.netAmount),
       vatAmount: String(r.vatAmount),
       grossAmount: String(r.grossAmount),
+      plannedPayments: normalizePlannedFromApi(r.plannedPayments),
     });
     const pa = r.projectAllocations;
     if (pa && pa.length > 0) {
@@ -489,6 +572,7 @@ export function IncomeInvoicesClient({ initialQueryString = "" }: { initialQuery
     projectName: null as string | null,
     projectCode: null as string | null,
     convertPlannedEventId: null as string | null,
+    returnTo: null as string | null,
   };
 
   const listQs = merged.toString();
@@ -521,6 +605,7 @@ export function IncomeInvoicesClient({ initialQueryString = "" }: { initialQuery
           queueMicrotask(() => setParams(stripInvoiceDeepLinkParams));
           return;
         }
+        postCreateReturnRef.current = postCreateReturnFromSearchParams(m);
         let contractor = prefillClient;
         if (!contractor && ev.projectId) {
           const pr = await fetch(`/api/projects/${ev.projectId}`);
@@ -567,6 +652,7 @@ export function IncomeInvoicesClient({ initialQueryString = "" }: { initialQuery
       }
       if (wantNew) {
         if (cancelled) return;
+        postCreateReturnRef.current = postCreateReturnFromSearchParams(m);
         plannedIncomeManualRef.current = false;
         setAmountEntryMode("net");
         const d = emptyDraft();
@@ -612,6 +698,7 @@ export function IncomeInvoicesClient({ initialQueryString = "" }: { initialQuery
         netAmount: String(j.netAmount),
         vatAmount: String(j.vatAmount),
         grossAmount: String(j.grossAmount),
+        plannedPayments: normalizePlannedFromApi(j.plannedPayments as Row["plannedPayments"]),
       };
     });
   }
@@ -657,6 +744,10 @@ export function IncomeInvoicesClient({ initialQueryString = "" }: { initialQuery
         paymentDate: pd,
         notes: payDraft.notes,
       };
+      if (editing.vatDestination === "VAT" && !incomeInvoiceMultiProject(editing)) {
+        body.allocatedMainAmount = normalizeDecimalInput(paySplitMain.trim() || "0");
+        body.allocatedVatAmount = normalizeDecimalInput(paySplitVat.trim() || "0");
+      }
       if (incomeInvoiceMultiProject(editing) && payProjectRows.length > 0) {
         body.projectAllocations = payProjectRows.map((r) => ({
           projectId: r.projectId,
@@ -678,6 +769,8 @@ export function IncomeInvoicesClient({ initialQueryString = "" }: { initialQuery
       setPayDraft({ amountGross: "", paymentDate: "", notes: "" });
       setPayProjectRows([]);
       setPayProjectManual(false);
+      setPaySplitMain("");
+      setPaySplitVat("");
       await refreshPaymentsForInvoice(editing.id);
       load();
     } catch {
@@ -698,6 +791,101 @@ export function IncomeInvoicesClient({ initialQueryString = "" }: { initialQuery
     }
     await refreshPaymentsForInvoice(editing.id);
     load();
+  }
+
+  async function savePaymentPlan() {
+    if (!editing.id) return;
+    setPlanSaving(true);
+    setFormError(null);
+    const rows = editing.plannedPayments ?? [];
+    for (const r of rows) {
+      if (!String(r.dueDate ?? "").trim()) {
+        setFormError("Uzupełnij termin (datę) w każdym wierszu planu wpłat.");
+        setPlanSaving(false);
+        return;
+      }
+    }
+    const invNet = round2(Number(normalizeDecimalInput(editing.netAmount || "0")));
+    const invVat = round2(Number(normalizeDecimalInput(editing.vatAmount || "0")));
+    let sumM = 0;
+    let sumV = 0;
+    for (const r of rows) {
+      sumM = round2(sumM + Number(normalizeDecimalInput(r.plannedMainAmount || "0")));
+      sumV = round2(sumV + Number(normalizeDecimalInput(r.plannedVatAmount || "0")));
+    }
+    if (sumM > invNet + PAY_EPS) {
+      setFormError(
+        `Suma MAIN w planie (${formatMoney(sumM)}) przekracza netto faktury (${formatMoney(invNet)}). Zmniejsz kwoty lub usuń wiersze.`,
+      );
+      setPlanSaving(false);
+      return;
+    }
+    if (sumV > invVat + PAY_EPS) {
+      setFormError(
+        `Suma VAT w planie (${formatMoney(sumV)}) przekracza VAT faktury (${formatMoney(invVat)}). Zmniejsz kwoty lub usuń wiersze.`,
+      );
+      setPlanSaving(false);
+      return;
+    }
+    const payload = {
+      rows: rows.map((r, i) => ({
+        dueDate: `${r.dueDate}T12:00:00.000Z`,
+        plannedMainAmount: normalizeDecimalInput(r.plannedMainAmount || "0"),
+        plannedVatAmount: normalizeDecimalInput(r.plannedVatAmount || "0"),
+        note: r.note.trim(),
+        sortOrder: i,
+        status: r.status || "PLANNED",
+      })),
+    };
+    try {
+      const res = await fetch(`/api/income-invoices/${editing.id}/payment-plan`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const j = await res.json();
+      if (!res.ok) {
+        setFormError(readApiErrorBody(j));
+        return;
+      }
+      await refreshPaymentsForInvoice(editing.id);
+      load();
+    } catch {
+      setFormError("Błąd sieci");
+    } finally {
+      setPlanSaving(false);
+    }
+  }
+
+  /** Szybkie uzupełnienie wiersza pod kursorem (focus): VAT / MAIN / reszta — wg pozostałej kwoty względem innych wierszy. */
+  function applyPlanQuickFill(mode: "vat" | "main" | "rest") {
+    setEditing((prev) => {
+      const rows = [...(prev.plannedPayments ?? [])];
+      if (rows.length === 0) rows.push(newPlanRow(0));
+      const idx = Math.min(Math.max(0, planRowFocusIdxRef.current), rows.length - 1);
+      const invNet = round2(Number(normalizeDecimalInput(prev.netAmount || "0")));
+      const invVat = round2(Number(normalizeDecimalInput(prev.vatAmount || "0")));
+      let othM = 0;
+      let othV = 0;
+      for (let i = 0; i < rows.length; i++) {
+        if (i === idx) continue;
+        othM = round2(othM + Number(normalizeDecimalInput(rows[i].plannedMainAmount || "0")));
+        othV = round2(othV + Number(normalizeDecimalInput(rows[i].plannedVatAmount || "0")));
+      }
+      const remM = round2(Math.max(0, invNet - othM));
+      const remV = round2(Math.max(0, invVat - othV));
+      const cur = { ...rows[idx] };
+      if (mode === "vat") {
+        cur.plannedVatAmount = remV.toFixed(2);
+      } else if (mode === "main") {
+        cur.plannedMainAmount = remM.toFixed(2);
+      } else {
+        cur.plannedMainAmount = remM.toFixed(2);
+        cur.plannedVatAmount = remV.toFixed(2);
+      }
+      rows[idx] = cur;
+      return { ...prev, plannedPayments: rows.map((r, i) => ({ ...r, sortOrder: i })) };
+    });
   }
 
   async function onImportFile(e: React.ChangeEvent<HTMLInputElement>) {
@@ -802,14 +990,19 @@ export function IncomeInvoicesClient({ initialQueryString = "" }: { initialQuery
         setFormError(readApiErrorBody(j));
         return;
       }
+      const snap = postCreateReturnRef.current;
       closeModal();
       if (method === "POST") {
         const redirectPid =
           projectAllocMode === "multi"
             ? projectAllocRows.find((x) => x.projectId.trim())?.projectId
             : projectIdPayload;
-        if (redirectPid) {
-          router.push(`/projects/${redirectPid}`);
+        const dest =
+          snap.returnTo ??
+          (redirectPid ? `/projects/${redirectPid}` : null) ??
+          (snap.sourceProjectId ? `/projects/${snap.sourceProjectId}` : null);
+        if (dest) {
+          router.push(dest);
           return;
         }
       }
@@ -1409,8 +1602,17 @@ export function IncomeInvoicesClient({ initialQueryString = "" }: { initialQuery
                   setEditing({ ...editing, plannedIncomeDate: e.target.value });
                 }}
                 required
-                disabled={saving}
+                disabled={saving || (editing.plannedPayments?.length ?? 0) > 0}
+                className={
+                  (editing.plannedPayments?.length ?? 0) > 0 ? "opacity-60" : undefined
+                }
               />
+              {(editing.plannedPayments?.length ?? 0) > 0 ? (
+                <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
+                  Aktywny plan wpłat — daty wpływu w prognozie biorą się z harmonogramu poniżej; to pole zostaje jako
+                  zapas przy braku planu.
+                </p>
+              ) : null}
             </Field>
           </div>
           <div className="grid gap-3 sm:grid-cols-2">
@@ -1481,6 +1683,287 @@ export function IncomeInvoicesClient({ initialQueryString = "" }: { initialQuery
             />
           </Field>
           {editing.id ? (
+            <div className="rounded-lg border border-emerald-200/80 bg-emerald-50/40 p-3 dark:border-emerald-900/50 dark:bg-emerald-950/20">
+              <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                <span className="text-sm font-medium text-zinc-800 dark:text-zinc-200">Plan wpłat</span>
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    className="!py-1.5 !text-xs"
+                    disabled={saving || planSaving}
+                    onClick={() => {
+                      setEditing((prev) => {
+                        const next = [...(prev.plannedPayments ?? [])];
+                        next.push(newPlanRow(next.length));
+                        return { ...prev, plannedPayments: next };
+                      });
+                    }}
+                  >
+                    Dodaj termin
+                  </Button>
+                  <Button
+                    type="button"
+                    className="!py-1.5 !text-xs"
+                    disabled={saving || planSaving}
+                    onClick={() => void savePaymentPlan()}
+                  >
+                    {planSaving ? <Spinner className="!size-4" /> : null}
+                    Zapisz plan wpłat
+                  </Button>
+                </div>
+              </div>
+              <p className="mb-2 text-xs text-zinc-600 dark:text-zinc-400">
+                Harmonogram planowany (MAIN / VAT) — informacyjnie; nie zastępuje rzeczywistych wpłat poniżej. Edycja
+                wiersza używa bezpiecznej aktualizacji stanu — zapisz plan, aby trwale zapisać w bazie.
+              </p>
+              <div className="mb-2 flex flex-wrap gap-2">
+                <Button
+                  type="button"
+                  variant="secondary"
+                  className="!py-1 !text-xs"
+                  disabled={saving || planSaving}
+                  onClick={() => applyPlanQuickFill("vat")}
+                >
+                  Pozostały VAT
+                </Button>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  className="!py-1 !text-xs"
+                  disabled={saving || planSaving}
+                  onClick={() => applyPlanQuickFill("main")}
+                >
+                  Pozostałe MAIN
+                </Button>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  className="!py-1 !text-xs"
+                  disabled={saving || planSaving}
+                  onClick={() => applyPlanQuickFill("rest")}
+                >
+                  Uzupełnij resztę faktury
+                </Button>
+              </div>
+              {(() => {
+                const plan = editing.plannedPayments ?? [];
+                const sumMain = round2(
+                  plan.reduce((s, r) => s + Number(normalizeDecimalInput(r.plannedMainAmount || "0")), 0),
+                );
+                const sumVat = round2(
+                  plan.reduce((s, r) => s + Number(normalizeDecimalInput(r.plannedVatAmount || "0")), 0),
+                );
+                const sumTot = round2(sumMain + sumVat);
+                const invNet = round2(Number(normalizeDecimalInput(editing.netAmount || "0")));
+                const invVat = round2(Number(normalizeDecimalInput(editing.vatAmount || "0")));
+                const invGross = round2(invNet + invVat);
+                const dMain = round2(sumMain - invNet);
+                const dVat = round2(sumVat - invVat);
+                const dTot = round2(sumTot - invGross);
+                const over = dMain > PAY_EPS || dVat > PAY_EPS;
+                const incomplete = dMain < -PAY_EPS || dVat < -PAY_EPS;
+                const ok = !over && !incomplete;
+                return (
+                  <div
+                    className={`mb-2 space-y-1 rounded-md border p-2 text-xs ${
+                      over
+                        ? "border-red-300 bg-red-50/90 text-red-900 dark:border-red-900 dark:bg-red-950/40 dark:text-red-100"
+                        : incomplete
+                          ? "border-amber-300 bg-amber-50/80 text-amber-950 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-100"
+                          : "border-emerald-200/80 bg-white/60 text-zinc-800 dark:border-emerald-900/50 dark:bg-emerald-950/30 dark:text-zinc-100"
+                    }`}
+                  >
+                    <div className="grid gap-0.5 sm:grid-cols-2">
+                      <span>
+                        Suma MAIN (plan): <strong className="tabular-nums">{formatMoney(sumMain)}</strong> · netto
+                        faktury: <strong className="tabular-nums">{formatMoney(invNet)}</strong>
+                      </span>
+                      <span>
+                        Suma VAT (plan): <strong className="tabular-nums">{formatMoney(sumVat)}</strong> · VAT faktury:{" "}
+                        <strong className="tabular-nums">{formatMoney(invVat)}</strong>
+                      </span>
+                      <span>
+                        Suma razem (plan): <strong className="tabular-nums">{formatMoney(sumTot)}</strong> · brutto
+                        faktury: <strong className="tabular-nums">{formatMoney(invGross)}</strong>
+                      </span>
+                      <span>
+                        Różnica MAIN / VAT / razem:{" "}
+                        <strong className="tabular-nums">
+                          {formatMoney(dMain)} / {formatMoney(dVat)} / {formatMoney(dTot)}
+                        </strong>
+                      </span>
+                    </div>
+                    {over ? (
+                      <p className="font-medium">Plan przekracza fakturę — zapis planu jest zablokowany do skorygowania kwot.</p>
+                    ) : incomplete ? (
+                      <p className="font-medium">Plan niepełny (poniżej netto/VAT faktury) — zapis dozwolony.</p>
+                    ) : (
+                      <p className="text-emerald-800 dark:text-emerald-200/90">Plan zgodny z kwotami faktury (MAIN/VAT).</p>
+                    )}
+                  </div>
+                );
+              })()}
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs">
+                  <thead>
+                    <tr className="border-b border-emerald-200 dark:border-emerald-900/60">
+                      <th className="py-1 pr-2">Termin</th>
+                      <th className="py-1 pr-2">MAIN (plan)</th>
+                      <th className="py-1 pr-2">VAT (plan)</th>
+                      <th className="py-1 pr-2">Razem</th>
+                      <th className="py-1 pr-2">Status</th>
+                      <th className="py-1 pr-2">Opis</th>
+                      <th className="py-1 text-right"> </th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(editing.plannedPayments ?? []).length === 0 ? (
+                      <tr>
+                        <td colSpan={7} className="py-2 text-zinc-500">
+                          Brak pozycji — użyj „Dodaj termin”, np. transza 1: część netto + pełny VAT, transza 2: reszta netto.
+                        </td>
+                      </tr>
+                    ) : (
+                      (editing.plannedPayments ?? []).map((row, idx) => {
+                        const mainN = Number(normalizeDecimalInput(row.plannedMainAmount || "0"));
+                        const vatN = Number(normalizeDecimalInput(row.plannedVatAmount || "0"));
+                        const tot = mainN + vatN;
+                        const rowKey = row.id ?? row.clientKey ?? `plan-row-${idx}`;
+                        return (
+                          <tr
+                            key={rowKey}
+                            className="border-b border-emerald-100/80 dark:border-emerald-900/40"
+                            onFocusCapture={() => {
+                              planRowFocusIdxRef.current = idx;
+                            }}
+                          >
+                            <td className="py-1.5 pr-2 align-top">
+                              <Input
+                                type="date"
+                                className="!py-1 !text-xs"
+                                value={row.dueDate}
+                                onChange={(e) => {
+                                  const v = e.target.value;
+                                  setEditing((prev) => {
+                                    const next = [...(prev.plannedPayments ?? [])];
+                                    next[idx] = { ...next[idx], dueDate: v };
+                                    return { ...prev, plannedPayments: next };
+                                  });
+                                }}
+                                onFocus={() => {
+                                  planRowFocusIdxRef.current = idx;
+                                }}
+                                disabled={saving || planSaving}
+                              />
+                            </td>
+                            <td className="py-1.5 pr-2 align-top">
+                              <Input
+                                className="!py-1 !text-xs tabular-nums"
+                                value={row.plannedMainAmount}
+                                onChange={(e) => {
+                                  const v = e.target.value;
+                                  setEditing((prev) => {
+                                    const next = [...(prev.plannedPayments ?? [])];
+                                    next[idx] = { ...next[idx], plannedMainAmount: v };
+                                    return { ...prev, plannedPayments: next };
+                                  });
+                                }}
+                                onFocus={() => {
+                                  planRowFocusIdxRef.current = idx;
+                                }}
+                                disabled={saving || planSaving}
+                              />
+                            </td>
+                            <td className="py-1.5 pr-2 align-top">
+                              <Input
+                                className="!py-1 !text-xs tabular-nums"
+                                value={row.plannedVatAmount}
+                                onChange={(e) => {
+                                  const v = e.target.value;
+                                  setEditing((prev) => {
+                                    const next = [...(prev.plannedPayments ?? [])];
+                                    next[idx] = { ...next[idx], plannedVatAmount: v };
+                                    return { ...prev, plannedPayments: next };
+                                  });
+                                }}
+                                onFocus={() => {
+                                  planRowFocusIdxRef.current = idx;
+                                }}
+                                disabled={saving || planSaving}
+                              />
+                            </td>
+                            <td className="py-1.5 pr-2 tabular-nums align-top">{formatMoney(tot)}</td>
+                            <td className="py-1.5 pr-2 align-top">
+                              <Select
+                                className="!py-1 !text-xs"
+                                value={row.status}
+                                onChange={(e) => {
+                                  const v = e.target.value;
+                                  setEditing((prev) => {
+                                    const next = [...(prev.plannedPayments ?? [])];
+                                    next[idx] = { ...next[idx], status: v };
+                                    return { ...prev, plannedPayments: next };
+                                  });
+                                }}
+                                onFocus={() => {
+                                  planRowFocusIdxRef.current = idx;
+                                }}
+                                disabled={saving || planSaving}
+                              >
+                                <option value="PLANNED">Zaplanowane</option>
+                                <option value="DONE">Wykonane</option>
+                                <option value="CANCELLED">Anulowane</option>
+                              </Select>
+                            </td>
+                            <td className="py-1.5 pr-2 align-top">
+                              <Input
+                                className="!py-1 !text-xs"
+                                value={row.note}
+                                placeholder="np. po odbiorze bez usterek"
+                                onChange={(e) => {
+                                  const v = e.target.value;
+                                  setEditing((prev) => {
+                                    const next = [...(prev.plannedPayments ?? [])];
+                                    next[idx] = { ...next[idx], note: v };
+                                    return { ...prev, plannedPayments: next };
+                                  });
+                                }}
+                                onFocus={() => {
+                                  planRowFocusIdxRef.current = idx;
+                                }}
+                                disabled={saving || planSaving}
+                              />
+                            </td>
+                            <td className="py-1.5 text-right align-top">
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                className="!py-0.5 !text-xs text-red-600"
+                                disabled={saving || planSaving}
+                                onClick={() => {
+                                  setEditing((prev) => {
+                                    const next = (prev.plannedPayments ?? []).filter((_, i) => i !== idx);
+                                    return {
+                                      ...prev,
+                                      plannedPayments: next.map((r, i) => ({ ...r, sortOrder: i })),
+                                    };
+                                  });
+                                }}
+                              >
+                                Usuń
+                              </Button>
+                            </td>
+                          </tr>
+                        );
+                      })
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          ) : null}
+          {editing.id ? (
             <div className="rounded-lg border border-zinc-200 p-3 dark:border-zinc-700">
               <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
                 <span className="text-sm font-medium text-zinc-800 dark:text-zinc-200">Wpłaty (brutto)</span>
@@ -1501,6 +1984,9 @@ export function IncomeInvoicesClient({ initialQueryString = "" }: { initialQuery
                       paymentDate: todayYmd(),
                       notes: "",
                     });
+                    const spl = prefillIncomePaymentCashflowSplit(editing, amt);
+                    setPaySplitMain(spl.main);
+                    setPaySplitVat(spl.vat);
                     setPayProjectRows(
                       incomeInvoiceMultiProject(editing) && amt ? prefillIncomePaymentProjectRows(editing, amt) : [],
                     );
@@ -1540,18 +2026,38 @@ export function IncomeInvoicesClient({ initialQueryString = "" }: { initialQuery
                     </tr>
                   </thead>
                   <tbody>
-                    {((editing.payments ?? []) as { id: string; amountGross: string; paymentDate: string; notes: string }[])
-                      .length === 0 ? (
+                    {((editing.payments ?? []) as {
+                      id: string;
+                      amountGross: string;
+                      paymentDate: string;
+                      notes: string;
+                      allocatedMainAmount?: string | null;
+                      allocatedVatAmount?: string | null;
+                    }[]).length === 0 ? (
                       <tr>
                         <td colSpan={4} className="py-2 text-zinc-500">
                           Brak wpłat
                         </td>
                       </tr>
                     ) : (
-                      ((editing.payments ?? []) as { id: string; amountGross: string; paymentDate: string; notes: string }[]).map(
-                        (p) => (
+                      ((editing.payments ?? []) as {
+                        id: string;
+                        amountGross: string;
+                        paymentDate: string;
+                        notes: string;
+                        allocatedMainAmount?: string | null;
+                        allocatedVatAmount?: string | null;
+                      }[]).map((p) => (
                           <tr key={p.id} className="border-b border-zinc-100 dark:border-zinc-800">
-                            <td className="py-1.5 pr-2 tabular-nums">{formatMoney(Number(p.amountGross))}</td>
+                            <td className="py-1.5 pr-2 tabular-nums">
+                              <div>{formatMoney(Number(p.amountGross))}</div>
+                              {p.allocatedMainAmount != null && p.allocatedVatAmount != null ? (
+                                <div className="mt-0.5 text-[10px] leading-tight text-zinc-500 dark:text-zinc-400">
+                                  cashflow: MAIN {formatMoney(Number(p.allocatedMainAmount))} · VAT{" "}
+                                  {formatMoney(Number(p.allocatedVatAmount))}
+                                </div>
+                              ) : null}
+                            </td>
                             <td className="py-1.5 pr-2">{formatDate(p.paymentDate)}</td>
                             <td className="py-1.5 pr-2">{p.notes || "—"}</td>
                             <td className="py-1.5 text-right">
@@ -1655,6 +2161,49 @@ export function IncomeInvoicesClient({ initialQueryString = "" }: { initialQuery
               >
                 Przelicz wg proporcji dokumentu
               </Button>
+            </div>
+          ) : null}
+          {editing.vatDestination === "VAT" && !incomeInvoiceMultiProject(editing) ? (
+            <div className="rounded-lg border border-zinc-200 p-3 dark:border-zinc-700">
+              <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                <span className="text-sm font-medium text-zinc-800 dark:text-zinc-200">
+                  Podział cashflow (MAIN / VAT)
+                </span>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  className="!py-1 !text-xs"
+                  disabled={paySaving}
+                  onClick={() => {
+                    const s = prefillIncomePaymentCashflowSplit(editing, payDraft.amountGross || "0");
+                    setPaySplitMain(s.main);
+                    setPaySplitVat(s.vat);
+                  }}
+                >
+                  Przelicz z kwoty brutto
+                </Button>
+              </div>
+              <p className="mb-2 text-xs text-zinc-500">
+                Suma musi równać się kwocie brutto wpłaty. Ustaw np. pełny VAT na konto VAT i resztę netto na MAIN.
+              </p>
+              <div className="flex flex-wrap gap-2">
+                <Field label="MAIN (netto)">
+                  <Input
+                    value={paySplitMain}
+                    onChange={(e) => setPaySplitMain(e.target.value)}
+                    disabled={paySaving}
+                    className="max-w-[160px] font-mono"
+                  />
+                </Field>
+                <Field label="VAT">
+                  <Input
+                    value={paySplitVat}
+                    onChange={(e) => setPaySplitVat(e.target.value)}
+                    disabled={paySaving}
+                    className="max-w-[160px] font-mono"
+                  />
+                </Field>
+              </div>
             </div>
           ) : null}
           <Field label="Data wpłaty">
