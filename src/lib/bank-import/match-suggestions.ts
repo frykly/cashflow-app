@@ -1,5 +1,12 @@
-import type { CostInvoice, IncomeInvoice, PlannedFinancialEvent } from "@prisma/client";
+import type {
+  CostInvoice,
+  CostInvoicePayment,
+  IncomeInvoice,
+  IncomeInvoicePayment,
+  PlannedFinancialEvent,
+} from "@prisma/client";
 import { decToNumber } from "@/lib/cashflow/money";
+import { costRemainingGross, incomeRemainingGross, PAY_EPS } from "@/lib/cashflow/settlement";
 import { documentGrossSlicesFromInvoice } from "@/lib/payment-project-allocation/distribute-read";
 
 const DAY_MS = 86_400_000;
@@ -65,6 +72,10 @@ export type CostSuggestion = {
   grossAmount: string;
   documentDate: string;
   score: number;
+  /** Brutto pozostałe do zapłaty (dokument − wpłaty). */
+  remainingGross: string;
+  /** Czy da się przypisać całą kwotę transakcji bankowej (ujemnej) jako jedną płatność. */
+  canFitFullPayment: boolean;
 };
 
 export type IncomeSuggestion = {
@@ -79,6 +90,10 @@ export type IncomeSuggestion = {
   vatAmount: string;
   /** true = wiele projektów — jawny podział MAIN/VAT na wpłacie jest zablokowany */
   splitBlocked: boolean;
+  /** Brutto pozostałe do wpłaty (faktura − wpłaty). */
+  remainingGross: string;
+  /** Czy da się przypisać całą kwotę transakcji bankowej (dodatniej) jako jedną wpłatę. */
+  canFitFullPayment: boolean;
 };
 
 export type PlannedExpenseSuggestion = {
@@ -150,20 +165,29 @@ const DEMOTE_FACTOR = 0.12;
 
 export function rankCosts(
   tx: { amount: number; bookingDate: Date; description: string },
-  list: (CostInvoice & { score?: number })[],
+  list: (CostInvoice & {
+    score?: number;
+    payments?: Pick<CostInvoicePayment, "amountGross">[];
+  })[],
   take = 15,
   opts?: { demote?: boolean },
 ): CostSuggestion[] {
   const mul = opts?.demote ? DEMOTE_FACTOR : 1;
+  const payPln = Math.abs(tx.amount) / 100;
   const scored = list
-    .map((inv) => ({
-      id: inv.id,
-      documentNumber: inv.documentNumber,
-      supplier: inv.supplier,
-      grossAmount: inv.grossAmount.toString(),
-      documentDate: inv.documentDate.toISOString(),
-      score: Math.round(scoreCostMatch(tx, inv) * mul * 100) / 100,
-    }))
+    .map((inv) => {
+      const rem = costRemainingGross(inv, inv.payments ?? []);
+      return {
+        id: inv.id,
+        documentNumber: inv.documentNumber,
+        supplier: inv.supplier,
+        grossAmount: inv.grossAmount.toString(),
+        documentDate: inv.documentDate.toISOString(),
+        score: Math.round(scoreCostMatch(tx, inv) * mul * 100) / 100,
+        remainingGross: rem.toFixed(2),
+        canFitFullPayment: rem + PAY_EPS >= payPln,
+      };
+    })
     .sort((a, b) => b.score - a.score);
   return scored.slice(0, take);
 }
@@ -202,28 +226,35 @@ export function rankIncomes(
   tx: { amount: number; bookingDate: Date; description: string },
   list: (IncomeInvoice & {
     projectAllocations?: { projectId: string; grossAmount: unknown }[];
+    payments?: Pick<IncomeInvoicePayment, "amountGross">[];
   })[],
   take = 15,
   opts?: { demote?: boolean },
 ): IncomeSuggestion[] {
   const mul = opts?.demote ? DEMOTE_FACTOR : 1;
+  const payPln = Math.abs(tx.amount) / 100;
   const scored = list
-    .map((inv) => ({
-      id: inv.id,
-      invoiceNumber: inv.invoiceNumber,
-      contractor: inv.contractor,
-      grossAmount: inv.grossAmount.toString(),
-      issueDate: inv.issueDate.toISOString(),
-      score: Math.round(scoreIncomeMatch(tx, inv) * mul * 100) / 100,
-      vatDestination: inv.vatDestination,
-      netAmount: inv.netAmount.toString(),
-      vatAmount: inv.vatAmount.toString(),
-      splitBlocked: documentGrossSlicesFromInvoice({
-        projectAllocations: inv.projectAllocations ?? [],
-        grossAmount: inv.grossAmount,
-        projectId: inv.projectId,
-      }).length > 1,
-    }))
+    .map((inv) => {
+      const rem = incomeRemainingGross(inv, inv.payments ?? []);
+      return {
+        id: inv.id,
+        invoiceNumber: inv.invoiceNumber,
+        contractor: inv.contractor,
+        grossAmount: inv.grossAmount.toString(),
+        issueDate: inv.issueDate.toISOString(),
+        score: Math.round(scoreIncomeMatch(tx, inv) * mul * 100) / 100,
+        vatDestination: inv.vatDestination,
+        netAmount: inv.netAmount.toString(),
+        vatAmount: inv.vatAmount.toString(),
+        splitBlocked: documentGrossSlicesFromInvoice({
+          projectAllocations: inv.projectAllocations ?? [],
+          grossAmount: inv.grossAmount,
+          projectId: inv.projectId,
+        }).length > 1,
+        remainingGross: rem.toFixed(2),
+        canFitFullPayment: rem + PAY_EPS >= payPln,
+      };
+    })
     .sort((a, b) => b.score - a.score);
   return scored.slice(0, take);
 }

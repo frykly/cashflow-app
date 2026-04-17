@@ -9,7 +9,13 @@ import { Input } from "@/components/ui";
 
 type Suggestion = { id: string; score: number; grossAmount: string };
 
-type CostS = Suggestion & { documentNumber: string; supplier: string; documentDate: string };
+type CostS = Suggestion & {
+  documentNumber: string;
+  supplier: string;
+  documentDate: string;
+  remainingGross: string;
+  canFitFullPayment: boolean;
+};
 type IncS = Suggestion & {
   invoiceNumber: string;
   contractor: string;
@@ -18,6 +24,8 @@ type IncS = Suggestion & {
   netAmount: string;
   vatAmount: string;
   splitBlocked: boolean;
+  remainingGross: string;
+  canFitFullPayment: boolean;
 };
 
 type PlannedE = {
@@ -122,6 +130,7 @@ export function BankTransactionMatchModal({
           c.documentNumber,
           c.supplier,
           c.grossAmount,
+          c.remainingGross,
           safeFormatDate(c.documentDate),
         ]),
       ),
@@ -135,6 +144,7 @@ export function BankTransactionMatchModal({
           c.invoiceNumber,
           c.contractor,
           c.grossAmount,
+          c.remainingGross,
           safeFormatDate(c.issueDate),
         ]),
       ),
@@ -274,7 +284,11 @@ export function BankTransactionMatchModal({
       <div>
         <h3 className="mb-1 text-sm font-medium text-zinc-800 dark:text-zinc-200">Faktury przychodu</h3>
         <p className="mb-2 text-xs text-zinc-500 dark:text-zinc-400">
-          Kwota brutto z dokumentu — saldo po wcześniejszych wpłatach sprawdzisz w module przychodów.
+          <strong className="font-medium text-zinc-700 dark:text-zinc-300">Połącz + wpłata</strong> zapisuje{" "}
+          <strong className="font-medium text-zinc-700 dark:text-zinc-300">całą kwotę z wyciągu</strong> (
+          {formatPlnFromGrosze(transactionAmountGrosze)}) na jedną fakturę — nie da się tą samą transakcją jednocześnie
+          domknąć dwóch faktur. Przy wpłacie rozłożonej na kilka FV zrób osobne wpłaty w module przychodów lub podziel
+          zapis w banku. W tabeli szukaj „pozostało brutto”: musi być ≥ kwota z wyciągu, inaczej przycisk jest wyłączony.
         </p>
         <label className="mb-2 block text-xs text-zinc-600 dark:text-zinc-400">
           <span className="mb-0.5 block font-medium text-zinc-700 dark:text-zinc-300">Szukaj na liście</span>
@@ -298,16 +312,29 @@ export function BankTransactionMatchModal({
                 className="space-y-1 border-b border-zinc-100 py-2 dark:border-zinc-800"
               >
                 <div className="flex flex-wrap items-center justify-between gap-2">
-                  <span className="text-zinc-700 dark:text-zinc-300">
+                  <span className="min-w-0 text-zinc-700 dark:text-zinc-300">
                     {c.invoiceNumber} · {c.contractor} · {safeFormatDate(c.issueDate)} · brutto{" "}
-                    {formatMoney(c.grossAmount)}
+                    {formatMoney(c.grossAmount)} · <span className="text-zinc-600 dark:text-zinc-400">pozostało</span>{" "}
+                    {formatMoney(c.remainingGross)}
                     <span className="ml-1 text-xs text-zinc-400" title={scoreHint}>
                       (dopasowanie {c.score})
                     </span>
+                    {!c.canFitFullPayment ? (
+                      <span className="mt-0.5 block text-xs font-medium text-amber-800 dark:text-amber-200">
+                        Cała kwota z wyciągu nie mieści się na tej fakturze.
+                      </span>
+                    ) : null}
                   </span>
                   <button
                     type="button"
-                    disabled={busy}
+                    disabled={busy || !c.canFitFullPayment || (c.vatDestination === "VAT" && c.splitBlocked)}
+                    title={
+                      !c.canFitFullPayment ?
+                        `Pozostało ${c.remainingGross} PLN brutto, a z wyciągu ${formatPlnFromGrosze(transactionAmountGrosze)} — użyj innej faktury lub przychodów.`
+                      : c.vatDestination === "VAT" && c.splitBlocked ?
+                        "Faktura z wieloma projektami — użyj modułu przychodów."
+                      : undefined
+                    }
                     onClick={() => void linkIncome(c.id)}
                     className="shrink-0 rounded border border-emerald-600 px-2 py-0.5 text-xs text-emerald-800 hover:bg-emerald-50 disabled:opacity-50 dark:border-emerald-700 dark:text-emerald-200 dark:hover:bg-emerald-950/40"
                   >
@@ -415,7 +442,7 @@ export function BankTransactionMatchModal({
       <div>
         <h3 className="mb-1 text-sm font-medium text-zinc-800 dark:text-zinc-200">Faktury kosztowe</h3>
         <p className="mb-2 text-xs text-zinc-500 dark:text-zinc-400">
-          Kwota brutto z dokumentu — pozostało do zapłaty (po wcześniejszych przelewach) sprawdzisz w module kosztów.
+          Jedna transakcja z wyciągu = jedna płatność na pełną kwotę operacji. W liście: <strong className="font-medium text-zinc-700 dark:text-zinc-300">pozostało brutto</strong> musi pokryć kwotę z wyciągu.
         </p>
         {costs.length === 0 ? (
           <p className="text-xs text-zinc-500">Brak faktur kosztowych w oknie dat (±90 dni od operacji).</p>
@@ -425,15 +452,26 @@ export function BankTransactionMatchModal({
           <ul className="max-h-40 space-y-1 overflow-y-auto text-sm">
             {filteredCosts.map((c) => (
               <li key={c.id} className="flex flex-wrap items-center justify-between gap-2 border-b border-zinc-100 py-1 dark:border-zinc-800">
-                <span className="text-zinc-700 dark:text-zinc-300">
-                  {c.documentNumber} · {c.supplier} · {safeFormatDate(c.documentDate)} · brutto {formatMoney(c.grossAmount)}
+                <span className="min-w-0 text-zinc-700 dark:text-zinc-300">
+                  {c.documentNumber} · {c.supplier} · {safeFormatDate(c.documentDate)} · brutto {formatMoney(c.grossAmount)}{" "}
+                  · pozostało {formatMoney(c.remainingGross)}
                   <span className="ml-1 text-xs text-zinc-400" title={scoreHint}>
                     (dopasowanie {c.score})
                   </span>
+                  {!c.canFitFullPayment ? (
+                    <span className="mt-0.5 block text-xs font-medium text-amber-800 dark:text-amber-200">
+                      Cała kwota z wyciągu nie mieści się na tej fakturze.
+                    </span>
+                  ) : null}
                 </span>
                 <button
                   type="button"
-                  disabled={busy}
+                  disabled={busy || !c.canFitFullPayment}
+                  title={
+                    !c.canFitFullPayment ?
+                      `Pozostało ${c.remainingGross} PLN, a z wyciągu ${formatPlnFromGrosze(transactionAmountGrosze)}.`
+                    : undefined
+                  }
                   onClick={() => void linkCost(c.id)}
                   className="shrink-0 rounded border border-emerald-600 px-2 py-0.5 text-xs text-emerald-800 hover:bg-emerald-50 disabled:opacity-50 dark:border-emerald-700 dark:text-emerald-200 dark:hover:bg-emerald-950/40"
                 >

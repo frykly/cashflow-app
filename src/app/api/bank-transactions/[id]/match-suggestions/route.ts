@@ -27,12 +27,16 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
       where: { documentDate: { gte: start, lte: end } },
       orderBy: { documentDate: "desc" },
       take: 400,
+      include: { payments: { select: { amountGross: true } } },
     }),
     prisma.incomeInvoice.findMany({
       where: { issueDate: { gte: start, lte: end } },
       orderBy: { issueDate: "desc" },
       take: 400,
-      include: { projectAllocations: { select: { projectId: true, grossAmount: true } } },
+      include: {
+        projectAllocations: { select: { projectId: true, grossAmount: true } },
+        payments: { select: { amountGross: true } },
+      },
     }),
     prisma.plannedFinancialEvent.findMany({
       where: {
