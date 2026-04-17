@@ -14,6 +14,12 @@ import { inferDocumentNumberFromBankText } from "@/lib/bank-import/parse-documen
 import { isExpenseCategoryBankFeesLike, looksLikeBankFeeDescription } from "@/lib/bank-import/bank-fee-heuristic";
 import { finalizePlannedToCostConversion } from "@/lib/planned-event-conversion";
 import { decToNumber } from "@/lib/cashflow/money";
+import {
+  replaceCostInvoiceAllocations,
+  resolveLegacyProjectFieldsFromAllocations,
+  type CostAllocInput,
+} from "@/lib/project-allocations/persist";
+import { validateCostOrIncomeAllocationSums } from "@/lib/project-allocations/validate";
 import { z } from "zod";
 
 /** ID rekordów Prisma to CUID, nie UUID — `.uuid()` odrzucało poprawne kategorie. */
@@ -21,6 +27,13 @@ const optionalCuidLike = z.preprocess(
   (v) => (v === "" || v === null || v === undefined ? null : v),
   z.union([z.null(), z.string().min(1).max(64)]),
 );
+
+const bankCostAllocRowSchema = z.object({
+  projectId: z.string().min(1),
+  netAmount: z.union([z.number(), z.string()]),
+  grossAmount: z.union([z.number(), z.string()]),
+  description: z.string().max(500).optional().default(""),
+});
 
 const createCostBodySchema = z.object({
   documentNumber: z.string().max(120).optional().nullable(),
@@ -30,6 +43,8 @@ const createCostBodySchema = z.object({
   projectId: z.string().min(1).optional().nullable(),
   /** Utwórz koszt wg pól z planu; przy zgodności kwoty zamyka zdarzenie planowane (CONVERTED). */
   plannedEventId: optionalCuidLike,
+  /** ≥2 wiersze: jeden koszt z wyciągu, podział brutto/netto (0% VAT) na projekty — bez migracji DB. */
+  projectAllocations: z.array(bankCostAllocRowSchema).max(20).optional(),
 });
 
 export async function POST(req: Request, ctx: { params: Promise<{ id: string }> }) {
@@ -100,6 +115,18 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
 
   const b = parsedBody.data;
 
+  let documentAllocs: CostAllocInput[] | null = null;
+  if (b.projectAllocations && b.projectAllocations.length >= 2) {
+    documentAllocs = b.projectAllocations.map((r) => ({
+      projectId: r.projectId,
+      netAmount: normalizeDecimalInput(String(r.netAmount)),
+      grossAmount: normalizeDecimalInput(String(r.grossAmount)),
+      description: r.description?.trim() ?? "",
+    }));
+    const allocErr = validateCostOrIncomeAllocationSums(documentAllocs, net.toString(), gross.toString());
+    if (allocErr) return jsonError(allocErr, 400);
+  }
+
   const plannedPe =
     b.plannedEventId ?
       await prisma.plannedFinancialEvent.findUnique({
@@ -130,7 +157,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
   const documentNumber = (docInput || inferredDoc || `BANK-${fresh.id.slice(0, 12)}`).slice(0, 120);
 
   let projectIdForResolve: string | null = b.projectId?.trim() || null;
-  if (plannedPe && !projectIdForResolve) {
+  if (!documentAllocs && plannedPe && !projectIdForResolve) {
     const allocs = plannedPe.projectAllocations ?? [];
     if (allocs.length === 1) projectIdForResolve = allocs[0]!.projectId;
     else if (allocs.length > 1) projectIdForResolve = plannedPe.projectId ?? allocs[0]?.projectId ?? null;
@@ -181,7 +208,8 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     supplier = supplierTrim.slice(0, 500);
   } else if (plannedPe) {
     try {
-      const pfS = await resolveProjectFields(prisma, projectIdForResolve);
+      const pidForName = documentAllocs?.[0]?.projectId ?? projectIdForResolve;
+      const pfS = await resolveProjectFields(prisma, pidForName);
       supplier = (pfS.projectName ?? plannedPe.title ?? "Wyciąg bankowy").slice(0, 500);
     } catch {
       return jsonError("Nieprawidłowy projekt (plan)", 400);
@@ -194,7 +222,11 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
 
   let pf: { projectId: string | null; projectName: string | null };
   try {
-    pf = await resolveProjectFields(prisma, projectIdForResolve);
+    if (documentAllocs) {
+      pf = await resolveLegacyProjectFieldsFromAllocations(prisma, b.projectId?.trim() || null, documentAllocs);
+    } else {
+      pf = await resolveProjectFields(prisma, projectIdForResolve);
+    }
   } catch {
     return jsonError("Nieprawidłowy projekt", 400);
   }
@@ -240,7 +272,22 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
       },
       select: { id: true },
     });
-    await finalizeNewCostPaymentAllocations(trx, cost.id, pay.id, normalizeDecimalInput(gross.toString()), null);
+    if (documentAllocs) {
+      await replaceCostInvoiceAllocations(trx, cost.id, documentAllocs);
+      await finalizeNewCostPaymentAllocations(
+        trx,
+        cost.id,
+        pay.id,
+        normalizeDecimalInput(gross.toString()),
+        documentAllocs.map((r) => ({
+          projectId: r.projectId,
+          grossAmount: r.grossAmount,
+          description: r.description,
+        })),
+      );
+    } else {
+      await finalizeNewCostPaymentAllocations(trx, cost.id, pay.id, normalizeDecimalInput(gross.toString()), null);
+    }
 
     if (plannedPe && closePlannedOnMatch) {
       await finalizePlannedToCostConversion(trx, plannedPe.id, cost.id);
