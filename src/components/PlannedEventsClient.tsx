@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ProjectSearchPicker } from "@/components/ProjectSearchPicker";
 import { Alert, Badge, Button, Field, Input, Modal, Select, Spinner, Textarea } from "@/components/ui";
@@ -12,6 +13,7 @@ import { normalizeDecimalInput } from "@/lib/decimal-input";
 import { useListQuery } from "@/hooks/useListQuery";
 import { isCalendarOverdue } from "@/lib/cashflow/overdue";
 import { projectLinkTargetId, projectListLabel } from "@/lib/project-display";
+import { postCreateReturnFromSearchParams, type PostCreateReturnCapture } from "@/lib/safe-internal-return-path";
 
 type ProjectOption = { id: string; name: string; isActive: boolean; code?: string | null };
 
@@ -108,7 +110,9 @@ function formatPlannedAmountCell(r: Row): string {
 }
 
 export function PlannedEventsClient({ initialQueryString = "" }: { initialQueryString?: string }) {
+  const router = useRouter();
   const { queryString, setParam, setParams, merged } = useListQuery("planned", initialQueryString);
+  const postCreateReturnRef = useRef<PostCreateReturnCapture>({ returnTo: null, sourceProjectId: null });
   const [rows, setRows] = useState<Row[]>([]);
   const [listLoading, setListLoading] = useState(true);
   const [open, setOpen] = useState(false);
@@ -250,11 +254,13 @@ export function PlannedEventsClient({ initialQueryString = "" }: { initialQueryS
   function closeModal() {
     setOpen(false);
     setFormError(null);
+    postCreateReturnRef.current = { returnTo: null, sourceProjectId: null };
     setProjectAllocMode("simple");
     setProjectAllocRows([]);
   }
 
   function openNew() {
+    postCreateReturnRef.current = { returnTo: null, sourceProjectId: null };
     setProjectAllocMode("simple");
     setProjectAllocRows([]);
     setEditing(emptyDraft());
@@ -315,12 +321,14 @@ export function PlannedEventsClient({ initialQueryString = "" }: { initialQueryS
             clientName: null,
             projectName: null,
             projectCode: null,
+            returnTo: null,
           }),
         );
         return;
       }
       if (wantNew) {
         if (cancelled) return;
+        postCreateReturnRef.current = postCreateReturnFromSearchParams(m);
         const d = emptyDraft();
         if (prefillPid) d.projectId = prefillPid;
         const pn = m.get("projectName")?.trim();
@@ -342,6 +350,7 @@ export function PlannedEventsClient({ initialQueryString = "" }: { initialQueryS
             clientName: null,
             projectName: null,
             projectCode: null,
+            returnTo: null,
           }),
         );
       }
@@ -407,6 +416,7 @@ export function PlannedEventsClient({ initialQueryString = "" }: { initialQueryS
     };
     const url = editing.id ? `/api/planned-events/${editing.id}` : "/api/planned-events";
     const method = editing.id ? "PATCH" : "POST";
+    const isCreate = !editing.id;
     try {
       const res = await fetch(url, {
         method,
@@ -418,7 +428,22 @@ export function PlannedEventsClient({ initialQueryString = "" }: { initialQueryS
         setFormError(readApiErrorBody(j));
         return;
       }
+      const snap = postCreateReturnRef.current;
       closeModal();
+      if (isCreate) {
+        const redirectPid =
+          projectAllocMode === "multi"
+            ? projectAllocRows.find((x) => x.projectId.trim())?.projectId
+            : projectIdPayload;
+        const dest =
+          snap.returnTo ??
+          (redirectPid ? `/projects/${redirectPid}` : null) ??
+          (snap.sourceProjectId ? `/projects/${snap.sourceProjectId}` : null);
+        if (dest) {
+          router.push(dest);
+          return;
+        }
+      }
       load();
     } catch {
       setFormError("Błąd sieci");
@@ -749,7 +774,8 @@ export function PlannedEventsClient({ initialQueryString = "" }: { initialQueryS
           {formError && <Alert variant="error">{formError}</Alert>}
           {formLocked ? (
             <Alert variant="info">
-              To zdarzenie zostało skonwertowane na fakturę — edycja jest wyłączona.
+              To zdarzenie zostało skonwertowane na fakturę — edycja jest wyłączona (w tym przypisanie i alokacja na
+              projekty).
               {editing.convertedToIncomeInvoice ? (
                 <span className="mt-2 block">
                   <Link
@@ -836,24 +862,16 @@ export function PlannedEventsClient({ initialQueryString = "" }: { initialQueryS
                     className="grid gap-2 rounded-md border border-zinc-100 p-2 dark:border-zinc-800 sm:grid-cols-2 lg:grid-cols-4"
                   >
                     <Field label="Projekt">
-                      <Select
-                        value={row.projectId}
-                        onChange={(e) => {
-                          const v = e.target.value;
-                          setProjectAllocRows((rows) => rows.map((x, i) => (i === idx ? { ...x, projectId: v } : x)));
-                        }}
+                      <ProjectSearchPicker
+                        value={row.projectId.trim() || null}
+                        onChange={(id) =>
+                          setProjectAllocRows((rows) =>
+                            rows.map((x, i) => (i === idx ? { ...x, projectId: id ?? "" } : x)),
+                          )
+                        }
+                        listSort="code"
                         disabled={saving || formLocked}
-                      >
-                        <option value="">—</option>
-                        {projects
-                          .slice()
-                          .sort((a, b) => Number(b.isActive) - Number(a.isActive) || a.name.localeCompare(b.name, "pl"))
-                          .map((p) => (
-                            <option key={p.id} value={p.id}>
-                              {p.name}
-                            </option>
-                          ))}
-                      </Select>
+                      />
                     </Field>
                     <Field label="Kwota gł. (alokacja)">
                       <Input

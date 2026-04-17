@@ -17,9 +17,17 @@ type Props = {
   onChange: (id: string | null) => void;
   disabled?: boolean;
   placeholder?: string;
+  /** `code` — sort jak w alokacji wieloprojektowej (numer zlecenia rosnąco); domyślnie po nazwie. */
+  listSort?: "name" | "code";
 };
 
-export function ProjectSearchPicker({ value, onChange, disabled, placeholder = "Szukaj projektu…" }: Props) {
+export function ProjectSearchPicker({
+  value,
+  onChange,
+  disabled,
+  placeholder = "Szukaj projektu…",
+  listSort = "name",
+}: Props) {
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState("");
   const [rows, setRows] = useState<ProjectPickerRow[]>([]);
@@ -32,8 +40,9 @@ export function ProjectSearchPicker({ value, onChange, disabled, placeholder = "
     async (search: string) => {
       setLoading(true);
       try {
-        const sp = new URLSearchParams({ picker: "1", q: search });
-        if (value) sp.set("selectedId", value);
+      const sp = new URLSearchParams({ picker: "1", q: search });
+      if (value) sp.set("selectedId", value);
+      if (listSort === "code") sp.set("sort", "code");
         const r = await fetch(`/api/projects?${sp}`);
         const j = await r.json();
         setRows(Array.isArray(j) ? j : []);
@@ -43,7 +52,7 @@ export function ProjectSearchPicker({ value, onChange, disabled, placeholder = "
         setLoading(false);
       }
     },
-    [value],
+    [value, listSort],
   );
 
   useEffect(() => {
@@ -57,6 +66,7 @@ export function ProjectSearchPicker({ value, onChange, disabled, placeholder = "
     (async () => {
       try {
         const sp = new URLSearchParams({ picker: "1", q: "", selectedId: value });
+        if (listSort === "code") sp.set("sort", "code");
         const r = await fetch(`/api/projects?${sp}`);
         const j = await r.json();
         if (cancelled) return;
@@ -71,7 +81,7 @@ export function ProjectSearchPicker({ value, onChange, disabled, placeholder = "
     return () => {
       cancelled = true;
     };
-  }, [value]);
+  }, [value, listSort]);
 
   useEffect(() => {
     if (!open) return;

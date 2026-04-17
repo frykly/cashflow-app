@@ -32,6 +32,7 @@ import {
 } from "@/lib/cost-invoices-list-storage";
 import { InvoicePdfDraftSection } from "@/components/InvoicePdfDraftSection";
 import type { InvoicePdfDraftResponse } from "@/lib/invoice-pdf/types";
+import { postCreateReturnFromSearchParams, type PostCreateReturnCapture } from "@/lib/safe-internal-return-path";
 
 type PayPick = Pick<CostInvoicePayment, "amountGross">;
 
@@ -285,6 +286,7 @@ export function CostInvoicesClient({ initialQueryString = "" }: { initialQuerySt
   const [projects, setProjects] = useState<ProjectOption[]>([]);
   const plannedPaymentManualRef = useRef(false);
   const sourcePlannedEventIdRef = useRef<string | null>(null);
+  const postCreateReturnRef = useRef<PostCreateReturnCapture>({ returnTo: null, sourceProjectId: null });
   const [amountEntryMode, setAmountEntryMode] = useState<AmountEntryMode>("net");
   /** Netto 0, brutto = VAT — np. płatność samego VAT z konta VAT. */
   const [vatOnlyPayment, setVatOnlyPayment] = useState(false);
@@ -503,6 +505,7 @@ export function CostInvoicesClient({ initialQueryString = "" }: { initialQuerySt
     setPdfDraftNote(null);
     setPayOpen(false);
     sourcePlannedEventIdRef.current = null;
+    postCreateReturnRef.current = { returnTo: null, sourceProjectId: null };
     setProjectAllocMode("simple");
     setProjectAllocRows([]);
   }
@@ -510,6 +513,7 @@ export function CostInvoicesClient({ initialQueryString = "" }: { initialQuerySt
   function openNew() {
     plannedPaymentManualRef.current = false;
     sourcePlannedEventIdRef.current = null;
+    postCreateReturnRef.current = { returnTo: null, sourceProjectId: null };
     setAmountEntryMode("net");
     setVatOnlyPayment(false);
     setProjectAllocMode("simple");
@@ -644,6 +648,7 @@ export function CostInvoicesClient({ initialQueryString = "" }: { initialQuerySt
     projectCode: null as string | null,
     convertPlannedEventId: null as string | null,
     multiProject: null as string | null,
+    returnTo: null as string | null,
   };
 
   const listQs = merged.toString();
@@ -682,6 +687,7 @@ export function CostInvoicesClient({ initialQueryString = "" }: { initialQuerySt
           queueMicrotask(() => setParams(stripCostDeepLinkParams));
           return;
         }
+        postCreateReturnRef.current = postCreateReturnFromSearchParams(m);
         let supplier = prefillClient;
         if (!supplier && ev.projectId) {
           const pr = await fetch(`/api/projects/${ev.projectId}`);
@@ -729,6 +735,7 @@ export function CostInvoicesClient({ initialQueryString = "" }: { initialQuerySt
       }
       if (wantNew) {
         if (cancelled) return;
+        postCreateReturnRef.current = postCreateReturnFromSearchParams(m);
         plannedPaymentManualRef.current = false;
         setAmountEntryMode("net");
         setVatOnlyPayment(false);
@@ -995,14 +1002,19 @@ export function CostInvoicesClient({ initialQueryString = "" }: { initialQuerySt
         setFormError(readApiErrorBody(j));
         return;
       }
+      const snap = postCreateReturnRef.current;
       closeModal();
       if (method === "POST") {
         const redirectPid =
           projectAllocMode === "multi"
             ? projectAllocRows.find((x) => x.projectId.trim())?.projectId
             : projectIdPayload;
-        if (redirectPid) {
-          router.push(`/projects/${redirectPid}`);
+        const dest =
+          snap.returnTo ??
+          (redirectPid ? `/projects/${redirectPid}` : null) ??
+          (snap.sourceProjectId ? `/projects/${snap.sourceProjectId}` : null);
+        if (dest) {
+          router.push(dest);
           return;
         }
       }
@@ -1586,24 +1598,16 @@ export function CostInvoicesClient({ initialQueryString = "" }: { initialQuerySt
                     className="grid gap-2 rounded-md border border-zinc-100 p-2 dark:border-zinc-800 sm:grid-cols-2 lg:grid-cols-4"
                   >
                     <Field label="Projekt">
-                      <Select
-                        value={row.projectId}
-                        onChange={(e) => {
-                          const v = e.target.value;
-                          setProjectAllocRows((rows) => rows.map((x, i) => (i === idx ? { ...x, projectId: v } : x)));
-                        }}
+                      <ProjectSearchPicker
+                        value={row.projectId.trim() || null}
+                        onChange={(id) =>
+                          setProjectAllocRows((rows) =>
+                            rows.map((x, i) => (i === idx ? { ...x, projectId: id ?? "" } : x)),
+                          )
+                        }
+                        listSort="code"
                         disabled={saving}
-                      >
-                        <option value="">—</option>
-                        {projects
-                          .slice()
-                          .sort((a, b) => Number(b.isActive) - Number(a.isActive) || a.name.localeCompare(b.name, "pl"))
-                          .map((p) => (
-                            <option key={p.id} value={p.id}>
-                              {p.name}
-                            </option>
-                          ))}
-                      </Select>
+                      />
                     </Field>
                     <Field label="Netto (alokacja)">
                       <Input

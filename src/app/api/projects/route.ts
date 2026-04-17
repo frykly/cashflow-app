@@ -8,6 +8,7 @@ import {
   listProjectsEnriched,
   type ProjectListSortKey,
 } from "@/lib/projects/project-list-enriched";
+import { sortProjectsByCodeAsc } from "@/lib/project-picker-sort";
 
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
@@ -15,6 +16,7 @@ export async function GET(req: Request) {
   if (searchParams.get("picker") === "1") {
     const qPicker = searchParams.get("q")?.trim() ?? "";
     const selectedId = searchParams.get("selectedId")?.trim();
+    const sortByCode = searchParams.get("sort") === "code";
 
     const where: Prisma.ProjectWhereInput = qPicker
       ? {
@@ -29,9 +31,13 @@ export async function GET(req: Request) {
 
     let rows = await prisma.project.findMany({
       where,
-      orderBy: { name: "asc" },
-      take: 60,
+      ...(sortByCode ? {} : { orderBy: { name: "asc" as const } }),
+      take: sortByCode ? 250 : 60,
     });
+
+    if (sortByCode) {
+      rows = sortProjectsByCodeAsc(rows);
+    }
 
     if (selectedId) {
       const extra = await prisma.project.findUnique({ where: { id: selectedId } });

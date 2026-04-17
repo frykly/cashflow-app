@@ -1444,24 +1444,16 @@ export function IncomeInvoicesClient({ initialQueryString = "" }: { initialQuery
                     className="grid gap-2 rounded-md border border-zinc-100 p-2 dark:border-zinc-800 sm:grid-cols-2 lg:grid-cols-4"
                   >
                     <Field label="Projekt">
-                      <Select
-                        value={row.projectId}
-                        onChange={(e) => {
-                          const v = e.target.value;
-                          setProjectAllocRows((rows) => rows.map((x, i) => (i === idx ? { ...x, projectId: v } : x)));
-                        }}
+                      <ProjectSearchPicker
+                        value={row.projectId.trim() || null}
+                        onChange={(id) =>
+                          setProjectAllocRows((rows) =>
+                            rows.map((x, i) => (i === idx ? { ...x, projectId: id ?? "" } : x)),
+                          )
+                        }
+                        listSort="code"
                         disabled={saving}
-                      >
-                        <option value="">—</option>
-                        {projects
-                          .slice()
-                          .sort((a, b) => Number(b.isActive) - Number(a.isActive) || a.name.localeCompare(b.name, "pl"))
-                          .map((p) => (
-                            <option key={p.id} value={p.id}>
-                              {p.name}
-                            </option>
-                          ))}
-                      </Select>
+                      />
                     </Field>
                     <Field label="Netto (alokacja)">
                       <Input
