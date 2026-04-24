@@ -12,6 +12,7 @@
     "db:seed": "tsx prisma/seed.ts",
     "db:backup": "node scripts/backup-db.mjs",
     "db:repair-migration-checksum": "node scripts/repair-migration-checksum.mjs",
+    "test:ipko-title": "tsx src/lib/bank-import/ipko-title-smoke.ts",
     "postinstall": "prisma generate"
   },
   "dependencies": {

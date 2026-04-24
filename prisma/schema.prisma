@@ -15,6 +15,22 @@ model AppSettings {
   updatedAt          DateTime @updatedAt
 }
 
+/// Ręczna kontrola sald bankowych vs prognoza (dzień kalendarzowy = dayKey jak w ForecastDayRow).
+model DailyCashReconciliation {
+  id              String   @id @default(cuid())
+  dayKey          String   @unique
+  mainBankBalance Decimal
+  vatBankBalance  Decimal
+  /// MATCHED — zgodne w tolerancji; NEEDS_REVIEW — różnica poza tolerancją
+  status          String
+  note            String   @default("")
+  /// Ręczne potwierdzenie zgodności z wyciągiem — nie wpływa na kolor dnia (rozliczenia).
+  mainChecked     Boolean  @default(false)
+  vatChecked      Boolean  @default(false)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+}
+
 model Project {
   id                 String                   @id @default(cuid())
   name               String
@@ -356,10 +372,12 @@ model PlannedFinancialEvent {
 
 /// Import wyciągu bankowego (CSV) — warstwa uzgodnień, bez wpływu na cashflow.
 model BankImport {
-  id           String            @id @default(cuid())
-  fileName     String
-  createdAt    DateTime          @default(now())
-  transactions BankTransaction[]
+  id               String            @id @default(cuid())
+  fileName         String
+  /// Pominięte wiersze (duplikaty itd.) — `JSON.stringify(BankImportSkippedDetail[])`; null = import sprzed zapisu.
+  skippedLinesJson String?
+  createdAt        DateTime          @default(now())
+  transactions     BankTransaction[]
 }
 
 model BankTransaction {

@@ -127,6 +127,8 @@ function parseDateCell(s: string): Date | null {
 
 type SegmentMap = {
   tytul?: string;
+  numerFaktury?: string;
+  kwotaVat?: string;
   lokalizacja?: string;
   nazwaKontrahenta?: string;
   rachunekKontrahenta?: string;
@@ -144,6 +146,8 @@ function parseDaneOperacjiSegments(raw: string): SegmentMap {
     const val = part.slice(idx + 1).trim();
     if (!val) continue;
     if (key.startsWith("tytul")) out.tytul = val;
+    else if (key.includes("numer") && key.includes("faktur")) out.numerFaktury = val;
+    else if (key.includes("kwota") && key.includes("vat")) out.kwotaVat = val;
     else if (key.startsWith("lokalizacja")) out.lokalizacja = val;
     else if (key.includes("nazwa") && key.includes("kontrahent")) out.nazwaKontrahenta = val;
     else if (key.includes("rachunek") && key.includes("kontrahent")) out.rachunekKontrahenta = val;
@@ -154,8 +158,9 @@ function parseDaneOperacjiSegments(raw: string): SegmentMap {
 
 /**
  * Heurystyka opisu i pól kontrahenta dla iPKO (wg wymagań).
+ * Tylko pole `description` (czytelny tytuł w UI) — `dedupeRawMaterial` pozostaje pełnymi „Dane operacji”.
  */
-function buildIpkoDescriptionAndParties(
+export function buildIpkoDescriptionAndParties(
   daneOperacji: string,
   typOperacji: string | undefined,
 ): { description: string; counterpartyName?: string; counterpartyAccount?: string } {
@@ -164,7 +169,16 @@ function buildIpkoDescriptionAndParties(
   const typ = (typOperacji ?? "").trim();
 
   let description = "";
-  if (seg.tytul) description = seg.tytul;
+  if (seg.tytul) {
+    description = seg.tytul;
+  } else if (seg.numerFaktury) {
+    const num = seg.numerFaktury.trim();
+    description = `FV ${num}`;
+    if (seg.kwotaVat?.trim()) {
+      description = `${description} · VAT ${seg.kwotaVat.trim()}`;
+    }
+  }
+
   if (seg.lokalizacja) {
     description = description ? `${description} — ${seg.lokalizacja}` : seg.lokalizacja;
   }

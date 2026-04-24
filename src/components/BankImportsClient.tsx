@@ -6,25 +6,8 @@ import { useCallback, useEffect, useState } from "react";
 import { readApiError } from "@/lib/api-client";
 import { formatPlnFromGrosze } from "@/lib/bank-import/format-pln";
 import { safeFormatDate } from "@/lib/format";
-
-/** Odpowiada API POST /api/bank-import (skippedDetails) */
-type BankImportSkippedDetail = {
-  csvLine: number;
-  reason: "existing_in_database" | "duplicate_within_file";
-  matchedKeyKind: "new" | "legacy" | null;
-  fingerprintNew: string;
-  fingerprintLegacy: string;
-  amountGrosze: number;
-  descriptionPreview: string;
-  dedupeMaterialPreview: string;
-  counterpartyPreview: string | null;
-  decisionNote?: string;
-  materialIdenticalToStored?: boolean;
-  storedDedupeInputPreview?: string;
-  matchedTransactionId?: string;
-  matchedImportId?: string;
-  duplicateOfCsvLine?: number;
-};
+import type { BankImportSkippedDetail } from "@/lib/bank-import/import-skipped-types";
+import { bankImportSkippedReasonLabel } from "@/lib/bank-import/skipped-reason-label";
 
 type ImportRow = {
   id: string;
@@ -193,7 +176,7 @@ export function BankImportsClient() {
                         ) : null}
                       </td>
                       <td className="px-2 py-2">
-                        <div className="font-medium">{row.reason}</div>
+                        <div className="font-medium">{bankImportSkippedReasonLabel(row.reason)}</div>
                         {row.reason === "duplicate_within_file" && row.duplicateOfCsvLine != null ? (
                           <div className="mt-1 text-[11px]">Powtórzenie wiersza {row.duplicateOfCsvLine}</div>
                         ) : null}

@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/db";
 import { buildDailyForecast, collectMovements, costInvoiceMap } from "@/lib/cashflow/forecast";
+import { isForecastDayCashflowSettled, isForecastMovementSettled } from "@/lib/cashflow/forecast-day-settlement";
 import {
   buildCostPartyByDocumentNumber,
   buildIncomePartyByInvoiceNumber,
@@ -30,13 +31,24 @@ export async function GET(req: Request) {
 
   const incomeParty = buildIncomePartyByInvoiceNumber(incomes);
   const costParty = buildCostPartyByDocumentNumber(costs);
-  const rows = rawRows.map((row) => ({
-    ...row,
-    movements: row.movements.map((m) => ({
-      ...m,
-      label: enrichMovementLabel(m.kind, m.label, incomeParty, costParty),
-    })),
-  }));
+  const settleCtx = {
+    incomesById: new Map(incomes.map((i) => [i.id, i])),
+    costsById: new Map(costs.map((c) => [c.id, c])),
+    eventsById: new Map(events.map((e) => [e.id, e])),
+  };
+  const rows = rawRows.map((row) => {
+    const total = row.movements.length;
+    const done = row.movements.filter((m) => isForecastMovementSettled(m, settleCtx)).length;
+    return {
+      ...row,
+      dayCashSettled: isForecastDayCashflowSettled(row.movements, settleCtx),
+      settlementProgress: { done, total },
+      movements: row.movements.map((m) => ({
+        ...m,
+        label: enrichMovementLabel(m.kind, m.label, incomeParty, costParty),
+      })),
+    };
+  });
 
   return jsonData({
     days: daysSpan,

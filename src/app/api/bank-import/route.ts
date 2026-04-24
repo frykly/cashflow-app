@@ -2,11 +2,16 @@ import { prisma } from "@/lib/db";
 import { jsonData } from "@/lib/api/json-response";
 import { jsonError } from "@/lib/api/errors";
 import { parseBankStatementCsv } from "@/lib/bank-import/parse-csv";
+import type { BankImportSkippedDetail } from "@/lib/bank-import/import-skipped-types";
 import {
   computeBankTransactionDedupeKey,
   computeLegacyBankTransactionDedupeKey,
   legacyOnlyStrongDuplicate,
+  strongFallbackBankDuplicateMatch,
 } from "@/lib/bank-import/dedupe-key";
+import type { Prisma } from "@prisma/client";
+
+export type { BankImportSkippedDetail } from "@/lib/bank-import/import-skipped-types";
 
 const accountTypes = new Set(["MAIN", "VAT"]);
 
@@ -15,27 +20,6 @@ function preview(s: string, max = 160): string {
   if (t.length <= max) return t;
   return `${t.slice(0, max)}…`;
 }
-
-export type BankImportSkippedDetail = {
-  csvLine: number;
-  reason: "existing_in_database" | "duplicate_within_file";
-  matchedKeyKind: "new" | "legacy" | null;
-  fingerprintNew: string;
-  fingerprintLegacy: string;
-  amountGrosze: number;
-  descriptionPreview: string;
-  dedupeMaterialPreview: string;
-  counterpartyPreview: string | null;
-  /** Krótki opis decyzji (diagnostyka) */
-  decisionNote?: string;
-  /** Przy dopasowaniu do rekordu z dedupeInputText w bazie — czy materiał jest identyczny */
-  materialIdenticalToStored?: boolean;
-  /** Skrót zapisane dedupeInputText w bazie (przy kolizji legacy) */
-  storedDedupeInputPreview?: string;
-  matchedTransactionId?: string;
-  matchedImportId?: string;
-  duplicateOfCsvLine?: number;
-};
 
 export async function POST(req: Request) {
   let form: FormData;
@@ -94,6 +78,62 @@ export async function POST(req: Request) {
     if (e.dedupeKey) byDedupeKey.set(e.dedupeKey, { id: e.id, importId: e.importId });
   }
 
+  /** Unikalne triple (konto z formularza | dzień UTC | kwota) z bieżącego pliku — do batchowego pobrania kandydatów fallback. */
+  const tripleSet = new Set<string>();
+  for (const r of rows) {
+    const day = r.bookingDate.toISOString().slice(0, 10);
+    tripleSet.add(`${accountType}\t${day}\t${String(r.amountGrosze)}`);
+  }
+  const FALLBACK_OR_CHUNK = 60;
+  const tripleLines = [...tripleSet];
+  type FallbackTx = {
+    id: string;
+    importId: string;
+    bookingDate: Date;
+    amount: number;
+    accountType: string;
+    description: string;
+    counterpartyName: string | null;
+    counterpartyAccount: string | null;
+    createdAt: Date;
+  };
+  const fallbackPool: FallbackTx[] = [];
+  const fallbackSeenIds = new Set<string>();
+  for (let c = 0; c < tripleLines.length; c += FALLBACK_OR_CHUNK) {
+    const chunk = tripleLines.slice(c, c + FALLBACK_OR_CHUNK);
+    const orWhere: Prisma.BankTransactionWhereInput[] = chunk.map((line) => {
+      const [at, day, amtStr] = line.split("\t");
+      const amount = Number(amtStr);
+      const dayStart = new Date(`${day}T00:00:00.000Z`);
+      const dayEnd = new Date(dayStart.getTime() + 86400000);
+      return {
+        AND: [{ accountType: at }, { amount }, { bookingDate: { gte: dayStart, lt: dayEnd } }],
+      };
+    });
+    if (orWhere.length === 0) continue;
+    const part = await prisma.bankTransaction.findMany({
+      where: { OR: orWhere },
+      select: {
+        id: true,
+        importId: true,
+        bookingDate: true,
+        amount: true,
+        accountType: true,
+        description: true,
+        counterpartyName: true,
+        counterpartyAccount: true,
+        createdAt: true,
+      },
+      orderBy: { createdAt: "asc" },
+    });
+    for (const p of part) {
+      if (fallbackSeenIds.has(p.id)) continue;
+      fallbackSeenIds.add(p.id);
+      fallbackPool.push(p);
+    }
+  }
+  fallbackPool.sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+
   const createPayload: {
     bookingDate: Date;
     valueDate: Date | null;
@@ -113,6 +153,7 @@ export async function POST(req: Request) {
   const seenNewKeyInFile = new Map<string, number>();
 
   const basePreview = (r: (typeof rows)[0]) => ({
+    bookingDate: r.bookingDate.toISOString(),
     amountGrosze: r.amountGrosze,
     descriptionPreview: preview(r.description, 200),
     dedupeMaterialPreview: preview(r.dedupeRawMaterial, 220),
@@ -208,6 +249,40 @@ export async function POST(req: Request) {
       }
     }
 
+    let matchedFallback: { id: string; importId: string } | null = null;
+    for (const st of fallbackPool) {
+      if (
+        strongFallbackBankDuplicateMatch({
+          rowAccountType: accountType,
+          rowBookingDate: r.bookingDate,
+          rowAmountGrosze: r.amountGrosze,
+          rowDescription: r.description,
+          rowCounterpartyName: r.counterpartyName,
+          rowCounterpartyAccount: r.counterpartyAccount,
+          stored: st,
+        })
+      ) {
+        matchedFallback = { id: st.id, importId: st.importId };
+        break;
+      }
+    }
+    if (matchedFallback) {
+      skippedDuplicates += 1;
+      skippedDetails.push({
+        csvLine: r.sourceLine,
+        reason: "legacy_strong_match",
+        matchedKeyKind: null,
+        fingerprintNew: key,
+        fingerprintLegacy: legacy,
+        ...basePreview(r),
+        decisionNote:
+          "Duplikat wykryty po dacie, kwocie i opisie (fallback). Fingerprint z pełnego materiału bankowego nie zgadzał się z rekordem w bazie — różnił się blok „Dane operacji” lub inne metadane.",
+        matchedTransactionId: matchedFallback.id,
+        matchedImportId: matchedFallback.importId,
+      });
+      continue;
+    }
+
     const firstLineSameNew = seenNewKeyInFile.get(key);
     if (firstLineSameNew !== undefined) {
       skippedDuplicates += 1;
@@ -242,9 +317,15 @@ export async function POST(req: Request) {
   }
 
   if (createPayload.length === 0) {
+    const emptyImport = await prisma.bankImport.create({
+      data: {
+        fileName,
+        skippedLinesJson: JSON.stringify(skippedDetails),
+      },
+    });
     return jsonData(
       {
-        import: null,
+        import: emptyImport,
         transactionCount: 0,
         skippedDuplicates,
         skippedDetails,
@@ -252,13 +333,14 @@ export async function POST(req: Request) {
         format,
         message: `Nie dodano nowych transakcji: wszystkie ${rows.length} wierszy to duplikaty już w bazie lub powtórzenia w pliku. Szczegóły w skippedDetails.`,
       },
-      { status: 200 },
+      { status: 201 },
     );
   }
 
   const created = await prisma.bankImport.create({
     data: {
       fileName,
+      skippedLinesJson: JSON.stringify(skippedDetails),
       transactions: {
         create: createPayload,
       },
