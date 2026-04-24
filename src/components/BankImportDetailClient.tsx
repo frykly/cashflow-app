@@ -5,9 +5,11 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import { readApiError } from "@/lib/api-client";
 import { formatPlnFromGrosze } from "@/lib/bank-import/format-pln";
+import { bankTransactionStatusLabel } from "@/lib/bank-import/bank-transaction-status-label";
 import { safeFormatDate } from "@/lib/format";
 import { BankTransactionMatchModal } from "@/components/BankTransactionMatchModal";
 import { CreateCostFromBankModal } from "@/components/CreateCostFromBankModal";
+import { costInvoiceListEditHref, incomeInvoiceListEditHref } from "@/lib/navigation/invoice-deep-links";
 
 type Tx = {
   id: string;
@@ -185,6 +187,7 @@ export function BankImportDetailClient({ importId }: { importId: string }) {
               const b = busyId === t.id;
               const sc = statusClass[t.status] ?? statusClass.NEW;
               const createOk = canCreateCost(t);
+              const costEditTargetId = t.linkedCostInvoiceId ?? t.createdCostId;
               return (
                 <tr key={t.id} className="border-b border-zinc-100 align-top dark:border-zinc-800/80">
                   <td className="px-2 py-2 whitespace-nowrap">{safeFormatDate(t.bookingDate)}</td>
@@ -193,7 +196,9 @@ export function BankImportDetailClient({ importId }: { importId: string }) {
                     {formatPlnFromGrosze(t.amount)} {t.currency !== "PLN" ? t.currency : ""}
                   </td>
                   <td className="px-2 py-2">
-                    <span className={`inline-block rounded px-2 py-0.5 text-xs font-medium ${sc}`}>{t.status}</span>
+                    <span className={`inline-block rounded px-2 py-0.5 text-xs font-medium ${sc}`}>
+                      {bankTransactionStatusLabel(t.status)}
+                    </span>
                   </td>
                   <td className="px-2 py-2">
                     <div className="flex max-w-[420px] flex-wrap gap-1">
@@ -232,14 +237,6 @@ export function BankImportDetailClient({ importId }: { importId: string }) {
                       <button
                         type="button"
                         disabled={b}
-                        onClick={() => void setStatus(t.id, "VAT_TOPUP")}
-                        className="rounded border border-amber-400 bg-white px-2 py-1 text-xs text-amber-950 hover:bg-amber-50 disabled:opacity-50 dark:border-amber-700 dark:bg-zinc-950 dark:text-amber-100 dark:hover:bg-amber-950/40"
-                      >
-                        Zasil VAT
-                      </button>
-                      <button
-                        type="button"
-                        disabled={b}
                         onClick={() => void setStatus(t.id, "IGNORED")}
                         className="rounded border border-zinc-300 bg-white px-2 py-1 text-xs hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-600 dark:bg-zinc-950 dark:hover:bg-zinc-900"
                       >
@@ -255,17 +252,17 @@ export function BankImportDetailClient({ importId }: { importId: string }) {
                       </button>
                       {t.matchedInvoiceId ? (
                         <Link
-                          href="/income-invoices"
+                          href={incomeInvoiceListEditHref(t.matchedInvoiceId)}
                           title={t.matchedInvoiceId}
                           className="inline-flex items-center rounded px-2 py-1 text-xs text-blue-600 hover:underline dark:text-blue-400"
                         >
                           Przychód
                         </Link>
                       ) : null}
-                      {t.createdCostId || t.linkedCostInvoiceId ? (
+                      {costEditTargetId ? (
                         <Link
-                          href="/cost-invoices"
-                          title={[t.createdCostId, t.linkedCostInvoiceId].filter(Boolean).join(" ")}
+                          href={costInvoiceListEditHref(costEditTargetId)}
+                          title={[t.linkedCostInvoiceId, t.createdCostId].filter(Boolean).join(" ")}
                           className="inline-flex items-center rounded px-2 py-1 text-xs text-blue-600 hover:underline dark:text-blue-400"
                         >
                           Koszty

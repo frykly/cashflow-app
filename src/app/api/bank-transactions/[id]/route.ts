@@ -3,6 +3,8 @@ import { jsonData } from "@/lib/api/json-response";
 import { jsonError } from "@/lib/api/errors";
 import { healBankTransactionLinks } from "@/lib/bank-import/heal-links";
 import { explainBankTransactionDedupe } from "@/lib/bank-import/dedupe-explain";
+import { sumCostPaymentsGross, sumIncomePaymentsGross } from "@/lib/cashflow/settlement";
+import { round2 } from "@/lib/cashflow/money";
 import { z } from "zod";
 
 export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> }) {
@@ -20,7 +22,7 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
   });
   if (!tx) return jsonError("Nie znaleziono transakcji", 404);
 
-  const payment = await prisma.costInvoicePayment.findFirst({
+  const costPayments = await prisma.costInvoicePayment.findMany({
     where: { bankTransactionId: id },
     select: {
       id: true,
@@ -29,6 +31,7 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
       costInvoice: { select: { id: true, documentNumber: true, supplier: true } },
     },
   });
+  const payment = costPayments.length > 0 ? costPayments[0]! : null;
 
   const linkedCost =
     tx.linkedCostInvoiceId ?
@@ -59,6 +62,23 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
     select: { id: true, description: true, amountGross: true, vatAmount: true },
   });
 
+  const incomePayments = await prisma.incomeInvoicePayment.findMany({
+    where: { bankTransactionId: id },
+    select: {
+      id: true,
+      amountGross: true,
+      incomeInvoiceId: true,
+      incomeInvoice: { select: { id: true, invoiceNumber: true, contractor: true } },
+    },
+  });
+  const incomeAllocatedPln =
+    tx.amount > 0 ? sumIncomePaymentsGross(incomePayments) : 0;
+  const incomeRemainingPln =
+    tx.amount > 0 ? round2(Math.abs(tx.amount) / 100 - incomeAllocatedPln) : 0;
+
+  const costAllocatedPln = tx.amount < 0 ? sumCostPaymentsGross(costPayments) : 0;
+  const costRemainingPln = tx.amount < 0 ? round2(Math.abs(tx.amount) / 100 - costAllocatedPln) : 0;
+
   const dedupe = explainBankTransactionDedupe({
     accountType: tx.accountType,
     bookingDate: tx.bookingDate,
@@ -73,12 +93,18 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
   return jsonData({
     ...tx,
     dedupe,
+    incomeAllocatedPln: incomeAllocatedPln.toFixed(2),
+    incomeRemainingPln: incomeRemainingPln.toFixed(2),
+    costAllocatedPln: costAllocatedPln.toFixed(2),
+    costRemainingPln: costRemainingPln.toFixed(2),
     links: {
       payment,
+      costPayments,
       linkedCost,
       matchedIncome,
       createdCost,
       otherIncome,
+      incomePayments,
     },
   });
 }

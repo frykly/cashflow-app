@@ -23,7 +23,19 @@ type TxPayload = {
   amount: number;
   accountType: string;
   status: string;
+  /** Z API GET — kwota jeszcze nie rozdzielona na płatności (wydatki &lt; 0) */
+  costRemainingPln?: string;
+  incomeRemainingPln?: string;
 };
+
+function resolveTargetGrossPln(tx: TxPayload | null): number {
+  if (!tx) return 0;
+  if (tx.amount < 0 && tx.costRemainingPln != null && String(tx.costRemainingPln).trim() !== "") {
+    const n = Number(String(tx.costRemainingPln).replace(/\s/g, "").replace(",", "."));
+    if (Number.isFinite(n) && n > 0) return Math.round(n * 100) / 100;
+  }
+  return Math.abs(tx.amount) / 100;
+}
 
 type AllocRow = { projectId: string; grossAmount: string; description: string };
 
@@ -41,7 +53,8 @@ function emptyAllocRows(tx: TxPayload | null): AllocRow[] {
       { projectId: "", grossAmount: "", description: "" },
     ];
   }
-  const halfPln = (Math.abs(tx.amount) / 2 / 100).toFixed(2);
+  const tg = resolveTargetGrossPln(tx);
+  const halfPln = (tg / 2).toFixed(2);
   return [
     { projectId: "", grossAmount: halfPln, description: "" },
     { projectId: "", grossAmount: halfPln, description: "" },
@@ -103,6 +116,14 @@ export function CreateCostFromBankModal({ transactionId, open, onClose, onCreate
           setTx(null);
           return;
         }
+        if (txJson.amount < 0) {
+          const rem = resolveTargetGrossPln(txJson);
+          if (rem <= 0) {
+            setErr("Cała kwota z tej linii jest już rozdzielona — nie można utworzyć kolejnego kosztu.");
+            setTx(null);
+            return;
+          }
+        }
         setTx(txJson);
         const inferred = inferDocumentNumberFromBankText(txJson.description);
         setDocumentNumber(inferred ?? `BANK-${txJson.id.slice(0, 12)}`);
@@ -137,7 +158,7 @@ export function CreateCostFromBankModal({ transactionId, open, onClose, onCreate
     onClose();
   }
 
-  const targetGrossPln = tx ? Math.abs(tx.amount) / 100 : 0;
+  const targetGrossPln = tx ? resolveTargetGrossPln(tx) : 0;
 
   const allocSumPln = useMemo(() => {
     let s = 0;
@@ -171,7 +192,7 @@ export function CreateCostFromBankModal({ transactionId, open, onClose, onCreate
         }
         if (Math.abs(allocSumPln - targetGrossPln) > 0.02) {
           setErr(
-            `Suma brutto alokacji (${allocSumPln.toFixed(2)} PLN) musi równać kwocie z wyciągu (${targetGrossPln.toFixed(2)} PLN).`,
+            `Suma brutto alokacji (${allocSumPln.toFixed(2)} PLN) musi równać kwocie tej operacji (${targetGrossPln.toFixed(2)} PLN).`,
           );
           setSaving(false);
           return;
@@ -213,7 +234,10 @@ export function CreateCostFromBankModal({ transactionId, open, onClose, onCreate
     void runCreate();
   }
 
-  const grossPln = tx ? (Math.abs(tx.amount) / 100).toFixed(2) : "—";
+  const grossPln = tx ? targetGrossPln.toFixed(2) : "—";
+  const bankLineFullPln = tx && tx.amount < 0 ? Math.abs(tx.amount) / 100 : null;
+  const showPartialHint =
+    bankLineFullPln != null && bankLineFullPln - targetGrossPln > 0.02;
 
   const selectedCategory = useMemo(
     () => categories.find((c) => c.id === expenseCategoryId) ?? null,
@@ -241,6 +265,13 @@ export function CreateCostFromBankModal({ transactionId, open, onClose, onCreate
             Pola są wypełniane z opisu przelewu — możesz je poprawić przed zapisem. Kwota i VAT (0%) jak dotychczas przy
             kosztach z importu.
           </p>
+          {showPartialHint ? (
+            <p className="rounded border border-amber-200 bg-amber-50/80 px-2 py-1.5 text-xs text-amber-950 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-100">
+              Część kwoty z wyciągu jest już przypisana do innych płatności. Ten dokument kosztowy dotyczy wyłącznie{" "}
+              <strong>{targetGrossPln.toFixed(2)} PLN</strong> (pozostało na tej linii banku), nie całej kwoty{" "}
+              {bankLineFullPln!.toFixed(2)} PLN.
+            </p>
+          ) : null}
           {err ? <Alert variant="error">{err}</Alert> : null}
 
           <div className="grid gap-3 sm:grid-cols-2">
@@ -295,7 +326,7 @@ export function CreateCostFromBankModal({ transactionId, open, onClose, onCreate
                   if (on && tx) setAllocRows(emptyAllocRows(tx));
                 }}
               />
-              Alokacja na kilka projektów (suma netto i brutto = kwota z wyciągu)
+              Alokacja na kilka projektów (suma netto i brutto = kwota tej operacji)
             </label>
             {multiAlloc ? (
               <div className="mt-3 space-y-2">

@@ -4,10 +4,13 @@ import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { readApiError } from "@/lib/api-client";
 import { formatPlnFromGrosze } from "@/lib/bank-import/format-pln";
+import { bankTransactionStatusLabel } from "@/lib/bank-import/bank-transaction-status-label";
 import { decToNumber } from "@/lib/cashflow/money";
+import { PAY_EPS } from "@/lib/cashflow/settlement";
 import { formatMoney, safeFormatDate } from "@/lib/format";
 import { Alert, Button, Spinner } from "@/components/ui";
 import { CreateCostFromBankModal } from "@/components/CreateCostFromBankModal";
+import { costInvoiceListEditHref, incomeInvoiceListEditHref } from "@/lib/navigation/invoice-deep-links";
 
 type DedupePayload = {
   fingerprintNew: string;
@@ -31,6 +34,10 @@ type DetailJson = {
   dedupeKey: string | null;
   dedupe: DedupePayload;
   import: { id: string; fileName: string; createdAt: string };
+  incomeAllocatedPln?: string;
+  incomeRemainingPln?: string;
+  costAllocatedPln?: string;
+  costRemainingPln?: string;
   links: {
     payment: {
       id: string;
@@ -42,6 +49,18 @@ type DetailJson = {
     matchedIncome: { id: string; invoiceNumber: string; contractor: string } | null;
     createdCost: { id: string; documentNumber: string; supplier: string } | null;
     otherIncome: { id: string; description: string; amountGross: unknown; vatAmount: unknown } | null;
+    incomePayments?: {
+      id: string;
+      amountGross: unknown;
+      incomeInvoiceId: string;
+      incomeInvoice: { id: string; invoiceNumber: string; contractor: string };
+    }[];
+    costPayments?: {
+      id: string;
+      amountGross: unknown;
+      costInvoiceId: string;
+      costInvoice: { id: string; documentNumber: string; supplier: string };
+    }[];
   };
 };
 
@@ -50,9 +69,17 @@ type Props = {
   transactionId: string;
 };
 
-function canCreateCost(status: string, hasLink: boolean): boolean {
-  if (hasLink) return false;
+function canCreateCost(
+  status: string,
+  hasLink: boolean,
+  options?: { amount: number; costRemainingPln?: string },
+): boolean {
   if (["VAT_TOPUP", "DUPLICATE", "IGNORED"].includes(status)) return false;
+  if (options && options.amount < 0 && options.costRemainingPln !== undefined) {
+    const rem = Number(options.costRemainingPln);
+    if (Number.isFinite(rem) && rem > PAY_EPS) return true;
+  }
+  if (hasLink) return false;
   return true;
 }
 
@@ -97,7 +124,12 @@ export function BankTransactionDetailClient({ importId, transactionId }: Props) 
 
   const { links: L } = data;
   const hasCostLink = Boolean(
-    L.createdCost?.id || L.linkedCost?.id || L.payment?.costInvoiceId || L.otherIncome?.id,
+    L.createdCost?.id ||
+      L.linkedCost?.id ||
+      L.payment?.costInvoiceId ||
+      (L.costPayments && L.costPayments.length > 0) ||
+      L.otherIncome?.id ||
+      (L.incomePayments && L.incomePayments.length > 0),
   );
 
   return (
@@ -147,7 +179,7 @@ export function BankTransactionDetailClient({ importId, transactionId }: Props) 
           </div>
           <div>
             <div className="text-xs font-medium uppercase text-zinc-500">Status</div>
-            <div className="font-medium">{data.status}</div>
+            <div className="font-medium">{bankTransactionStatusLabel(data.status)}</div>
           </div>
           <div>
             <div className="text-xs font-medium uppercase text-zinc-500">Dedupe w bazie</div>
@@ -183,13 +215,36 @@ export function BankTransactionDetailClient({ importId, transactionId }: Props) 
           </p>
         </div>
 
+        {data.amount > 0 && data.incomeRemainingPln !== undefined ? (
+          <div className="rounded-lg border border-cyan-200 bg-cyan-50/60 p-3 text-sm text-cyan-950 dark:border-cyan-900 dark:bg-cyan-950/25 dark:text-cyan-100">
+            <div className="text-xs font-semibold uppercase tracking-wide">Rozdział na faktury (wpływ)</div>
+            <p className="mt-1">
+              Przypisano: <strong>{data.incomeAllocatedPln} PLN</strong> · pozostało do przypisania:{" "}
+              <strong>{data.incomeRemainingPln} PLN</strong>
+            </p>
+          </div>
+        ) : null}
+
+        {data.amount < 0 && data.costRemainingPln !== undefined ? (
+          <div className="rounded-lg border border-blue-200 bg-blue-50/60 p-3 text-sm text-blue-950 dark:border-blue-900 dark:bg-blue-950/25 dark:text-blue-100">
+            <div className="text-xs font-semibold uppercase tracking-wide">Rozdział na faktury (wydatek)</div>
+            <p className="mt-1">
+              Przypisano: <strong>{data.costAllocatedPln} PLN</strong> · pozostało do przypisania:{" "}
+              <strong>{data.costRemainingPln} PLN</strong>
+            </p>
+          </div>
+        ) : null}
+
         <div>
           <div className="mb-2 text-xs font-semibold uppercase text-zinc-500">Powiązania</div>
           <ul className="space-y-2">
             {L.createdCost ? (
               <li>
                 Koszt utworzony z importu:{" "}
-                <Link href="/cost-invoices" className="font-medium text-blue-600 underline dark:text-blue-400">
+                <Link
+                  href={costInvoiceListEditHref(L.createdCost.id)}
+                  className="font-medium text-blue-600 underline dark:text-blue-400"
+                >
                   {L.createdCost.documentNumber} — {L.createdCost.supplier}
                 </Link>
               </li>
@@ -197,23 +252,59 @@ export function BankTransactionDetailClient({ importId, transactionId }: Props) 
             {L.linkedCost ? (
               <li>
                 Powiązany koszt:{" "}
-                <Link href="/cost-invoices" className="font-medium text-blue-600 underline dark:text-blue-400">
+                <Link
+                  href={costInvoiceListEditHref(L.linkedCost.id)}
+                  className="font-medium text-blue-600 underline dark:text-blue-400"
+                >
                   {L.linkedCost.documentNumber} — {L.linkedCost.supplier}
                 </Link>
               </li>
             ) : null}
-            {L.payment ? (
+            {L.costPayments && L.costPayments.length > 0 ?
+              L.costPayments.map((p) => (
+                <li key={p.id}>
+                  Płatność koszt {formatMoney(p.amountGross)} →{" "}
+                  <Link
+                    href={costInvoiceListEditHref(p.costInvoiceId)}
+                    className="font-medium text-blue-600 underline dark:text-blue-400"
+                    title="Płatność jest w edycji dokumentu kosztowego"
+                  >
+                    {p.costInvoice.documentNumber} — {p.costInvoice.supplier}
+                  </Link>
+                </li>
+              ))
+            : L.payment ? (
               <li>
                 Płatność: {formatMoney(L.payment.amountGross)} →{" "}
-                <Link href="/cost-invoices" className="text-blue-600 underline dark:text-blue-400">
+                <Link
+                  href={costInvoiceListEditHref(L.payment.costInvoiceId)}
+                  className="text-blue-600 underline dark:text-blue-400"
+                  title="Płatność jest w edycji dokumentu kosztowego"
+                >
                   {L.payment.costInvoice.documentNumber}
                 </Link>
               </li>
             ) : null}
-            {L.matchedIncome ? (
+            {L.incomePayments && L.incomePayments.length > 0 ?
+              L.incomePayments.map((p) => (
+                <li key={p.id}>
+                  Wpłata na fakturę {formatMoney(p.amountGross)} →{" "}
+                  <Link
+                    href={incomeInvoiceListEditHref(p.incomeInvoiceId)}
+                    className="font-medium text-blue-600 underline dark:text-blue-400"
+                    title="Wpłata jest w edycji faktury przychodu"
+                  >
+                    {p.incomeInvoice.invoiceNumber} — {p.incomeInvoice.contractor}
+                  </Link>
+                </li>
+              ))
+            : L.matchedIncome ? (
               <li>
                 Dopasowany przychód:{" "}
-                <Link href="/income-invoices" className="font-medium text-blue-600 underline dark:text-blue-400">
+                <Link
+                  href={incomeInvoiceListEditHref(L.matchedIncome.id)}
+                  className="font-medium text-blue-600 underline dark:text-blue-400"
+                >
                   {L.matchedIncome.invoiceNumber} — {L.matchedIncome.contractor}
                 </Link>
               </li>
@@ -231,17 +322,32 @@ export function BankTransactionDetailClient({ importId, transactionId }: Props) 
                     )}
                   </>
                 : null}{" "}
-                — {L.otherIncome.description}
+                — {L.otherIncome.description}{" "}
+                <Link
+                  href={`/other-income/${L.otherIncome.id}`}
+                  className="font-medium text-blue-600 underline dark:text-blue-400"
+                >
+                  Szczegóły
+                </Link>
               </li>
             ) : null}
-            {!L.createdCost && !L.linkedCost && !L.payment && !L.matchedIncome && !L.otherIncome ? (
+            {!L.createdCost &&
+            !L.linkedCost &&
+            !L.payment &&
+            !(L.costPayments && L.costPayments.length > 0) &&
+            !L.matchedIncome &&
+            !(L.incomePayments && L.incomePayments.length > 0) &&
+            !L.otherIncome ? (
               <li className="text-zinc-500">Brak powiązań z dokumentami.</li>
             ) : null}
           </ul>
         </div>
       </div>
 
-      {canCreateCost(data.status, hasCostLink) ? (
+      {canCreateCost(data.status, hasCostLink, {
+        amount: data.amount,
+        costRemainingPln: data.costRemainingPln,
+      }) ? (
         <Button type="button" onClick={() => setCostOpen(true)}>
           Utwórz nowy koszt
         </Button>

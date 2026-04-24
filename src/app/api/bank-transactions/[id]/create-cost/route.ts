@@ -13,9 +13,11 @@ import { finalizeNewCostPaymentAllocations } from "@/lib/payment-project-allocat
 import { inferDocumentNumberFromBankText } from "@/lib/bank-import/parse-document-number";
 import { isExpenseCategoryBankFeesLike, looksLikeBankFeeDescription } from "@/lib/bank-import/bank-fee-heuristic";
 import { finalizePlannedToCostConversion } from "@/lib/planned-event-conversion";
-import { decToNumber } from "@/lib/cashflow/money";
+import { decToNumber, round2 } from "@/lib/cashflow/money";
+import { PAY_EPS, sumCostPaymentsGross } from "@/lib/cashflow/settlement";
 import {
   replaceCostInvoiceAllocations,
+  replacePlannedEventAllocations,
   resolveLegacyProjectFieldsFromAllocations,
   type CostAllocInput,
 } from "@/lib/project-allocations/persist";
@@ -43,6 +45,12 @@ const createCostBodySchema = z.object({
   projectId: z.string().min(1).optional().nullable(),
   /** Utwórz koszt wg pól z planu; przy zgodności kwoty zamyka zdarzenie planowane (CONVERTED). */
   plannedEventId: optionalCuidLike,
+  /**
+   * Gdy kwota z banku różni się od sumy planu (|Δ| &gt; 2 gr): wymagane — jak potraktować różnicę.
+   * ADJUST_AND_CLOSE — dopasuj kwoty planu do rzeczywistej płatności i oznacz plan jako CONVERTED.
+   * PARTIAL_LEAVE_OPEN — zaksięguj płatność, w planie zostaje niedopłata (status PLANNED).
+   */
+  plannedResolution: z.enum(["ADJUST_AND_CLOSE", "PARTIAL_LEAVE_OPEN"]).optional(),
   /** ≥2 wiersze: jeden koszt z wyciągu, podział brutto/netto (0% VAT) na projekty — bez migracji DB. */
   projectAllocations: z.array(bankCostAllocRowSchema).max(20).optional(),
 });
@@ -83,19 +91,14 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
   const fresh = await prisma.bankTransaction.findUnique({ where: { id: bankTxId } });
   if (!fresh) return jsonError("Nie znaleziono transakcji", 404);
 
-  if (fresh.linkedCostInvoiceId) {
-    return jsonError("Transakcja jest już powiązana z fakturą kosztową — użyj „Cofnij powiązanie”.", 409);
-  }
-  if (fresh.createdCostId) {
-    const existing = await prisma.costInvoice.findUnique({ where: { id: fresh.createdCostId } });
-    if (existing) return jsonError("Koszt został już utworzony dla tej transakcji", 409);
-  }
   if (["VAT_TOPUP", "DUPLICATE", "IGNORED"].includes(fresh.status)) {
     return jsonError("Ten status nie pozwala na utworzenie kosztu z tej transakcji.", 400);
   }
 
-  const payExisting = await prisma.costInvoicePayment.findFirst({ where: { bankTransactionId: bankTxId } });
-  if (payExisting) return jsonError("Dla tej transakcji istnieje już płatność — użyj „Cofnij”.", 409);
+  const incomePayCount = await prisma.incomeInvoicePayment.count({ where: { bankTransactionId: bankTxId } });
+  if (incomePayCount > 0) {
+    return jsonError("Dla tej transakcji są już wpłaty na faktury przychodu — użyj „Cofnij”.", 409);
+  }
 
   const otherInc = await prisma.otherIncome.findUnique({ where: { bankTransactionId: bankTxId } });
   if (otherInc) return jsonError("Dla tej transakcji zapisano już przychód bez faktury — użyj „Cofnij”.", 409);
@@ -103,7 +106,22 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
   const absGrosze = Math.abs(fresh.amount);
   if (absGrosze === 0) return jsonError("Kwota 0 — nie można utworzyć kosztu", 400);
 
-  const grossPln = new Decimal(absGrosze).div(100).toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
+  const costPaysForBank = await prisma.costInvoicePayment.findMany({
+    where: { bankTransactionId: bankTxId },
+    select: { amountGross: true },
+  });
+  const allocatedPln = sumCostPaymentsGross(costPaysForBank);
+  const bankAbsPln = absGrosze / 100;
+  const remainingPln = round2(bankAbsPln - allocatedPln);
+
+  if (remainingPln <= PAY_EPS) {
+    return jsonError(
+      "Cała kwota z tej linii banku jest już rozdzielona na płatności — nie można utworzyć kolejnego kosztu. Użyj „Cofnij”, jeśli chcesz zmienić przypisanie.",
+      409,
+    );
+  }
+
+  const grossPln = new Decimal(remainingPln.toFixed(2)).toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
   const resolved = resolveCostInvoiceAmounts({
     vatOnly: false,
     netAmount: grossPln.toString(),
@@ -131,7 +149,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     b.plannedEventId ?
       await prisma.plannedFinancialEvent.findUnique({
         where: { id: b.plannedEventId },
-        include: { projectAllocations: { select: { projectId: true } } },
+        include: { projectAllocations: true },
       })
     : null;
 
@@ -149,8 +167,25 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
   const plannedTotalGrosze = plannedPe
     ? Math.round((decToNumber(plannedPe.amount as never) + decToNumber(plannedPe.amountVat as never)) * 100)
     : 0;
+  const targetGroszeForPlan = Math.round(remainingPln * 100);
+  const plannedBankGroszeDiff = plannedPe ? plannedTotalGrosze - targetGroszeForPlan : 0;
   const closePlannedOnMatch =
-    Boolean(plannedPe) && Math.abs(plannedTotalGrosze - absGrosze) <= 2;
+    Boolean(plannedPe) && Math.abs(plannedTotalGrosze - targetGroszeForPlan) <= 2;
+
+  if (plannedPe && !closePlannedOnMatch) {
+    if (!b.plannedResolution) {
+      return jsonError(
+        "Kwota z wyciągu różni się od sumy planu — podaj plannedResolution: ADJUST_AND_CLOSE (dopasuj i zamknij) albo PARTIAL_LEAVE_OPEN (częściowa płatność, niedopłata w planie).",
+        422,
+      );
+    }
+    if (b.plannedResolution === "PARTIAL_LEAVE_OPEN" && plannedBankGroszeDiff <= 2) {
+      return jsonError(
+        "Częściowa płatność ma sens, gdy kwota z banku jest niższa niż suma planu. Gdy kwota jest wyższa lub równa planowi, wybierz ADJUST_AND_CLOSE.",
+        422,
+      );
+    }
+  }
 
   const inferredDoc = inferDocumentNumberFromBankText(fresh.description);
   const docInput = b.documentNumber?.trim();
@@ -234,8 +269,8 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
   const docDate = fresh.bookingDate;
 
   const plannedMismatchNote =
-    plannedPe && !closePlannedOnMatch ?
-      `Z planu „${plannedPe.title}”: kwota wyciągu ${(absGrosze / 100).toFixed(2)} PLN ≠ suma planu ${(plannedTotalGrosze / 100).toFixed(2)} PLN — zdarzenie planowe pozostaje PLANNED (dopasuj lub zamknij ręcznie).`
+    plannedPe && !closePlannedOnMatch && b.plannedResolution === "PARTIAL_LEAVE_OPEN" ?
+      `Z planu „${plannedPe.title}”: częściowa płatność ${(targetGroszeForPlan / 100).toFixed(2)} PLN (w planie pozostało ${(plannedBankGroszeDiff / 100).toFixed(2)} PLN).`
     : "";
 
   const row = await prisma.$transaction(async (trx) => {
@@ -291,14 +326,55 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
 
     if (plannedPe && closePlannedOnMatch) {
       await finalizePlannedToCostConversion(trx, plannedPe.id, cost.id);
+    } else if (plannedPe && !closePlannedOnMatch && b.plannedResolution === "ADJUST_AND_CLOSE") {
+      await trx.plannedFinancialEvent.update({
+        where: { id: plannedPe.id },
+        data: {
+          amount: net,
+          amountVat: vat,
+        },
+      });
+      await finalizePlannedToCostConversion(trx, plannedPe.id, cost.id);
+    } else if (plannedPe && !closePlannedOnMatch && b.plannedResolution === "PARTIAL_LEAVE_OPEN") {
+      const remRatio = plannedBankGroszeDiff / plannedTotalGrosze;
+      const pNet = decToNumber(plannedPe.amount as never);
+      const pVat = decToNumber(plannedPe.amountVat as never);
+      const newNet = round2(pNet * remRatio);
+      const newVat = round2(pVat * remRatio);
+      const noteLine = `Częściowa płatność z importu ${(targetGroszeForPlan / 100).toFixed(2)} PLN (${fresh.bookingDate.toISOString().slice(0, 10)}); w planie pozostało ${(plannedBankGroszeDiff / 100).toFixed(2)} PLN.`;
+      const mergedNotes = [plannedPe.notes?.trim(), noteLine].filter(Boolean).join("\n").slice(0, 2000);
+
+      const pa = plannedPe.projectAllocations ?? [];
+      if (pa.length > 0) {
+        await replacePlannedEventAllocations(
+          trx,
+          plannedPe.id,
+          pa.map((a) => ({
+            projectId: a.projectId,
+            amount: round2(decToNumber(a.amount as never) * remRatio).toFixed(2),
+            amountVat: round2(decToNumber(a.amountVat as never) * remRatio).toFixed(2),
+            description: a.description?.trim() ?? "",
+          })),
+        );
+      }
+
+      await trx.plannedFinancialEvent.update({
+        where: { id: plannedPe.id },
+        data: {
+          amount: new Decimal(newNet.toFixed(2)),
+          amountVat: new Decimal(newVat.toFixed(2)),
+          status: "PLANNED",
+          notes: mergedNotes,
+        },
+      });
     }
 
     const bankRow = await trx.bankTransaction.update({
       where: { id: fresh.id },
       data: {
         status: "LINKED_COST",
-        createdCostId: cost.id,
-        linkedCostInvoiceId: null,
+        createdCostId: fresh.createdCostId ?? cost.id,
+        linkedCostInvoiceId: fresh.linkedCostInvoiceId,
       },
     });
 

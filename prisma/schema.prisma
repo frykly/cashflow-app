@@ -204,8 +204,8 @@ model IncomeInvoicePayment {
   allocatedVatAmount  Decimal?
   paymentDate        DateTime
   notes              String           @default("")
-  /// Powiązanie z wierszem importu bankowego (jedna płatność na transakcję)
-  bankTransactionId  String?          @unique
+  /// Powiązanie z wierszem importu bankowego (wiele wpłat może dzielić jedną linię — suma ≤ kwota transakcji)
+  bankTransactionId  String?
   createdAt          DateTime         @default(now())
   projectAllocations IncomeInvoicePaymentProjectAllocation[]
 
@@ -273,7 +273,8 @@ model CostInvoicePayment {
   amountGross        Decimal
   paymentDate        DateTime
   notes              String      @default("")
-  bankTransactionId  String?     @unique
+  /// Wiele płatności może dzielić jedną linię banku — suma ≤ kwota transakcji
+  bankTransactionId  String?
   createdAt          DateTime    @default(now())
   projectAllocations CostInvoicePaymentProjectAllocation[]
 

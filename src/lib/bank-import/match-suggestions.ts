@@ -7,6 +7,7 @@ import type {
 } from "@prisma/client";
 import { decToNumber } from "@/lib/cashflow/money";
 import { costRemainingGross, incomeRemainingGross, PAY_EPS } from "@/lib/cashflow/settlement";
+import { round2 } from "@/lib/cashflow/money";
 import { documentGrossSlicesFromInvoice } from "@/lib/payment-project-allocation/distribute-read";
 
 const DAY_MS = 86_400_000;
@@ -170,10 +171,13 @@ export function rankCosts(
     payments?: Pick<CostInvoicePayment, "amountGross">[];
   })[],
   take = 15,
-  opts?: { demote?: boolean },
+  opts?: { demote?: boolean; bankRemainingPln?: number },
 ): CostSuggestion[] {
   const mul = opts?.demote ? DEMOTE_FACTOR : 1;
-  const payPln = Math.abs(tx.amount) / 100;
+  const bankAbsPln = Math.abs(tx.amount) / 100;
+  const bankRem =
+    opts?.bankRemainingPln !== undefined ? round2(opts.bankRemainingPln) : bankAbsPln;
+  const payChunk = bankRem > PAY_EPS ? bankRem : 0;
   const scored = list
     .map((inv) => {
       const rem = costRemainingGross(inv, inv.payments ?? []);
@@ -185,7 +189,7 @@ export function rankCosts(
         documentDate: inv.documentDate.toISOString(),
         score: Math.round(scoreCostMatch(tx, inv) * mul * 100) / 100,
         remainingGross: rem.toFixed(2),
-        canFitFullPayment: rem + PAY_EPS >= payPln,
+        canFitFullPayment: payChunk <= PAY_EPS ? false : rem + PAY_EPS >= payChunk,
       };
     })
     .sort((a, b) => b.score - a.score);
@@ -229,10 +233,13 @@ export function rankIncomes(
     payments?: Pick<IncomeInvoicePayment, "amountGross">[];
   })[],
   take = 15,
-  opts?: { demote?: boolean },
+  opts?: { demote?: boolean; bankRemainingPln?: number },
 ): IncomeSuggestion[] {
   const mul = opts?.demote ? DEMOTE_FACTOR : 1;
-  const payPln = Math.abs(tx.amount) / 100;
+  const bankAbsPln = Math.abs(tx.amount) / 100;
+  const bankRem =
+    opts?.bankRemainingPln !== undefined ? round2(opts.bankRemainingPln) : bankAbsPln;
+  const payChunk = bankRem > PAY_EPS ? bankRem : 0;
   const scored = list
     .map((inv) => {
       const rem = incomeRemainingGross(inv, inv.payments ?? []);
@@ -252,7 +259,7 @@ export function rankIncomes(
           projectId: inv.projectId,
         }).length > 1,
         remainingGross: rem.toFixed(2),
-        canFitFullPayment: rem + PAY_EPS >= payPln,
+        canFitFullPayment: payChunk <= PAY_EPS ? false : rem + PAY_EPS >= payChunk,
       };
     })
     .sort((a, b) => b.score - a.score);
