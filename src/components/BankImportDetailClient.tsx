@@ -24,6 +24,12 @@ type Tx = {
   matchedInvoiceId: string | null;
   linkedCostInvoiceId: string | null;
   createdCostId: string | null;
+  allocation?: {
+    allocatedPln: string;
+    remainingPln: string;
+    fullyAssigned: boolean;
+    partiallyAssigned: boolean;
+  };
 };
 
 type Detail = {
@@ -45,6 +51,7 @@ const statusClass: Record<string, string> = {
   LINKED_COST: "bg-blue-100 text-blue-900 dark:bg-blue-950 dark:text-blue-200",
   LINKED_INCOME: "bg-cyan-100 text-cyan-900 dark:bg-cyan-950 dark:text-cyan-200",
   LINKED_OTHER_INCOME: "bg-teal-100 text-teal-900 dark:bg-teal-950 dark:text-teal-200",
+  PARTIAL: "bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-200",
   CREATED: "bg-blue-100 text-blue-900 dark:bg-blue-950 dark:text-blue-200",
   IGNORED: "bg-zinc-200 text-zinc-600 dark:bg-zinc-700 dark:text-zinc-300",
   TRANSFER: "bg-violet-100 text-violet-900 dark:bg-violet-950 dark:text-violet-200",
@@ -229,7 +236,8 @@ export function BankImportDetailClient({ importId }: { importId: string }) {
           <tbody>
             {data.transactions.map((t) => {
               const b = busyId === t.id;
-              const sc = statusClass[t.status] ?? statusClass.NEW;
+              const displayStatus = t.allocation?.partiallyAssigned ? "PARTIAL" : t.status;
+              const sc = statusClass[displayStatus] ?? statusClass.NEW;
               const createOk = canCreateCost(t);
               const costEditTargetId = t.linkedCostInvoiceId ?? t.createdCostId;
               return (
@@ -241,8 +249,18 @@ export function BankImportDetailClient({ importId }: { importId: string }) {
                   </td>
                   <td className="px-2 py-2">
                     <span className={`inline-block rounded px-2 py-0.5 text-xs font-medium ${sc}`}>
-                      {bankTransactionStatusLabel(t.status)}
+                      {t.allocation?.partiallyAssigned ? "Częściowo przypisano" : bankTransactionStatusLabel(t.status)}
                     </span>
+                    {t.allocation ? (
+                      <div className="mt-1 text-[11px] text-zinc-600 dark:text-zinc-400">
+                        przypisano: {t.allocation.allocatedPln} zł
+                        <br />
+                        pozostało:{" "}
+                        <span className={t.allocation.partiallyAssigned ? "font-medium text-amber-800 dark:text-amber-200" : ""}>
+                          {t.allocation.remainingPln} zł
+                        </span>
+                      </div>
+                    ) : null}
                   </td>
                   <td className="px-2 py-2">
                     <div className="flex max-w-[420px] flex-wrap gap-1">

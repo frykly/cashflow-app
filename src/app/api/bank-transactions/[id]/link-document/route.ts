@@ -24,6 +24,8 @@ const bodySchema = z
     incomeInvoiceId: z.string().min(1).optional(),
     /** Kwota brutto z tej linii banku (PLN): wpłata przychód / płatność koszt. Puste = całe „pozostało” na transakcji. */
     paymentGross: z.union([z.number(), z.string()]).optional(),
+    /** Koszt: po potwierdzeniu użytkownika zwiększ konkretną fakturę do sumy płatności. */
+    adjustCostInvoiceToPayment: z.boolean().optional(),
     incomeSplit: z
       .object({
         allocatedMainAmount: z.union([z.number(), z.string()]),
@@ -122,16 +124,52 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
       );
     }
 
-    try {
-      assertCostPaymentFits(inv, paymentGrossDec);
-    } catch {
-      return jsonError("Suma płatności przekroczyłaby kwotę brutto faktury kosztowej.", 400);
+    const currentInvoicePaid = sumCostPaymentsGross(inv.payments);
+    const targetInvoiceGrossAfterPayment = round2(currentInvoicePaid + payNum);
+    const invoiceGrossBefore = decToNumber(inv.grossAmount);
+    const costWouldOverpay = targetInvoiceGrossAfterPayment > invoiceGrossBefore + PAY_EPS;
+
+    if (costWouldOverpay && !parsed.data.adjustCostInvoiceToPayment) {
+      return jsonError(
+        `Płatność przekracza pozostałą kwotę faktury o ${round2(targetInvoiceGrossAfterPayment - invoiceGrossBefore).toFixed(2)} PLN. Potwierdź zwiększenie dokumentu albo przypisz tylko pozostałą kwotę.`,
+        409,
+      );
+    }
+    if (!costWouldOverpay) {
+      try {
+        assertCostPaymentFits(inv, paymentGrossDec);
+      } catch {
+        return jsonError("Suma płatności przekroczyłaby kwotę brutto faktury kosztowej.", 400);
+      }
     }
 
     const payGrossStr = normalizeDecimalInput(paymentGrossDec.toString());
     const linkedCostAfter = tx.linkedCostInvoiceId ?? inv.id;
 
     const updated = await prisma.$transaction(async (trx) => {
+      if (costWouldOverpay) {
+        const ratio = invoiceGrossBefore > PAY_EPS ? targetInvoiceGrossAfterPayment / invoiceGrossBefore : 1;
+        const nextGross = new Prisma.Decimal(targetInvoiceGrossAfterPayment.toFixed(2));
+        const nextNet = new Prisma.Decimal(round2(decToNumber(inv.netAmount) * ratio).toFixed(2));
+        const nextVat = new Prisma.Decimal(round2(targetInvoiceGrossAfterPayment - decToNumber(nextNet)).toFixed(2));
+        await trx.costInvoice.update({
+          where: { id: inv.id },
+          data: {
+            grossAmount: nextGross,
+            netAmount: nextNet,
+            vatAmount: nextVat,
+          },
+        });
+        for (const alloc of inv.projectAllocations) {
+          await trx.costInvoiceProjectAllocation.update({
+            where: { id: alloc.id },
+            data: {
+              netAmount: new Prisma.Decimal(round2(decToNumber(alloc.netAmount) * ratio).toFixed(2)),
+              grossAmount: new Prisma.Decimal(round2(decToNumber(alloc.grossAmount) * ratio).toFixed(2)),
+            },
+          });
+        }
+      }
       const payment = await trx.costInvoicePayment.create({
         data: {
           costInvoiceId: inv.id,
@@ -143,10 +181,11 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
         select: { id: true },
       });
       await finalizeNewCostPaymentAllocations(trx, inv.id, payment.id, payGrossStr, null);
+      const remainingAfter = round2(remainingBank - payNum);
       return trx.bankTransaction.update({
         where: { id: bankTxId },
         data: {
-          status: "LINKED_COST",
+          status: remainingAfter > PAY_EPS ? "PARTIAL" : "LINKED_COST",
           linkedCostInvoiceId: linkedCostAfter,
           matchedInvoiceId: null,
           createdCostId: null,
@@ -221,7 +260,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
   const payGrossStr = normalizeDecimalInput(paymentGrossDec.toString());
   const matchedIdAfter = tx.matchedInvoiceId ?? inv.id;
 
-  const updated = await prisma.$transaction(async (trx) => {
+    const updated = await prisma.$transaction(async (trx) => {
     const payment = await trx.incomeInvoicePayment.create({
       data: {
         incomeInvoiceId: inv.id,
@@ -235,10 +274,11 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
       select: { id: true },
     });
     await finalizeNewIncomePaymentAllocations(trx, inv.id, payment.id, payGrossStr, null);
+      const remainingAfter = round2(remainingBank - payNum);
     return trx.bankTransaction.update({
       where: { id: bankTxId },
       data: {
-        status: "LINKED_INCOME",
+        status: remainingAfter > PAY_EPS ? "PARTIAL" : "LINKED_INCOME",
         matchedInvoiceId: matchedIdAfter,
         linkedCostInvoiceId: null,
         createdCostId: null,

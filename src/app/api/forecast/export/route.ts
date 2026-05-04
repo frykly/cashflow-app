@@ -6,9 +6,11 @@ import {
   type ForecastDayRow,
 } from "@/lib/cashflow/forecast";
 import {
+  buildCostPartyById,
   buildCostPartyByDocumentNumber,
+  buildIncomePartyById,
   buildIncomePartyByInvoiceNumber,
-  enrichForecastEventsSummary,
+  enrichMovementLabel,
 } from "@/lib/cashflow/forecast-export-summary";
 import { parseForecastRange } from "@/lib/cashflow/forecast-query";
 import { differenceInCalendarDays } from "date-fns";
@@ -45,10 +47,20 @@ function rowToExport(
   r: ForecastDayRow,
   incomeParty: Map<string, string | undefined>,
   costParty: Map<string, string | undefined>,
+  incomePartyById: Map<string, string | undefined>,
+  costPartyById: Map<string, string | undefined>,
 ) {
   const { incomeMain, incomeVat, expenseMain, expenseVat } = splitMovements(r);
-  const rawEv = r.movements.map((m) => `${m.kind}:${m.label}`).join(" | ");
-  const ev = enrichForecastEventsSummary(rawEv, incomeParty, costParty);
+  const ev = r.movements
+    .map((m) => {
+      const label = enrichMovementLabel(m.kind, m.label, incomeParty, costParty, {
+        refId: m.refId,
+        incomeById: incomePartyById,
+        costById: costPartyById,
+      });
+      return `${m.kind}:${label}`;
+    })
+    .join(" | ");
   return [
     r.dayKey,
     String(r.mainStart),
@@ -86,6 +98,8 @@ export async function GET(req: Request) {
 
   const incomeParty = buildIncomePartyByInvoiceNumber(incomes);
   const costParty = buildCostPartyByDocumentNumber(costs);
+  const incomePartyById = buildIncomePartyById(incomes);
+  const costPartyById = buildCostPartyById(costs);
 
   const header = [
     "date",
@@ -101,7 +115,7 @@ export async function GET(req: Request) {
     "eventsSummary",
   ];
 
-  const table = [header, ...rows.map((r) => rowToExport(r, incomeParty, costParty))];
+  const table = [header, ...rows.map((r) => rowToExport(r, incomeParty, costParty, incomePartyById, costPartyById))];
 
   if (fmt === "csv") {
     const body = "\uFEFF" + rowsToCsv(table);

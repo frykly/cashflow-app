@@ -115,6 +115,7 @@ const statuses = z.enum([
   "LINKED_COST",
   "LINKED_INCOME",
   "LINKED_OTHER_INCOME",
+  "PARTIAL",
   "TRANSFER",
   "VAT_TOPUP",
   "IGNORED",

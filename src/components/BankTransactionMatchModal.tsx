@@ -23,6 +23,7 @@ type CostS = Suggestion & {
   documentDate: string;
   remainingGross: string;
   canFitFullPayment: boolean;
+  matchBadges?: string[];
 };
 type IncS = Suggestion & {
   invoiceNumber: string;
@@ -34,6 +35,7 @@ type IncS = Suggestion & {
   splitBlocked: boolean;
   remainingGross: string;
   canFitFullPayment: boolean;
+  matchBadges?: string[];
 };
 
 type PlannedE = {
@@ -51,6 +53,26 @@ function rowMatchesQuery(q: string, parts: (string | null | undefined)[]): boole
   if (!needle) return true;
   const hay = parts.filter(Boolean).join(" ").toLowerCase();
   return hay.includes(needle);
+}
+
+function badgeClass(label: string): string {
+  if (label === "Numer w tytule") return "border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-200";
+  if (label === "Idealna kwota" || label === "Domyka płatność") return "border-blue-200 bg-blue-50 text-blue-800 dark:border-blue-900 dark:bg-blue-950/40 dark:text-blue-200";
+  if (label === "Kwota większa niż pozostało") return "border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-200";
+  return "border-zinc-200 bg-zinc-50 text-zinc-700 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300";
+}
+
+function MatchBadges({ labels }: { labels?: string[] }) {
+  if (!labels || labels.length === 0) return null;
+  return (
+    <span className="mt-1 flex flex-wrap gap-1">
+      {labels.map((label) => (
+        <span key={label} className={`rounded-full border px-1.5 py-0.5 text-[10px] font-medium ${badgeClass(label)}`}>
+          {label}
+        </span>
+      ))}
+    </span>
+  );
 }
 
 function defaultBankIncomeSplit(inv: IncS, paymentGrossPln: number): { main: string; vat: string } {
@@ -105,6 +127,7 @@ export function BankTransactionMatchModal({
   const [createCostFromBankOpen, setCreateCostFromBankOpen] = useState(false);
   /** Różnica kwoty plan vs bank — wybór ADJUST / PARTIAL / anuluj */
   const [plannedAmountResolution, setPlannedAmountResolution] = useState<PlannedE | null>(null);
+  const [costOverpayResolution, setCostOverpayResolution] = useState<CostS | null>(null);
 
   const load = useCallback(async () => {
     if (!open || !transactionId) return;
@@ -198,6 +221,7 @@ export function BankTransactionMatchModal({
       setCostAmountDraft({});
       setCreateCostFromBankOpen(false);
       setPlannedAmountResolution(null);
+      setCostOverpayResolution(null);
       setListFilter("");
     }
   }, [open]);
@@ -238,7 +262,7 @@ export function BankTransactionMatchModal({
     [plannedExpenses, listFilter],
   );
 
-  async function linkCost(id: string) {
+  async function linkCost(id: string, mode?: "ADJUST_DOCUMENT" | "REMAINING_ONLY") {
     setBusy(true);
     setError(null);
     try {
@@ -248,16 +272,28 @@ export function BankTransactionMatchModal({
       const draft = costAmountDraft[id]?.trim();
       const parsed = parsePlnInput(draft);
       const chunk =
-        Number.isFinite(parsed) ? parsed : round2(Math.min(Number(inv?.remainingGross ?? 0), bankRem));
+        mode === "ADJUST_DOCUMENT" ? bankRem
+        : mode === "REMAINING_ONLY" ? round2(Math.min(Number(inv?.remainingGross ?? 0), bankRem))
+        : Number.isFinite(parsed) ? parsed
+        : round2(Math.min(Number(inv?.remainingGross ?? 0), bankRem));
+      if (!mode && inv && bankRem > Number(inv.remainingGross) + PAY_EPS) {
+        setCostOverpayResolution(inv);
+        return;
+      }
       const res = await fetch(`/api/bank-transactions/${transactionId}/link-document`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ costInvoiceId: id, paymentGross: chunk.toFixed(2) }),
+        body: JSON.stringify({
+          costInvoiceId: id,
+          paymentGross: chunk.toFixed(2),
+          adjustCostInvoiceToPayment: mode === "ADJUST_DOCUMENT",
+        }),
       });
       if (!res.ok) {
         setError(await readApiError(res));
         return;
       }
+      setCostOverpayResolution(null);
       onLinked();
       let remAfter = Number.POSITIVE_INFINITY;
       const r2 = await fetch(`/api/bank-transactions/${transactionId}/match-suggestions`);
@@ -456,7 +492,14 @@ export function BankTransactionMatchModal({
                 chunk <= invRem + PAY_EPS &&
                 chunk <= bankRemainingPln + PAY_EPS;
               return (
-                <li key={c.id} className="space-y-1 border-b border-zinc-100 py-2 dark:border-zinc-800">
+                <li
+                  key={c.id}
+                  className={`space-y-1 border-b border-zinc-100 py-2 dark:border-zinc-800 ${
+                    c.matchBadges?.includes("Numer w tytule") || c.matchBadges?.includes("Idealna kwota") ?
+                      "rounded-md bg-emerald-50/45 px-2 dark:bg-emerald-950/15"
+                    : ""
+                  }`}
+                >
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <span className="min-w-0 text-zinc-700 dark:text-zinc-300">
                       {c.invoiceNumber} · {c.contractor} · {safeFormatDate(c.issueDate)} · brutto{" "}
@@ -465,12 +508,7 @@ export function BankTransactionMatchModal({
                       <span className="ml-1 text-xs text-zinc-400" title={scoreHint}>
                         (dopasowanie {c.score})
                       </span>
-                      {bankRemainingPln > invRem + PAY_EPS ? (
-                        <span className="mt-0.5 block text-xs font-medium text-amber-800 dark:text-amber-200">
-                          Linia banku jest większa niż pozostało na tej fakturze — domyślnie wpłynie tylko część (pole
-                          „Kwota wpłaty”).
-                        </span>
-                      ) : null}
+                      <MatchBadges labels={c.matchBadges} />
                     </span>
                     <button
                       type="button"
@@ -642,16 +680,26 @@ export function BankTransactionMatchModal({
           <ul className="max-h-40 space-y-1 overflow-y-auto text-sm">
             {filteredCosts.map((c) => {
               const invRem = Number(c.remainingGross);
+              const overRemaining = costBankRemainingPln > invRem + PAY_EPS;
               const rowParsed = parsePlnInput(costAmountDraft[c.id]);
               const chunk = Number.isFinite(rowParsed)
                 ? rowParsed
                 : round2(Math.min(invRem, costBankRemainingPln));
               const lineOk =
-                chunk > PAY_EPS &&
-                chunk <= costBankRemainingPln + PAY_EPS &&
-                chunk <= invRem + PAY_EPS;
+                overRemaining ?
+                  costBankRemainingPln > PAY_EPS && invRem > PAY_EPS
+                : chunk > PAY_EPS &&
+                  chunk <= costBankRemainingPln + PAY_EPS &&
+                  chunk <= invRem + PAY_EPS;
               return (
-                <li key={c.id} className="space-y-1 border-b border-zinc-100 py-2 dark:border-zinc-800">
+                <li
+                  key={c.id}
+                  className={`space-y-1 border-b border-zinc-100 py-2 dark:border-zinc-800 ${
+                    c.matchBadges?.includes("Numer w tytule") || c.matchBadges?.includes("Idealna kwota") ?
+                      "rounded-md bg-emerald-50/45 px-2 dark:bg-emerald-950/15"
+                    : ""
+                  }`}
+                >
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <span className="min-w-0 text-zinc-700 dark:text-zinc-300">
                       {c.documentNumber} · {c.supplier} · {safeFormatDate(c.documentDate)} · brutto{" "}
@@ -659,12 +707,7 @@ export function BankTransactionMatchModal({
                       <span className="ml-1 text-xs text-zinc-400" title={scoreHint}>
                         (dopasowanie {c.score})
                       </span>
-                      {costBankRemainingPln > invRem + PAY_EPS ? (
-                        <span className="mt-0.5 block text-xs font-medium text-amber-800 dark:text-amber-200">
-                          Linia banku jest większa niż pozostało na tej fakturze — domyślnie zapłaci się tylko część (pole
-                          „Kwota płatności”).
-                        </span>
-                      ) : null}
+                      <MatchBadges labels={c.matchBadges} />
                     </span>
                     <button
                       type="button"
@@ -673,13 +716,15 @@ export function BankTransactionMatchModal({
                         !lineOk ?
                           costBankRemainingPln <= PAY_EPS ?
                             "Brak kwoty do przypisania na tej linii banku."
+                          : overRemaining ?
+                            "Wybierz sposób dopasowania: zwiększ dokument i przypisz całość albo przypisz tylko pozostałość."
                           : "Sprawdź kwotę: &gt; 0, ≤ pozostało na fakturze i ≤ pozostało na transakcji."
                         : undefined
                       }
                       onClick={() => void linkCost(c.id)}
                       className="shrink-0 rounded border border-emerald-600 px-2 py-0.5 text-xs text-emerald-800 hover:bg-emerald-50 disabled:opacity-50 dark:border-emerald-700 dark:text-emerald-200 dark:hover:bg-emerald-950/40"
                     >
-                      Połącz + płatność
+                      {overRemaining ? "Wybierz sposób dopasowania" : "Połącz + płatność"}
                     </button>
                   </div>
                   <div className="flex flex-wrap items-center gap-2 text-xs">
@@ -776,9 +821,71 @@ export function BankTransactionMatchModal({
   const plannedRes = plannedAmountResolution;
   const plannedResDiffG = plannedRes ? plannedVsBankGroszeDiff(plannedRes) : 0;
   const canChoosePartial = plannedResDiffG > 2;
+  const plannedOverpayPln = plannedResDiffG < -2 ? (-plannedResDiffG / 100).toFixed(2) : null;
+  const costOverpay = costOverpayResolution;
+  const costOverpayAmountPln = costOverpay ?
+    round2(costBankRemainingPln - Number(costOverpay.remainingGross))
+  : 0;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" role="dialog">
+      {costOverpay ?
+        <div
+          className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 p-4"
+          role="alertdialog"
+          aria-modal="true"
+          aria-labelledby="cost-overpay-resolution-title"
+        >
+          <div className="w-full max-w-md rounded-lg border border-zinc-200 bg-white p-4 shadow-xl dark:border-zinc-600 dark:bg-zinc-900">
+            <h3 id="cost-overpay-resolution-title" className="mb-2 text-base font-semibold text-zinc-900 dark:text-zinc-50">
+              Płatność przekracza dokument
+            </h3>
+            <p className="mb-3 text-sm text-zinc-600 dark:text-zinc-300">
+              <span className="font-medium">{costOverpay.documentNumber}</span> · {costOverpay.supplier}
+              <br />
+              Pozostało na dokumencie: {Number(costOverpay.remainingGross).toFixed(2)} PLN · pozostało na linii banku:{" "}
+              {costBankRemainingPln.toFixed(2)} PLN
+              <br />
+              Ta płatność przekracza pozostałą kwotę dokumentu o {costOverpayAmountPln.toFixed(2)} PLN.
+            </p>
+            <p className="mb-3 text-xs text-zinc-500 dark:text-zinc-400">
+              Wybierz świadomie: pełna płatność zwiększy kwotę tylko tego dokumentu; częściowa zostawi resztę na linii bankowej.
+            </p>
+            <div className="flex flex-col gap-2">
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => void linkCost(costOverpay.id, "ADJUST_DOCUMENT")}
+                className="rounded border border-emerald-600 bg-emerald-50 px-3 py-2 text-left text-sm text-emerald-950 hover:bg-emerald-100 disabled:opacity-50 dark:border-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-100 dark:hover:bg-emerald-950/60"
+              >
+                <strong className="block">Zwiększ dokument i przypisz całość</strong>
+                <span className="text-xs opacity-90">
+                  Zwiększ kwotę tego kosztu do sumy płatności i rozdziel całą pozostałą kwotę z linii bankowej.
+                </span>
+              </button>
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => void linkCost(costOverpay.id, "REMAINING_ONLY")}
+                className="rounded border border-amber-600 bg-amber-50 px-3 py-2 text-left text-sm text-amber-950 hover:bg-amber-100 disabled:opacity-50 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-100 dark:hover:bg-amber-950/60"
+              >
+                <strong className="block">Przypisz tylko do wysokości dokumentu</strong>
+                <span className="text-xs opacity-90">
+                  Przypisz {Number(costOverpay.remainingGross).toFixed(2)} PLN; reszta pozostanie widoczna jako nierozdysponowana.
+                </span>
+              </button>
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => setCostOverpayResolution(null)}
+                className="rounded border border-zinc-300 px-3 py-2 text-sm text-zinc-700 hover:bg-zinc-50 dark:border-zinc-600 dark:text-zinc-200 dark:hover:bg-zinc-800"
+              >
+                Anuluj — bez zmian
+              </button>
+            </div>
+          </div>
+        </div>
+      : null}
       {plannedRes ?
         <div
           className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 p-4"
@@ -788,7 +895,7 @@ export function BankTransactionMatchModal({
         >
           <div className="w-full max-w-md rounded-lg border border-zinc-200 bg-white p-4 shadow-xl dark:border-zinc-600 dark:bg-zinc-900">
             <h3 id="planned-resolution-title" className="mb-2 text-base font-semibold text-zinc-900 dark:text-zinc-50">
-              Różnica kwoty: plan vs bank
+              {plannedOverpayPln ? "Płatność przekracza plan" : "Różnica kwoty: plan vs bank"}
             </h3>
             <p className="mb-3 text-sm text-zinc-600 dark:text-zinc-300">
               <span className="font-medium">{plannedRes.title}</span>
@@ -799,7 +906,10 @@ export function BankTransactionMatchModal({
               {plannedResDiffG > 0 ?
                 <>W planie zostaje do rozliczenia: {(plannedResDiffG / 100).toFixed(2)} PLN.</>
               : plannedResDiffG < 0 ?
-                <>Płatność z banku wyższa niż plan o {(-plannedResDiffG / 100).toFixed(2)} PLN.</>
+                <>
+                  Ta płatność przekracza planowaną kwotę zdarzenia o {plannedOverpayPln} PLN. Czy uznać tę kwotę za
+                  prawidłową i zaktualizować zdarzenie?
+                </>
               : null}
             </p>
             <p className="mb-3 text-xs text-zinc-500 dark:text-zinc-400">
@@ -812,9 +922,12 @@ export function BankTransactionMatchModal({
                 onClick={() => void createCostFromPlanned(plannedRes.id, "ADJUST_AND_CLOSE")}
                 className="rounded border border-emerald-600 bg-emerald-50 px-3 py-2 text-left text-sm text-emerald-950 hover:bg-emerald-100 disabled:opacity-50 dark:border-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-100 dark:hover:bg-emerald-950/60"
               >
-                <strong className="block">Pełna płatność (dopasuj plan do banku)</strong>
+                <strong className="block">
+                  {plannedOverpayPln ? "Zaktualizuj zdarzenie i przypisz pełną płatność" : "Pełna płatność (dopasuj plan do banku)"}
+                </strong>
                 <span className="text-xs opacity-90">
-                  Zaktualizuj kwoty planu do rzeczywistej płatności, oznacz plan jako rozliczony — bez niedopłaty.
+                  Zaktualizuj kwoty tego konkretnego zdarzenia do rzeczywistej płatności, utwórz koszt z pełnej kwoty banku
+                  i oznacz zdarzenie jako rozliczone.
                 </span>
               </button>
               {canChoosePartial ?

@@ -12,6 +12,7 @@ import { documentGrossSlicesFromInvoice } from "@/lib/payment-project-allocation
 
 const DAY_MS = 86_400_000;
 const GROSZ_EPS = 2;
+const PLNG_EPS = GROSZ_EPS / 100;
 
 function grossToGrosze(d: unknown): number {
   return Math.round(decToNumber(d as never) * 100);
@@ -66,6 +67,54 @@ function docHintScore(hints: string[], docNumber: string): number {
   return 0;
 }
 
+function docNumberInText(text: string, docNumber: string): boolean {
+  const norm = (s: string) => s.toUpperCase().replace(/[^\p{L}\p{N}]+/gu, "");
+  const dn = norm(docNumber);
+  const tx = norm(text);
+  return dn.length >= 4 && tx.includes(dn);
+}
+
+function amountBadges(params: {
+  bankRemainingPln: number;
+  invoiceRemainingPln: number;
+  invoiceGrossPln: number;
+}): { exactRemaining: boolean; closesPartial: boolean; partialPayment: boolean; overRemaining: boolean } {
+  const bank = params.bankRemainingPln;
+  const rem = params.invoiceRemainingPln;
+  const paidBefore = round2(params.invoiceGrossPln - rem);
+  const exactRemaining = bank > PAY_EPS && Math.abs(bank - rem) <= PLNG_EPS;
+  return {
+    exactRemaining,
+    closesPartial: exactRemaining && paidBefore > PAY_EPS,
+    partialPayment: bank > PAY_EPS && bank < rem - PLNG_EPS,
+    overRemaining: bank > rem + PLNG_EPS,
+  };
+}
+
+function scorePaymentFit(flags: ReturnType<typeof amountBadges>): number {
+  if (flags.closesPartial) return 10;
+  if (flags.exactRemaining) return 9;
+  if (flags.partialPayment) return 2;
+  if (flags.overRemaining) return -2;
+  return 0;
+}
+
+function matchBadges(params: {
+  docNumberInTitle: boolean;
+  exactRemaining: boolean;
+  closesPartial: boolean;
+  partialPayment: boolean;
+  overRemaining: boolean;
+}): string[] {
+  const out: string[] = [];
+  if (params.docNumberInTitle) out.push("Numer w tytule");
+  if (params.exactRemaining) out.push("Idealna kwota");
+  if (params.closesPartial) out.push("Domyka płatność");
+  if (params.partialPayment) out.push("Częściowa płatność");
+  if (params.overRemaining) out.push("Kwota większa niż pozostało");
+  return out;
+}
+
 export type CostSuggestion = {
   id: string;
   documentNumber: string;
@@ -77,6 +126,7 @@ export type CostSuggestion = {
   remainingGross: string;
   /** Czy da się przypisać całą kwotę transakcji bankowej (ujemnej) jako jedną płatność. */
   canFitFullPayment: boolean;
+  matchBadges: string[];
 };
 
 export type IncomeSuggestion = {
@@ -95,6 +145,7 @@ export type IncomeSuggestion = {
   remainingGross: string;
   /** Czy da się przypisać całą kwotę transakcji bankowej (dodatniej) jako jedną wpłatę. */
   canFitFullPayment: boolean;
+  matchBadges: string[];
 };
 
 export type PlannedExpenseSuggestion = {
@@ -181,18 +232,33 @@ export function rankCosts(
   const scored = list
     .map((inv) => {
       const rem = costRemainingGross(inv, inv.payments ?? []);
+      const gross = decToNumber(inv.grossAmount);
+      const amountFlags = amountBadges({
+        bankRemainingPln: payChunk,
+        invoiceRemainingPln: rem,
+        invoiceGrossPln: gross,
+      });
+      const docInTitle = docNumberInText(tx.description, inv.documentNumber);
+      const rawScore =
+        scoreCostMatch(tx, inv) +
+        (docInTitle ? 14 : 0) +
+        scorePaymentFit(amountFlags);
       return {
         id: inv.id,
         documentNumber: inv.documentNumber,
         supplier: inv.supplier,
         grossAmount: inv.grossAmount.toString(),
         documentDate: inv.documentDate.toISOString(),
-        score: Math.round(scoreCostMatch(tx, inv) * mul * 100) / 100,
+        score: Math.round(rawScore * mul * 100) / 100,
         remainingGross: rem.toFixed(2),
         canFitFullPayment: payChunk <= PAY_EPS ? false : rem + PAY_EPS >= payChunk,
+        matchBadges: matchBadges({
+          docNumberInTitle: docInTitle,
+          ...amountFlags,
+        }),
       };
     })
-    .sort((a, b) => b.score - a.score);
+    .sort((a, b) => b.score - a.score || a.documentNumber.localeCompare(b.documentNumber));
   return scored.slice(0, take);
 }
 
@@ -243,13 +309,24 @@ export function rankIncomes(
   const scored = list
     .map((inv) => {
       const rem = incomeRemainingGross(inv, inv.payments ?? []);
+      const gross = decToNumber(inv.grossAmount);
+      const amountFlags = amountBadges({
+        bankRemainingPln: payChunk,
+        invoiceRemainingPln: rem,
+        invoiceGrossPln: gross,
+      });
+      const docInTitle = docNumberInText(tx.description, inv.invoiceNumber);
+      const rawScore =
+        scoreIncomeMatch(tx, inv) +
+        (docInTitle ? 14 : 0) +
+        scorePaymentFit(amountFlags);
       return {
         id: inv.id,
         invoiceNumber: inv.invoiceNumber,
         contractor: inv.contractor,
         grossAmount: inv.grossAmount.toString(),
         issueDate: inv.issueDate.toISOString(),
-        score: Math.round(scoreIncomeMatch(tx, inv) * mul * 100) / 100,
+        score: Math.round(rawScore * mul * 100) / 100,
         vatDestination: inv.vatDestination,
         netAmount: inv.netAmount.toString(),
         vatAmount: inv.vatAmount.toString(),
@@ -260,8 +337,12 @@ export function rankIncomes(
         }).length > 1,
         remainingGross: rem.toFixed(2),
         canFitFullPayment: payChunk <= PAY_EPS ? false : rem + PAY_EPS >= payChunk,
+        matchBadges: matchBadges({
+          docNumberInTitle: docInTitle,
+          ...amountFlags,
+        }),
       };
     })
-    .sort((a, b) => b.score - a.score);
+    .sort((a, b) => b.score - a.score || a.invoiceNumber.localeCompare(b.invoiceNumber));
   return scored.slice(0, take);
 }

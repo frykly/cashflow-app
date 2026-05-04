@@ -14,6 +14,7 @@ type ImportRow = {
   fileName: string;
   createdAt: string;
   _count: { transactions: number };
+  allocationSummary?: { partiallyAssignedTransactions: number };
 };
 
 export function BankImportsClient() {
@@ -261,7 +262,14 @@ export function BankImportsClient() {
                   <tr key={r.id} className="border-b border-zinc-100 dark:border-zinc-800/80">
                     <td className="px-3 py-2 whitespace-nowrap">{safeFormatDate(r.createdAt)}</td>
                     <td className="px-3 py-2">{r.fileName}</td>
-                    <td className="px-3 py-2 tabular-nums">{r._count.transactions}</td>
+                    <td className="px-3 py-2 tabular-nums">
+                      {r._count.transactions}
+                      {r.allocationSummary && r.allocationSummary.partiallyAssignedTransactions > 0 ? (
+                        <span className="ml-2 rounded-full border border-amber-200 bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-800 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-200">
+                          Częściowo: {r.allocationSummary.partiallyAssignedTransactions}
+                        </span>
+                      ) : null}
+                    </td>
                     <td className="px-3 py-2">
                       <Link href={`/bank-imports/${r.id}`} className="text-blue-600 hover:underline dark:text-blue-400">
                         Szczegóły

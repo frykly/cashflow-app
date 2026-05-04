@@ -2,7 +2,9 @@ import { prisma } from "@/lib/db";
 import { buildDailyForecast, collectMovements, costInvoiceMap } from "@/lib/cashflow/forecast";
 import { isForecastDayCashflowSettled, isForecastMovementSettled } from "@/lib/cashflow/forecast-day-settlement";
 import {
+  buildCostPartyById,
   buildCostPartyByDocumentNumber,
+  buildIncomePartyById,
   buildIncomePartyByInvoiceNumber,
   enrichMovementLabel,
 } from "@/lib/cashflow/forecast-export-summary";
@@ -31,6 +33,8 @@ export async function GET(req: Request) {
 
   const incomeParty = buildIncomePartyByInvoiceNumber(incomes);
   const costParty = buildCostPartyByDocumentNumber(costs);
+  const incomePartyById = buildIncomePartyById(incomes);
+  const costPartyById = buildCostPartyById(costs);
   const settleCtx = {
     incomesById: new Map(incomes.map((i) => [i.id, i])),
     costsById: new Map(costs.map((c) => [c.id, c])),
@@ -45,7 +49,11 @@ export async function GET(req: Request) {
       settlementProgress: { done, total },
       movements: row.movements.map((m) => ({
         ...m,
-        label: enrichMovementLabel(m.kind, m.label, incomeParty, costParty),
+        label: enrichMovementLabel(m.kind, m.label, incomeParty, costParty, {
+          refId: m.refId,
+          incomeById: incomePartyById,
+          costById: costPartyById,
+        }),
       })),
     };
   });
