@@ -175,6 +175,11 @@ export async function PATCH(req: Request, ctx: Ctx) {
       costAllocationsChanged(data.projectAllocations, existing.projectAllocations) ||
       (data.notes !== undefined && data.notes !== existing.notes);
 
+    const nextIsRecurringDetached =
+      existing.isGeneratedFromRecurring && recurringImportantChanged ? true :
+      data.isRecurringDetached !== undefined ? data.isRecurringDetached
+      : existing.isRecurringDetached;
+
     const row = await prisma.$transaction(async (tx) => {
       const updated = await tx.costInvoice.update({
         where: { id },
@@ -207,10 +212,7 @@ export async function PATCH(req: Request, ctx: Ctx) {
           projectName,
           expenseCategoryId:
             data.expenseCategoryId !== undefined ? data.expenseCategoryId : existing.expenseCategoryId,
-          isRecurringDetached:
-            data.isRecurringDetached !== undefined ? data.isRecurringDetached :
-            existing.isGeneratedFromRecurring && recurringImportantChanged ? true
-            : existing.isRecurringDetached,
+          isRecurringDetached: nextIsRecurringDetached,
         },
         include: {
           expenseCategory: true,
