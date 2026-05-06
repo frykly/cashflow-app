@@ -4,13 +4,14 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ProjectSearchPicker } from "@/components/ProjectSearchPicker";
+import { ContractorNameLink } from "@/components/ContractorNameLink";
 import { Alert, Badge, Button, Field, Input, Modal, Select, Spinner, Textarea } from "@/components/ui";
 import { CrudToolbar } from "@/components/CrudToolbar";
 import { formatDate, formatMoney, toIsoOrNull } from "@/lib/format";
 import { isoToDateInputValue } from "@/lib/date-input";
 import { amountsFromGrossRate, amountsFromNetRate, inferVatRateFromAmounts, type VatRatePct } from "@/lib/vat-rate";
 import { InvoiceAmountFields, type AmountEntryMode } from "@/components/InvoiceAmountFields";
-import { NameAutocomplete } from "@/components/NameAutocomplete";
+import { ContractorAutocomplete } from "@/components/ContractorAutocomplete";
 import { readApiErrorBody } from "@/lib/api-client";
 import { useListQuery } from "@/hooks/useListQuery";
 import { isCalendarOverdue } from "@/lib/cashflow/overdue";
@@ -282,7 +283,6 @@ export function CostInvoicesClient({ initialQueryString = "" }: { initialQuerySt
   const [payProjectManual, setPayProjectManual] = useState(false);
   const [paySaving, setPaySaving] = useState(false);
   const [importMsg, setImportMsg] = useState<string | null>(null);
-  const [supplierSuggestions, setSupplierSuggestions] = useState<string[]>([]);
   const [projects, setProjects] = useState<ProjectOption[]>([]);
   const plannedPaymentManualRef = useRef(false);
   const sourcePlannedEventIdRef = useRef<string | null>(null);
@@ -372,14 +372,6 @@ export function CostInvoicesClient({ initialQueryString = "" }: { initialQuerySt
       .then((j: ProjectOption[]) => setProjects(Array.isArray(j) ? j : []))
       .catch(() => setProjects([]));
   }, []);
-
-  useEffect(() => {
-    if (!open) return;
-    void fetch("/api/cost-invoices/suggestions")
-      .then((r) => r.json())
-      .then((j: { names?: string[] }) => setSupplierSuggestions(Array.isArray(j?.names) ? j.names : []))
-      .catch(() => setSupplierSuggestions([]));
-  }, [open]);
 
   const load = useCallback(async () => {
     setListLoading(true);
@@ -1407,7 +1399,9 @@ export function CostInvoicesClient({ initialQueryString = "" }: { initialQuerySt
                       <CostListSubline r={r} settled={settled} remaining={remaining} />
                     </td>
                     <td className="min-w-0 px-1 py-2.5 text-sm text-zinc-800 dark:text-zinc-200" title={r.supplier}>
-                      <span className="line-clamp-2 break-words">{r.supplier}</span>
+                      <span className="line-clamp-2 break-words">
+                        <ContractorNameLink name={r.supplier} />
+                      </span>
                     </td>
                     <td className="min-w-0 max-w-[220px] px-1 py-2.5 text-xs align-top">
                       {(() => {
@@ -1524,13 +1518,12 @@ export function CostInvoicesClient({ initialQueryString = "" }: { initialQuerySt
               />
             </Field>
             <Field label="Dostawca">
-              <NameAutocomplete
-                listId="cost-supplier-suggestions"
-                suggestions={supplierSuggestions}
+              <ContractorAutocomplete
                 value={editing.supplier}
-                onChange={(e) => setEditing({ ...editing, supplier: e.target.value })}
+                onChange={(supplier) => setEditing({ ...editing, supplier })}
                 required
                 disabled={saving}
+                placeholder="Wpisz lub wybierz dostawcę z katalogu"
               />
             </Field>
           </div>

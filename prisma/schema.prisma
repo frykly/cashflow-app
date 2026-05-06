@@ -151,6 +151,35 @@ model ExpenseCategory {
   recurringTemplates RecurringTemplate[]     @relation("RecurringExpenseCategory")
 }
 
+model Contractor {
+  id             String            @id @default(cuid())
+  displayName    String
+  normalizedName String
+  taxId          String?
+  type           String?
+  notes          String?
+  aliases        ContractorAlias[]
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+
+  @@index([normalizedName])
+  @@index([taxId])
+}
+
+model ContractorAlias {
+  id              String     @id @default(cuid())
+  contractorId    String
+  contractor      Contractor @relation(fields: [contractorId], references: [id], onDelete: Cascade)
+  aliasName       String
+  normalizedAlias String
+  source          String?
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+
+  @@index([contractorId])
+  @@index([normalizedAlias])
+}
+
 model IncomeInvoice {
   id                 String   @id @default(cuid())
   invoiceNumber      String

@@ -227,6 +227,23 @@ export const projectUpdateSchema = z.object({
   endDate: optionalIsoNullable(),
 });
 
+const contractorAliasInputSchema = z.object({
+  aliasName: z.string().min(1).max(500),
+  source: optionalTrimmed(100),
+});
+
+export const contractorCreateSchema = z.object({
+  displayName: z.string().min(1).max(500),
+  taxId: optionalTrimmed(50),
+  type: optionalTrimmed(100),
+  notes: z.string().max(5000).optional().nullable(),
+  aliases: z.array(contractorAliasInputSchema).optional().default([]),
+});
+
+export const contractorUpdateSchema = contractorCreateSchema.partial().extend({
+  aliases: z.array(contractorAliasInputSchema).optional(),
+});
+
 const paymentProjectAllocationRowSchema = z.object({
   projectId: z.string().min(1),
   grossAmount: decimalLike,

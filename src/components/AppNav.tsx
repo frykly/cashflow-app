@@ -7,6 +7,7 @@ const links = [
   { href: "/", label: "Dashboard" },
   { href: "/forecast", label: "Prognoza" },
   { href: "/projects", label: "Projekty" },
+  { href: "/contractors", label: "Kontrahenci" },
   { href: "/income-invoices", label: "Przychody" },
   { href: "/other-income", label: "Pozostałe przychody" },
   { href: "/cost-invoices", label: "Koszty" },

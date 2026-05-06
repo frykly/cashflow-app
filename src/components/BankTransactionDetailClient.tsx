@@ -11,6 +11,7 @@ import { formatMoney, safeFormatDate } from "@/lib/format";
 import { Alert, Button, Spinner } from "@/components/ui";
 import { CreateCostFromBankModal } from "@/components/CreateCostFromBankModal";
 import { costInvoiceListEditHref, incomeInvoiceListEditHref } from "@/lib/navigation/invoice-deep-links";
+import { ContractorNameLink } from "@/components/ContractorNameLink";
 
 type DedupePayload = {
   fingerprintNew: string;
@@ -189,7 +190,9 @@ export function BankTransactionDetailClient({ importId, transactionId }: Props) 
 
         <div>
           <div className="text-xs font-medium uppercase text-zinc-500">Kontrahent (z wyciągu)</div>
-          <div>{data.counterpartyName ?? "—"}</div>
+          <div>
+            <ContractorNameLink name={data.counterpartyName} />
+          </div>
         </div>
         <div>
           <div className="text-xs font-medium uppercase text-zinc-500">Rachunek kontrahenta</div>

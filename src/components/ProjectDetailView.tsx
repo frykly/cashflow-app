@@ -15,6 +15,7 @@ import {
   incomeInvoiceNewFromProjectQuery,
   plannedEventNewFromProjectQuery,
 } from "@/lib/project-quick-links";
+import { ContractorNameLink } from "@/components/ContractorNameLink";
 
 function moneyFromDecimal(v: Decimal | null | undefined): string {
   if (v == null) return "—";
@@ -49,7 +50,11 @@ export function ProjectDetailView({ data }: { data: ProjectDetailsResult }) {
                 <span className="font-mono">{project.code}</span>
               </span>
             ) : null}
-            {project.clientName ? <span>· {project.clientName}</span> : null}
+            {project.clientName ? (
+              <span>
+                · <ContractorNameLink name={project.clientName} />
+              </span>
+            ) : null}
           </div>
           <div className="mt-3 flex flex-wrap gap-2">
             {project.isActive ? <Badge variant="success">Aktywny</Badge> : <Badge variant="muted">Nieaktywny</Badge>}
@@ -231,7 +236,9 @@ export function ProjectDetailView({ data }: { data: ProjectDetailsResult }) {
                 incomeInvoices.map((r) => (
                   <tr key={r.id} className="bg-white dark:bg-zinc-950">
                     <td className="px-3 py-2 font-mono text-xs">{r.invoiceNumber}</td>
-                    <td className="max-w-[160px] truncate px-3 py-2">{r.contractor}</td>
+                    <td className="max-w-[160px] truncate px-3 py-2">
+                      <ContractorNameLink name={r.contractor} />
+                    </td>
                     <td className="px-3 py-2 tabular-nums">{formatMoney(r.row?.netSlice ?? 0)}</td>
                     <td className="px-3 py-2 tabular-nums">{formatMoney(r.row?.mainReceived ?? 0)}</td>
                     <td className="px-3 py-2 tabular-nums">{formatMoney(r.row?.netRemaining ?? 0)}</td>
@@ -278,7 +285,9 @@ export function ProjectDetailView({ data }: { data: ProjectDetailsResult }) {
                 costInvoices.map((r) => (
                   <tr key={r.id} className="bg-white dark:bg-zinc-950">
                     <td className="px-3 py-2 font-mono text-xs">{r.documentNumber}</td>
-                    <td className="max-w-[160px] truncate px-3 py-2">{r.supplier}</td>
+                    <td className="max-w-[160px] truncate px-3 py-2">
+                      <ContractorNameLink name={r.supplier} />
+                    </td>
                     <td className="px-3 py-2 tabular-nums">{formatMoney(r.row?.netSlice ?? 0)}</td>
                     <td className="px-3 py-2 tabular-nums">{formatMoney(r.row?.netPaid ?? 0)}</td>
                     <td className="px-3 py-2 tabular-nums">{formatMoney(r.row?.netRemaining ?? 0)}</td>

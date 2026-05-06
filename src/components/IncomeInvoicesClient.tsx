@@ -4,13 +4,14 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ProjectSearchPicker } from "@/components/ProjectSearchPicker";
+import { ContractorNameLink } from "@/components/ContractorNameLink";
 import { Alert, Badge, Button, Field, Input, Modal, Select, Spinner, Textarea } from "@/components/ui";
 import { CrudToolbar } from "@/components/CrudToolbar";
 import { formatDate, formatMoney, toIsoOrNull } from "@/lib/format";
 import { isoToDateInputValue } from "@/lib/date-input";
 import { amountsFromGrossRate, amountsFromNetRate, inferVatRateFromAmounts, type VatRatePct } from "@/lib/vat-rate";
 import { InvoiceAmountFields, type AmountEntryMode } from "@/components/InvoiceAmountFields";
-import { NameAutocomplete } from "@/components/NameAutocomplete";
+import { ContractorAutocomplete } from "@/components/ContractorAutocomplete";
 import { readApiErrorBody } from "@/lib/api-client";
 import { useListQuery } from "@/hooks/useListQuery";
 import { isCalendarOverdue } from "@/lib/cashflow/overdue";
@@ -310,7 +311,6 @@ export function IncomeInvoicesClient({ initialQueryString = "" }: { initialQuery
   /** Wiersz planu wpłat do szybkich akcji (focus z inputów). */
   const planRowFocusIdxRef = useRef(0);
   const [importMsg, setImportMsg] = useState<string | null>(null);
-  const [contractorSuggestions, setContractorSuggestions] = useState<string[]>([]);
   const [projects, setProjects] = useState<ProjectOption[]>([]);
   /** Po ręcznej zmianie planowanej daty wpływu — nie nadpisuj przy zmianie terminu płatności. */
   const plannedIncomeManualRef = useRef(false);
@@ -363,14 +363,6 @@ export function IncomeInvoicesClient({ initialQueryString = "" }: { initialQuery
       .then((j: ProjectOption[]) => setProjects(Array.isArray(j) ? j : []))
       .catch(() => setProjects([]));
   }, []);
-
-  useEffect(() => {
-    if (!open) return;
-    void fetch("/api/income-invoices/suggestions")
-      .then((r) => r.json())
-      .then((j: { names?: string[] }) => setContractorSuggestions(Array.isArray(j?.names) ? j.names : []))
-      .catch(() => setContractorSuggestions([]));
-  }, [open]);
 
   const load = useCallback(async () => {
     setListLoading(true);
@@ -1278,7 +1270,9 @@ export function IncomeInvoicesClient({ initialQueryString = "" }: { initialQuery
                       <IncomeListSubline r={r} settled={settled} remaining={remaining} />
                     </td>
                     <td className="min-w-0 px-1 py-2.5 text-sm text-zinc-800 dark:text-zinc-200" title={r.contractor}>
-                      <span className="line-clamp-2 break-words">{r.contractor}</span>
+                      <span className="line-clamp-2 break-words">
+                        <ContractorNameLink name={r.contractor} />
+                      </span>
                     </td>
                     <td className="min-w-0 px-1 py-2.5 text-xs">
                       {(() => {
@@ -1371,13 +1365,12 @@ export function IncomeInvoicesClient({ initialQueryString = "" }: { initialQuery
               />
             </Field>
             <Field label="Kontrahent">
-              <NameAutocomplete
-                listId="income-contractor-suggestions"
-                suggestions={contractorSuggestions}
+              <ContractorAutocomplete
                 value={editing.contractor}
-                onChange={(e) => setEditing({ ...editing, contractor: e.target.value })}
+                onChange={(contractor) => setEditing({ ...editing, contractor })}
                 required
                 disabled={saving}
+                placeholder="Wpisz lub wybierz kontrahenta z katalogu"
               />
             </Field>
           </div>
