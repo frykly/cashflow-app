@@ -20,6 +20,33 @@ import { validateCostOrIncomeAllocationSums } from "@/lib/project-allocations/va
 
 type Ctx = { params: Promise<{ id: string }> };
 
+function sameDecimal(a: unknown, b: unknown): boolean {
+  return normalizeDecimalInput(String(a)) === normalizeDecimalInput(String(b));
+}
+
+function sameDateMs(a: Date | string | null | undefined, b: Date | null | undefined): boolean {
+  if (a === undefined) return true;
+  if (a === null || b === null || b === undefined) return a === b;
+  return new Date(a).getTime() === b.getTime();
+}
+
+function incomeAllocationsChanged(
+  next: { projectId: string; netAmount: unknown; grossAmount: unknown; description?: string }[] | undefined,
+  current: { projectId: string; netAmount: unknown; grossAmount: unknown; description: string }[],
+): boolean {
+  if (next === undefined) return false;
+  if (next.length !== current.length) return true;
+  for (let i = 0; i < next.length; i++) {
+    const a = next[i]!;
+    const b = current[i]!;
+    if (a.projectId !== b.projectId) return true;
+    if (!sameDecimal(a.netAmount, b.netAmount)) return true;
+    if (!sameDecimal(a.grossAmount, b.grossAmount)) return true;
+    if ((a.description?.trim() ?? "") !== (b.description?.trim() ?? "")) return true;
+  }
+  return false;
+}
+
 export async function GET(_req: Request, ctx: Ctx) {
   const { id } = await ctx.params;
   const row = await prisma.incomeInvoice.findUnique({
@@ -51,7 +78,13 @@ export async function PATCH(req: Request, ctx: Ctx) {
     const data = incomeInvoiceUpdateSchema.parse(body);
     const existing = await prisma.incomeInvoice.findUnique({
       where: { id },
-      include: { payments: true, projectAllocations: { select: { id: true } } },
+      include: {
+        payments: true,
+        projectAllocations: {
+          orderBy: { createdAt: "asc" },
+          select: { id: true, projectId: true, netAmount: true, grossAmount: true, description: true },
+        },
+      },
     });
     if (!existing) return jsonError("Nie znaleziono", 404);
 
@@ -112,6 +145,24 @@ export async function PATCH(req: Request, ctx: Ctx) {
       }
     }
 
+    const recurringImportantChanged =
+      (data.invoiceNumber !== undefined && data.invoiceNumber !== existing.invoiceNumber) ||
+      (data.contractor !== undefined && data.contractor !== existing.contractor) ||
+      (data.incomeCategoryId !== undefined && data.incomeCategoryId !== existing.incomeCategoryId) ||
+      (data.netAmount !== undefined && !sameDecimal(data.netAmount, existing.netAmount)) ||
+      (data.vatRate !== undefined && data.vatRate !== existing.vatRate) ||
+      (data.netAmount !== undefined || data.vatRate !== undefined ?
+        !sameDecimal(vat, existing.vatAmount) || !sameDecimal(gross, existing.grossAmount)
+      : false) ||
+      (data.vatDestination !== undefined && data.vatDestination !== existing.vatDestination) ||
+      !sameDateMs(data.issueDate, existing.issueDate) ||
+      !sameDateMs(data.paymentDueDate, existing.paymentDueDate) ||
+      !sameDateMs(data.plannedIncomeDate, existing.plannedIncomeDate) ||
+      (data.status !== undefined && data.status !== existing.status) ||
+      (data.projectId !== undefined && projectId !== existing.projectId) ||
+      incomeAllocationsChanged(data.projectAllocations, existing.projectAllocations) ||
+      (data.notes !== undefined && data.notes !== existing.notes);
+
     const row = await prisma.$transaction(async (tx) => {
       const updated = await tx.incomeInvoice.update({
         where: { id },
@@ -145,7 +196,9 @@ export async function PATCH(req: Request, ctx: Ctx) {
           incomeCategoryId:
             data.incomeCategoryId !== undefined ? data.incomeCategoryId : existing.incomeCategoryId,
           isRecurringDetached:
-            data.isRecurringDetached !== undefined ? data.isRecurringDetached : existing.isRecurringDetached,
+            data.isRecurringDetached !== undefined ? data.isRecurringDetached :
+            existing.isGeneratedFromRecurring && recurringImportantChanged ? true
+            : existing.isRecurringDetached,
         },
         include: {
           incomeCategory: true,

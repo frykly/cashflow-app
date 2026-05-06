@@ -20,6 +20,33 @@ import { validateCostOrIncomeAllocationSums } from "@/lib/project-allocations/va
 
 type Ctx = { params: Promise<{ id: string }> };
 
+function sameDecimal(a: unknown, b: unknown): boolean {
+  return normalizeDecimalInput(String(a)) === normalizeDecimalInput(String(b));
+}
+
+function sameDateMs(a: Date | string | null | undefined, b: Date | null | undefined): boolean {
+  if (a === undefined) return true;
+  if (a === null || b === null || b === undefined) return a === b;
+  return new Date(a).getTime() === b.getTime();
+}
+
+function costAllocationsChanged(
+  next: { projectId: string; netAmount: unknown; grossAmount: unknown; description?: string }[] | undefined,
+  current: { projectId: string; netAmount: unknown; grossAmount: unknown; description: string }[],
+): boolean {
+  if (next === undefined) return false;
+  if (next.length !== current.length) return true;
+  for (let i = 0; i < next.length; i++) {
+    const a = next[i]!;
+    const b = current[i]!;
+    if (a.projectId !== b.projectId) return true;
+    if (!sameDecimal(a.netAmount, b.netAmount)) return true;
+    if (!sameDecimal(a.grossAmount, b.grossAmount)) return true;
+    if ((a.description?.trim() ?? "") !== (b.description?.trim() ?? "")) return true;
+  }
+  return false;
+}
+
 export async function GET(_req: Request, ctx: Ctx) {
   const { id } = await ctx.params;
   const row = await prisma.costInvoice.findUnique({
@@ -50,7 +77,13 @@ export async function PATCH(req: Request, ctx: Ctx) {
     const data = costInvoiceUpdateSchema.parse(body);
     const existing = await prisma.costInvoice.findUnique({
       where: { id },
-      include: { payments: true, projectAllocations: { select: { id: true } } },
+      include: {
+        payments: true,
+        projectAllocations: {
+          orderBy: { createdAt: "asc" },
+          select: { id: true, projectId: true, netAmount: true, grossAmount: true, description: true },
+        },
+      },
     });
     if (!existing) return jsonError("Nie znaleziono", 404);
 
@@ -125,6 +158,23 @@ export async function PATCH(req: Request, ctx: Ctx) {
       }
     }
 
+    const recurringImportantChanged =
+      (data.documentNumber !== undefined && data.documentNumber !== existing.documentNumber) ||
+      (data.supplier !== undefined && data.supplier !== existing.supplier) ||
+      (data.expenseCategoryId !== undefined && data.expenseCategoryId !== existing.expenseCategoryId) ||
+      (data.netAmount !== undefined && !sameDecimal(data.netAmount, existing.netAmount)) ||
+      (data.vatAmount !== undefined && !sameDecimal(vat, existing.vatAmount)) ||
+      (data.grossAmount !== undefined && !sameDecimal(gross, existing.grossAmount)) ||
+      (data.vatRate !== undefined && storedVatRate !== existing.vatRate) ||
+      (data.paymentSource !== undefined && data.paymentSource !== existing.paymentSource) ||
+      !sameDateMs(data.documentDate, existing.documentDate) ||
+      !sameDateMs(data.paymentDueDate, existing.paymentDueDate) ||
+      !sameDateMs(data.plannedPaymentDate, existing.plannedPaymentDate) ||
+      (data.status !== undefined && data.status !== existing.status) ||
+      (data.projectId !== undefined && projectId !== existing.projectId) ||
+      costAllocationsChanged(data.projectAllocations, existing.projectAllocations) ||
+      (data.notes !== undefined && data.notes !== existing.notes);
+
     const row = await prisma.$transaction(async (tx) => {
       const updated = await tx.costInvoice.update({
         where: { id },
@@ -158,7 +208,9 @@ export async function PATCH(req: Request, ctx: Ctx) {
           expenseCategoryId:
             data.expenseCategoryId !== undefined ? data.expenseCategoryId : existing.expenseCategoryId,
           isRecurringDetached:
-            data.isRecurringDetached !== undefined ? data.isRecurringDetached : existing.isRecurringDetached,
+            data.isRecurringDetached !== undefined ? data.isRecurringDetached :
+            existing.isGeneratedFromRecurring && recurringImportantChanged ? true
+            : existing.isRecurringDetached,
         },
         include: {
           expenseCategory: true,

@@ -158,6 +158,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
             grossAmount: nextGross,
             netAmount: nextNet,
             vatAmount: nextVat,
+            isRecurringDetached: inv.isGeneratedFromRecurring ? true : inv.isRecurringDetached,
           },
         });
         for (const alloc of inv.projectAllocations) {
