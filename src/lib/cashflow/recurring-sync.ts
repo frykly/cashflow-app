@@ -144,9 +144,11 @@ export async function syncRecurringTemplateSchedule(templateId: string, today = 
     let created = 0;
     for (const d of dates) {
       if (tmpl.type === "EXPENSE") {
+        if (await costOccurrenceExists(tx, templateId, d)) continue;
         await tx.costInvoice.create({ data: buildRecurringCostUncheckedCreate(tmpl, d) });
         created++;
       } else {
+        if (await incomeOccurrenceExists(tx, templateId, d)) continue;
         await tx.incomeInvoice.create({ data: buildRecurringIncomeUncheckedCreate(tmpl, d) });
         created++;
       }
