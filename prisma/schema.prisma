@@ -477,3 +477,18 @@ model KsefDocument {
   @@index([syncSessionId])
   @@index([issueDate])
 }
+
+/// Użytkownik aplikacji — Etap 1: tylko logowanie; role jako string pod przyszłe RBAC.
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  name         String?
+  passwordHash String
+  /// Np. ADMIN — na start jedna rola; później bez migracji enumów.
+  role         String   @default("ADMIN")
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([email])
+}
