@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useRouter, usePathname } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
+import { ContractorNameLink } from "@/components/ContractorNameLink";
 import { NameAutocomplete } from "@/components/NameAutocomplete";
 import { Alert, Badge, Button, Field, Input, Modal, Select, Spinner, Textarea } from "@/components/ui";
 import { readApiErrorBody } from "@/lib/api-client";
@@ -448,7 +449,9 @@ export function ProjectsClient({ initialEditId = null }: { initialEditId?: strin
                       <span className="line-clamp-3 break-all">{r.code ?? "—"}</span>
                     </td>
                     <td className="min-w-0 px-2 py-2.5 text-zinc-600 dark:text-zinc-400" title={r.clientName ?? undefined}>
-                      <span className="line-clamp-3 break-words text-sm">{r.clientName ?? "—"}</span>
+                      <span className="line-clamp-3 break-words text-sm">
+                        <ContractorNameLink name={r.clientName} />
+                      </span>
                     </td>
                     <td className="min-w-0 px-1 py-2.5" title={lifeLabel}>
                       <Badge variant={lifecycleBadgeVariant(r.lifecycleStatus)}>
