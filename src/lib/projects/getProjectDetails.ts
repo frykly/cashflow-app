@@ -8,6 +8,7 @@ import {
   incomeMainReceivedForProject,
   incomeNetRemainingForProject,
 } from "@/lib/projects/project-balance";
+import { projectLifecycleDisplay, projectSettlementDisplay } from "@/lib/project-status-labels";
 
 const LIST_TAKE = 250;
 
@@ -35,6 +36,14 @@ export type PlannedEventRowExtra = {
 
 export type ProjectDetailsResult = {
   project: Project;
+  statusDisplay: { lifecycle: string; settlement: string };
+  missingItems: Array<{
+    id: string;
+    projectId: string;
+    missingTypeId: string;
+    createdAt: Date;
+    missingType: { id: string; name: string; slug: string };
+  }>;
   counts: { income: number; cost: number; planned: number };
   balance: ReturnType<typeof computeProjectBalanceKpis>;
   incomeInvoices: (IncomeInvoice & {
@@ -67,6 +76,22 @@ export type ProjectDetailsResult = {
 export async function getProjectDetails(projectId: string): Promise<ProjectDetailsResult | null> {
   const project = await prisma.project.findUnique({ where: { id: projectId } });
   if (!project) return null;
+
+  const [lifeOpts, setOpts, missingItems] = await Promise.all([
+    prisma.projectLifecycleStatusOption.findMany({ select: { slug: true, name: true } }),
+    prisma.projectSettlementStatusOption.findMany({ select: { slug: true, name: true } }),
+    prisma.projectMissingItem.findMany({
+      where: { projectId },
+      include: { missingType: { select: { id: true, name: true, slug: true } } },
+      orderBy: { createdAt: "asc" },
+    }),
+  ]);
+  const lifeMap = new Map(lifeOpts.map((o) => [o.slug, o.name]));
+  const setMap = new Map(setOpts.map((o) => [o.slug, o.name]));
+  const statusDisplay = {
+    lifecycle: projectLifecycleDisplay(project.lifecycleStatus, lifeMap),
+    settlement: projectSettlementDisplay(project.settlementStatus, setMap),
+  };
 
   const whereLinked = linkedToProject(projectId);
 
@@ -156,6 +181,8 @@ export async function getProjectDetails(projectId: string): Promise<ProjectDetai
 
   return {
     project,
+    statusDisplay,
+    missingItems,
     counts: { income: incomeCount, cost: costCount, planned: plannedCount },
     balance,
     incomeInvoices,

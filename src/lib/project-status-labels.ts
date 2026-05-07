@@ -40,6 +40,27 @@ export function projectSettlementLabel(v: string | null | undefined): string {
   return SETTLEMENT_LABELS[v as ProjectSettlementValue] ?? v;
 }
 
+/** Etykieta: słownik (nazwa) → stare mapowanie → surowy slug (np. legacy). */
+export function projectLifecycleDisplay(
+  slug: string | null | undefined,
+  dictionaryBySlug: Map<string, string>,
+): string {
+  if (!slug) return "—";
+  const fromDict = dictionaryBySlug.get(slug);
+  if (fromDict) return fromDict;
+  return projectLifecycleLabel(slug);
+}
+
+export function projectSettlementDisplay(
+  slug: string | null | undefined,
+  dictionaryBySlug: Map<string, string>,
+): string {
+  if (!slug) return "—";
+  const fromDict = dictionaryBySlug.get(slug);
+  if (fromDict) return fromDict;
+  return projectSettlementLabel(slug);
+}
+
 export function lifecycleBadgeVariant(
   v: string | null | undefined,
 ): "default" | "success" | "warning" | "muted" {

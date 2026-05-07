@@ -10,6 +10,10 @@ import type { ContractorDetailsResult } from "@/lib/contractors/getContractorDet
 import { costInvoiceListEditHref } from "@/lib/navigation/invoice-deep-links";
 import { bankTransactionStatusLabel } from "@/lib/bank-import/bank-transaction-status-label";
 import { NewIncomeInvoiceFormModal } from "@/components/IncomeInvoiceFormModal";
+import {
+  lifecycleBadgeVariant,
+  settlementBadgeVariant,
+} from "@/lib/project-status-labels";
 
 function LinkButton({ href, children }: { href: string; children: React.ReactNode }) {
   return (
@@ -236,6 +240,15 @@ export function ContractorDetailClient({ data }: { data: ContractorDetailsResult
                         <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
                           {[r.code, r.clientName || null].filter(Boolean).join(" · ") || "—"}
                         </p>
+                        <div className="mt-1.5 flex flex-wrap gap-1 text-[10px]">
+                          <Badge variant={lifecycleBadgeVariant(r.lifecycleStatus)}>{r.lifecycleDisplay}</Badge>
+                          <Badge variant={settlementBadgeVariant(r.settlementStatus)}>{r.settlementDisplay}</Badge>
+                          {r.missingItems.map((m) => (
+                            <Badge key={m.id} variant="warning">
+                              Brak: {m.missingType.name}
+                            </Badge>
+                          ))}
+                        </div>
                         <p className="mt-1 text-[11px] leading-relaxed text-zinc-400 dark:text-zinc-500">
                           Ostatnia aktywność · {formatDate(r.updatedAt)}
                         </p>

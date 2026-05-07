@@ -6,8 +6,6 @@ import { decToNumber } from "@/lib/cashflow/money";
 import type { Decimal } from "@prisma/client/runtime/library";
 import {
   lifecycleBadgeVariant,
-  projectLifecycleLabel,
-  projectSettlementLabel,
   settlementBadgeVariant,
 } from "@/lib/project-status-labels";
 import {
@@ -31,7 +29,7 @@ function plannedStatusLabel(s: string): string {
 }
 
 export function ProjectDetailView({ data }: { data: ProjectDetailsResult }) {
-  const { project, counts, balance, incomeInvoices, costInvoices, plannedEvents } = data;
+  const { project, statusDisplay, missingItems, counts, balance, incomeInvoices, costInvoices, plannedEvents } = data;
 
   return (
     <div className="space-y-8">
@@ -58,12 +56,15 @@ export function ProjectDetailView({ data }: { data: ProjectDetailsResult }) {
           </div>
           <div className="mt-3 flex flex-wrap gap-2">
             {project.isActive ? <Badge variant="success">Aktywny</Badge> : <Badge variant="muted">Nieaktywny</Badge>}
-            <Badge variant={lifecycleBadgeVariant(project.lifecycleStatus)}>
-              Realizacja: {projectLifecycleLabel(project.lifecycleStatus)}
-            </Badge>
+            <Badge variant={lifecycleBadgeVariant(project.lifecycleStatus)}>Realizacja: {statusDisplay.lifecycle}</Badge>
             <Badge variant={settlementBadgeVariant(project.settlementStatus)}>
-              Rozliczenie: {projectSettlementLabel(project.settlementStatus)}
+              Rozliczenie: {statusDisplay.settlement}
             </Badge>
+            {missingItems.map((mi) => (
+              <Badge key={mi.id} variant="warning">
+                Brak: {mi.missingType.name}
+              </Badge>
+            ))}
           </div>
         </div>
         <Link

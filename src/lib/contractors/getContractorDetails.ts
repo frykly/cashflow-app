@@ -1,6 +1,7 @@
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { decToNumber, round2 } from "@/lib/cashflow/money";
+import { projectLifecycleDisplay, projectSettlementDisplay } from "@/lib/project-status-labels";
 
 const TAKE = 50;
 
@@ -30,6 +31,13 @@ export async function getContractorDetails(id: string) {
     include: { aliases: { orderBy: [{ aliasName: "asc" }, { createdAt: "asc" }] } },
   });
   if (!contractor) return null;
+
+  const [lifeOpts, setOpts] = await Promise.all([
+    prisma.projectLifecycleStatusOption.findMany({ select: { slug: true, name: true } }),
+    prisma.projectSettlementStatusOption.findMany({ select: { slug: true, name: true } }),
+  ]);
+  const lifeMap = new Map(lifeOpts.map((o) => [o.slug, o.name]));
+  const setMap = new Map(setOpts.map((o) => [o.slug, o.name]));
 
   const names = nonEmptyNames(contractor);
   const incomeWhere: Prisma.IncomeInvoiceWhereInput =
@@ -88,6 +96,14 @@ export async function getContractorDetails(id: string) {
         clientName: true,
         isActive: true,
         updatedAt: true,
+        lifecycleStatus: true,
+        settlementStatus: true,
+        missingItems: {
+          select: {
+            id: true,
+            missingType: { select: { id: true, name: true, slug: true } },
+          },
+        },
       },
     }),
     prisma.bankTransaction.findMany({
@@ -167,6 +183,12 @@ export async function getContractorDetails(id: string) {
       projects: projects.map((r) => ({
         ...r,
         updatedAt: r.updatedAt.toISOString(),
+        lifecycleDisplay: projectLifecycleDisplay(r.lifecycleStatus, lifeMap),
+        settlementDisplay: projectSettlementDisplay(r.settlementStatus, setMap),
+        missingItems: r.missingItems.map((m) => ({
+          id: m.id,
+          missingType: m.missingType,
+        })),
       })),
       bankTransactions: bankTransactions.map((r) => ({
         ...r,

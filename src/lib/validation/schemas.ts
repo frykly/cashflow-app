@@ -173,26 +173,13 @@ const optionalTrimmed = (max: number) =>
     z.union([z.string().max(max), z.null()]).optional(),
   );
 
-const projectLifecycleEnum = z.enum(["NEW", "IN_PROGRESS", "FOR_HANDOFF", "COMPLETED"]);
-const projectSettlementEnum = z.enum([
-  "NONE",
-  "TO_SETTLE",
-  "WAITING_FOR_SETTLEMENT",
-  "DPW_TODO",
-  "SETTLED",
-  "SETTLED_WITH_GAPS",
-  "SETTLED_BLOCKED",
-]);
-
-const optionalLifecycleStatus = z.preprocess(
-  (v) => (v === "" || v === null || v === undefined ? null : v),
-  z.union([projectLifecycleEnum, z.null()]).optional(),
+/** Wartość `Project.lifecycleStatus` / `settlementStatus` — dowolny krótki string (slug legacy + słownik). */
+const optionalProjectStatusValue = z.preprocess(
+  (v) => (v === "" || v === null || v === undefined ? null : String(v).trim()),
+  z.union([z.string().max(120), z.null()]).optional(),
 );
 
-const optionalSettlementStatus = z.preprocess(
-  (v) => (v === "" || v === null || v === undefined ? null : v),
-  z.union([projectSettlementEnum, z.null()]).optional(),
-);
+const optionalMissingTypeIds = z.array(z.string().min(1)).max(50).optional();
 
 const optionalPlannedDecimal = z.preprocess(
   (v) => (v === "" || v === null || v === undefined ? null : v),
@@ -205,8 +192,9 @@ export const projectCreateSchema = z.object({
   clientName: optionalTrimmed(500),
   description: optionalTrimmed(5000),
   isActive: z.boolean().optional().default(true),
-  lifecycleStatus: optionalLifecycleStatus,
-  settlementStatus: optionalSettlementStatus,
+  lifecycleStatus: optionalProjectStatusValue,
+  settlementStatus: optionalProjectStatusValue,
+  missingTypeIds: optionalMissingTypeIds,
   plannedRevenueNet: optionalPlannedDecimal,
   plannedCostNet: optionalPlannedDecimal,
   startDate: optionalIsoNullable(),
@@ -219,8 +207,9 @@ export const projectUpdateSchema = z.object({
   clientName: optionalTrimmed(500),
   description: optionalTrimmed(5000),
   isActive: z.boolean().optional(),
-  lifecycleStatus: optionalLifecycleStatus,
-  settlementStatus: optionalSettlementStatus,
+  lifecycleStatus: optionalProjectStatusValue,
+  settlementStatus: optionalProjectStatusValue,
+  missingTypeIds: optionalMissingTypeIds,
   plannedRevenueNet: optionalPlannedDecimal,
   plannedCostNet: optionalPlannedDecimal,
   startDate: optionalIsoNullable(),

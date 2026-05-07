@@ -4,12 +4,23 @@ import { jsonError, zodErrorResponse } from "@/lib/api/errors";
 import { projectUpdateSchema } from "@/lib/validation/schemas";
 import { NextResponse } from "next/server";
 import { ZodError } from "zod";
+import type { Prisma } from "@prisma/client";
+import { syncProjectMissingItemsTx } from "@/lib/projects/sync-project-missing-items";
 
 type Ctx = { params: Promise<{ id: string }> };
 
+const projectIncludeDetail = {
+  missingItems: {
+    include: {
+      missingType: { select: { id: true, name: true, slug: true } },
+    },
+    orderBy: { createdAt: "asc" as const },
+  },
+} satisfies Prisma.ProjectInclude;
+
 export async function GET(_req: Request, ctx: Ctx) {
   const { id } = await ctx.params;
-  const row = await prisma.project.findUnique({ where: { id } });
+  const row = await prisma.project.findUnique({ where: { id }, include: projectIncludeDetail });
   if (!row) return jsonError("Nie znaleziono", 404);
   return jsonData(row);
 }
@@ -27,51 +38,64 @@ export async function PATCH(req: Request, ctx: Ctx) {
     const existing = await prisma.project.findUnique({ where: { id } });
     if (!existing) return jsonError("Nie znaleziono", 404);
 
-    const row = await prisma.project.update({
-      where: { id },
-      data: {
-        name: data.name !== undefined ? data.name.trim() : existing.name,
-        code: data.code !== undefined ? (data.code?.trim() || null) : existing.code,
-        clientName: data.clientName !== undefined ? (data.clientName?.trim() || null) : existing.clientName,
-        description: data.description !== undefined ? (data.description?.trim() || null) : existing.description,
-        isActive: data.isActive !== undefined ? data.isActive : existing.isActive,
-        lifecycleStatus:
-          data.lifecycleStatus !== undefined ? data.lifecycleStatus : existing.lifecycleStatus,
-        settlementStatus:
-          data.settlementStatus !== undefined ? data.settlementStatus : existing.settlementStatus,
-        plannedRevenueNet:
-          data.plannedRevenueNet !== undefined ? data.plannedRevenueNet : existing.plannedRevenueNet,
-        plannedCostNet:
-          data.plannedCostNet !== undefined ? data.plannedCostNet : existing.plannedCostNet,
-        startDate:
-          data.startDate === undefined
-            ? existing.startDate
-            : data.startDate
-              ? new Date(data.startDate)
-              : null,
-        endDate:
-          data.endDate === undefined ? existing.endDate : data.endDate ? new Date(data.endDate) : null,
-      },
-    });
+    try {
+      await prisma.$transaction(async (tx) => {
+        await tx.project.update({
+          where: { id },
+          data: {
+            name: data.name !== undefined ? data.name.trim() : existing.name,
+            code: data.code !== undefined ? (data.code?.trim() || null) : existing.code,
+            clientName: data.clientName !== undefined ? (data.clientName?.trim() || null) : existing.clientName,
+            description: data.description !== undefined ? (data.description?.trim() || null) : existing.description,
+            isActive: data.isActive !== undefined ? data.isActive : existing.isActive,
+            lifecycleStatus:
+              data.lifecycleStatus !== undefined ? data.lifecycleStatus : existing.lifecycleStatus,
+            settlementStatus:
+              data.settlementStatus !== undefined ? data.settlementStatus : existing.settlementStatus,
+            plannedRevenueNet:
+              data.plannedRevenueNet !== undefined ? data.plannedRevenueNet : existing.plannedRevenueNet,
+            plannedCostNet:
+              data.plannedCostNet !== undefined ? data.plannedCostNet : existing.plannedCostNet,
+            startDate:
+              data.startDate === undefined
+                ? existing.startDate
+                : data.startDate
+                  ? new Date(data.startDate)
+                  : null,
+            endDate:
+              data.endDate === undefined ? existing.endDate : data.endDate ? new Date(data.endDate) : null,
+          },
+        });
 
-    if (data.name !== undefined && data.name.trim() !== existing.name) {
-      await prisma.$transaction([
-        prisma.costInvoice.updateMany({
-          where: { projectId: id },
-          data: { projectName: data.name.trim() },
-        }),
-        prisma.incomeInvoice.updateMany({
-          where: { projectId: id },
-          data: { projectName: data.name.trim() },
-        }),
-        prisma.plannedFinancialEvent.updateMany({
-          where: { projectId: id },
-          data: { projectName: data.name.trim() },
-        }),
-      ]);
+        if (data.missingTypeIds !== undefined) {
+          await syncProjectMissingItemsTx(tx, id, data.missingTypeIds);
+        }
+
+        if (data.name !== undefined && data.name.trim() !== existing.name) {
+          await tx.costInvoice.updateMany({
+            where: { projectId: id },
+            data: { projectName: data.name.trim() },
+          });
+          await tx.incomeInvoice.updateMany({
+            where: { projectId: id },
+            data: { projectName: data.name.trim() },
+          });
+          await tx.plannedFinancialEvent.updateMany({
+            where: { projectId: id },
+            data: { projectName: data.name.trim() },
+          });
+        }
+      });
+    } catch (e) {
+      if (e instanceof Error && e.message === "INVALID_MISSING_TYPES") {
+        return jsonError("Nieprawidłowy typ braku projektu.", 400);
+      }
+      throw e;
     }
 
-    return jsonData(row);
+    const full = await prisma.project.findUnique({ where: { id }, include: projectIncludeDetail });
+    if (!full) return jsonError("Nie znaleziono", 404);
+    return jsonData(full);
   } catch (e) {
     if (e instanceof ZodError) return zodErrorResponse(e);
     throw e;

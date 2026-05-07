@@ -7,6 +7,7 @@ import { isoToDateInputValue } from "@/lib/date-input";
 import { readApiErrorBody } from "@/lib/api-client";
 import { normalizeDecimalInput } from "@/lib/decimal-input";
 import { ExpenseCategoriesSettings } from "@/components/ExpenseCategoriesSettings";
+import { ProjectDictionarySettings } from "@/components/ProjectDictionarySettings";
 
 type Row = {
   mainOpeningBalance: string;
@@ -150,6 +151,48 @@ export function SettingsClient() {
           )}
         </Button>
       </form>
+
+      <section className="rounded-xl border border-zinc-200 bg-white p-6 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
+        <h2 className="text-lg font-semibold text-zinc-900 dark:text-zinc-50">Statusy realizacji projektów</h2>
+        <p className="mt-1 text-sm text-zinc-500">
+          Lista opcji w polu „Status realizacji” w projekcie. Wartość w bazie projektu to <code className="text-xs">slug</code> — nie zmienia się przy edycji nazwy.
+        </p>
+        <div className="mt-4">
+          <ProjectDictionarySettings
+            variant="lifecycle"
+            title="realizacji"
+            description="Zarchiwizowane statusy nie pojawiają się w nowych wyborach; istniejące projekty zachowują slug. Usunięcie możliwe tylko, gdy żaden projekt nie używa danego sluga."
+          />
+        </div>
+      </section>
+
+      <section className="rounded-xl border border-zinc-200 bg-white p-6 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
+        <h2 className="text-lg font-semibold text-zinc-900 dark:text-zinc-50">Statusy rozliczenia projektów</h2>
+        <p className="mt-1 text-sm text-zinc-500">
+          Opcje pola „Status rozliczenia”. Slugi <code className="text-xs">COMPLETED</code> + <code className="text-xs">SETTLED</code> nadal sterują filtrem „ukryj rozliczone” na liście.
+        </p>
+        <div className="mt-4">
+          <ProjectDictionarySettings
+            variant="settlement"
+            title="rozliczenia"
+            description="Jak wyżej: archiwizacja ukrywa przy nowych projektach; usunięcie tylko bez użycia w polu settlementStatus projektu."
+          />
+        </div>
+      </section>
+
+      <section className="rounded-xl border border-zinc-200 bg-white p-6 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
+        <h2 className="text-lg font-semibold text-zinc-900 dark:text-zinc-50">Braki projektu</h2>
+        <p className="mt-1 text-sm text-zinc-500">
+          Wielokrotny wybór w formularzu projektu (checkboxy). Przypisania są w tabeli powiązań, nie w polu tekstowym statusu.
+        </p>
+        <div className="mt-4">
+          <ProjectDictionarySettings
+            variant="missing"
+            title="braków"
+            description="Usunięcie typu możliwe tylko gdy żaden projekt go nie zaznaczył (brak wierszy powiązań)."
+          />
+        </div>
+      </section>
 
       <section className="rounded-xl border border-zinc-200 bg-white p-6 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
         <h2 className="text-lg font-semibold text-zinc-900 dark:text-zinc-50">Kategorie kosztów</h2>

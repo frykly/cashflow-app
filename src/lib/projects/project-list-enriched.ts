@@ -22,6 +22,13 @@ export type ProjectListRow = Project & {
   paidTotalGross: number;
   /** null = brak powiązanych faktur (przychód ani koszt) */
   actualResultNet: number | null;
+  missingItems: Array<{
+    id: string;
+    projectId: string;
+    missingTypeId: string;
+    createdAt: Date;
+    missingType: { id: string; name: string; slug: string };
+  }>;
 };
 
 function nullsLastCompare(a: number | null, b: number | null, order: "asc" | "desc"): number {
@@ -79,7 +86,17 @@ export async function listProjectsEnriched(options: {
 
   const where = filters.length ? { AND: filters } : {};
 
-  const projects = await prisma.project.findMany({ where });
+  const projects = await prisma.project.findMany({
+    where,
+    include: {
+      missingItems: {
+        include: {
+          missingType: { select: { id: true, name: true, slug: true } },
+        },
+        orderBy: { createdAt: "asc" },
+      },
+    },
+  });
   if (projects.length === 0) return [];
 
   const ids = projects.map((p) => p.id);

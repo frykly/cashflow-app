@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter, usePathname } from "next/navigation";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { ContractorNameLink } from "@/components/ContractorNameLink";
 import { NameAutocomplete } from "@/components/NameAutocomplete";
 import { Alert, Badge, Button, Field, Input, Modal, Select, Spinner, Textarea } from "@/components/ui";
@@ -12,13 +12,36 @@ import { isoToDateInputValue } from "@/lib/date-input";
 import { normalizeDecimalInput } from "@/lib/decimal-input";
 import { formatMoney, toIsoOrNull } from "@/lib/format";
 import {
-  PROJECT_LIFECYCLE_VALUES,
-  PROJECT_SETTLEMENT_VALUES,
   lifecycleBadgeVariant,
-  projectLifecycleLabel,
-  projectSettlementLabel,
+  projectLifecycleDisplay,
+  projectSettlementDisplay,
   settlementBadgeVariant,
 } from "@/lib/project-status-labels";
+
+type StatusOpt = { id: string; name: string; slug: string; sortOrder: number; isActive: boolean };
+
+function statusSelectOptions(current: string | null | undefined, rows: StatusOpt[]): { value: string; label: string }[] {
+  const cur = current?.trim() ?? "";
+  const activeSorted = rows
+    .filter((r) => r.isActive)
+    .slice()
+    .sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name, "pl"));
+  const slugs = new Set(rows.map((r) => r.slug));
+  const opts = activeSorted.map((r) => ({ value: r.slug, label: r.name }));
+  if (cur && !slugs.has(cur)) {
+    opts.unshift({ value: cur, label: `(zachowane: ${cur})` });
+  }
+  return opts;
+}
+
+function missingCheckboxRows(all: StatusOpt[], selectedIds: string[]): StatusOpt[] {
+  const sel = new Set(selectedIds);
+  const active = all.filter((r) => r.isActive);
+  const extra = all.filter((r) => !r.isActive && sel.has(r.id));
+  const map = new Map<string, StatusOpt>();
+  for (const r of [...active, ...extra]) map.set(r.id, r);
+  return [...map.values()].sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name, "pl"));
+}
 
 type SortKey =
   | "code"
@@ -49,6 +72,11 @@ type Row = {
   /** Tylko na liście z `/api/projects`; pojedynczy GET może ich nie mieć */
   paidTotalGross?: number;
   actualResultNet?: number | null;
+  missingItems?: Array<{
+    id: string;
+    missingTypeId: string;
+    missingType: { id: string; name: string; slug: string };
+  }>;
 };
 
 type Draft = {
@@ -64,6 +92,7 @@ type Draft = {
   plannedCostNet: string;
   startDate: string;
   endDate: string;
+  missingTypeIds: string[];
 };
 
 function emptyDraft(): Draft {
@@ -75,6 +104,7 @@ function emptyDraft(): Draft {
     isActive: true,
     lifecycleStatus: null,
     settlementStatus: null,
+    missingTypeIds: [],
     plannedRevenueNet: "",
     plannedCostNet: "",
     startDate: "",
@@ -142,6 +172,30 @@ export function ProjectsClient({ initialEditId = null }: { initialEditId?: strin
   const [formError, setFormError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [contractorSuggestions, setContractorSuggestions] = useState<string[]>([]);
+  const [lifeOpts, setLifeOpts] = useState<StatusOpt[]>([]);
+  const [settlementOpts, setSettlementOpts] = useState<StatusOpt[]>([]);
+  const [missingOpts, setMissingOpts] = useState<StatusOpt[]>([]);
+
+  const lifeMap = useMemo(() => new Map(lifeOpts.map((o) => [o.slug, o.name])), [lifeOpts]);
+  const settlementMap = useMemo(() => new Map(settlementOpts.map((o) => [o.slug, o.name])), [settlementOpts]);
+
+  useEffect(() => {
+    void Promise.all([
+      fetch("/api/project-lifecycle-statuses")
+        .then((r) => r.json())
+        .then((j: unknown) => setLifeOpts(Array.isArray(j) ? j : [])),
+      fetch("/api/project-settlement-statuses")
+        .then((r) => r.json())
+        .then((j: unknown) => setSettlementOpts(Array.isArray(j) ? j : [])),
+      fetch("/api/project-missing-types")
+        .then((r) => r.json())
+        .then((j: unknown) => setMissingOpts(Array.isArray(j) ? j : [])),
+    ]).catch(() => {
+      setLifeOpts([]);
+      setSettlementOpts([]);
+      setMissingOpts([]);
+    });
+  }, []);
 
   useEffect(() => {
     const t = window.setTimeout(() => setQDebounced(searchInput.trim()), 280);
@@ -229,6 +283,7 @@ export function ProjectsClient({ initialEditId = null }: { initialEditId?: strin
       plannedCostNet: r.plannedCostNet != null ? String(r.plannedCostNet) : "",
       startDate: r.startDate ? isoToDateInputValue(r.startDate) : "",
       endDate: r.endDate ? isoToDateInputValue(r.endDate) : "",
+      missingTypeIds: r.missingItems?.map((m) => m.missingTypeId) ?? [],
     });
     setFormError(null);
     setOpen(true);
@@ -250,6 +305,7 @@ export function ProjectsClient({ initialEditId = null }: { initialEditId?: strin
       plannedCostNet: editing.plannedCostNet?.trim() ? normalizeDecimalInput(editing.plannedCostNet) : null,
       startDate: editing.startDate?.trim() ? toIsoOrNull(editing.startDate) : null,
       endDate: editing.endDate?.trim() ? toIsoOrNull(editing.endDate) : null,
+      missingTypeIds: editing.missingTypeIds,
     };
     if (!body.name) {
       setFormError("Podaj nazwę projektu.");
@@ -432,8 +488,8 @@ export function ProjectsClient({ initialEditId = null }: { initialEditId?: strin
               </tr>
             ) : (
               rows.map((r) => {
-                const lifeLabel = projectLifecycleLabel(r.lifecycleStatus);
-                const setLabel = projectSettlementLabel(r.settlementStatus);
+                const lifeLabel = projectLifecycleDisplay(r.lifecycleStatus, lifeMap);
+                const setLabel = projectSettlementDisplay(r.settlementStatus, settlementMap);
                 return (
                   <tr key={r.id} className="bg-white align-top dark:bg-zinc-950">
                     <td className="min-w-0 px-2 py-2.5 pl-3">
@@ -454,9 +510,18 @@ export function ProjectsClient({ initialEditId = null }: { initialEditId?: strin
                       </span>
                     </td>
                     <td className="min-w-0 px-1 py-2.5" title={lifeLabel}>
-                      <Badge variant={lifecycleBadgeVariant(r.lifecycleStatus)}>
-                        <span className="line-clamp-2 text-[11px] leading-snug break-words">{lifeLabel}</span>
-                      </Badge>
+                      <div className="flex flex-col gap-1">
+                        <Badge variant={lifecycleBadgeVariant(r.lifecycleStatus)}>
+                          <span className="line-clamp-2 text-[11px] leading-snug break-words">{lifeLabel}</span>
+                        </Badge>
+                        <div className="flex flex-wrap gap-0.5 text-[9px] leading-tight">
+                          {(r.missingItems ?? []).map((mi) => (
+                            <Badge key={mi.id} variant="warning">
+                              <span className="line-clamp-2 max-w-[9rem] break-words">Brak: {mi.missingType.name}</span>
+                            </Badge>
+                          ))}
+                        </div>
+                      </div>
                     </td>
                     <td className="min-w-0 px-1 py-2.5" title={setLabel}>
                       <Badge variant={settlementBadgeVariant(r.settlementStatus)}>
@@ -535,9 +600,9 @@ export function ProjectsClient({ initialEditId = null }: { initialEditId?: strin
                 disabled={saving}
               >
                 <option value="">(brak)</option>
-                {PROJECT_LIFECYCLE_VALUES.map((v) => (
-                  <option key={v} value={v}>
-                    {projectLifecycleLabel(v)}
+                {statusSelectOptions(editing.lifecycleStatus, lifeOpts).map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {o.label}
                   </option>
                 ))}
               </Select>
@@ -549,13 +614,37 @@ export function ProjectsClient({ initialEditId = null }: { initialEditId?: strin
                 disabled={saving}
               >
                 <option value="">(brak)</option>
-                {PROJECT_SETTLEMENT_VALUES.map((v) => (
-                  <option key={v} value={v}>
-                    {projectSettlementLabel(v)}
+                {statusSelectOptions(editing.settlementStatus, settlementOpts).map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {o.label}
                   </option>
                 ))}
               </Select>
             </Field>
+          </div>
+          <div className="space-y-2 rounded-lg border border-zinc-200 p-3 dark:border-zinc-800">
+            <div className="text-sm font-medium text-zinc-800 dark:text-zinc-200">Braki projektu</div>
+            <div className="flex flex-col gap-2">
+              {missingCheckboxRows(missingOpts, editing.missingTypeIds).map((o) => (
+                <label key={o.id} className="flex cursor-pointer items-center gap-2 text-sm text-zinc-700 dark:text-zinc-300">
+                  <input
+                    type="checkbox"
+                    className="size-4 rounded border-zinc-300"
+                    checked={editing.missingTypeIds.includes(o.id)}
+                    onChange={() =>
+                      setEditing((e) => ({
+                        ...e,
+                        missingTypeIds: e.missingTypeIds.includes(o.id)
+                          ? e.missingTypeIds.filter((x) => x !== o.id)
+                          : [...e.missingTypeIds, o.id],
+                      }))
+                    }
+                    disabled={saving}
+                  />
+                  <span>{o.name}</span>
+                </label>
+              ))}
+            </div>
           </div>
           <div className="grid gap-3 sm:grid-cols-2">
             <Field label="Planowany przychód netto">

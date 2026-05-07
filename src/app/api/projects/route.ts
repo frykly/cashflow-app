@@ -9,6 +9,16 @@ import {
   type ProjectListSortKey,
 } from "@/lib/projects/project-list-enriched";
 import { sortProjectsByCodeAsc } from "@/lib/project-picker-sort";
+import { syncProjectMissingItemsTx } from "@/lib/projects/sync-project-missing-items";
+
+const projectIncludeList = {
+  missingItems: {
+    include: {
+      missingType: { select: { id: true, name: true, slug: true } },
+    },
+    orderBy: { createdAt: "asc" as const },
+  },
+} satisfies Prisma.ProjectInclude;
 
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
@@ -39,6 +49,7 @@ export async function GET(req: Request) {
       where,
       ...(sortByCode ? {} : { orderBy: { name: "asc" as const } }),
       take: takeCap,
+      include: projectIncludeList,
     });
 
     if (sortByCode) {
@@ -46,7 +57,7 @@ export async function GET(req: Request) {
     }
 
     if (selectedId) {
-      const extra = await prisma.project.findUnique({ where: { id: selectedId } });
+      const extra = await prisma.project.findUnique({ where: { id: selectedId }, include: projectIncludeList });
       if (extra && !rows.some((r) => r.id === extra.id)) {
         rows = [extra, ...rows];
       }
@@ -93,22 +104,41 @@ export async function POST(req: Request) {
   }
   try {
     const data = projectCreateSchema.parse(body);
-    const row = await prisma.project.create({
-      data: {
-        name: data.name.trim(),
-        code: data.code?.trim() || null,
-        clientName: data.clientName?.trim() || null,
-        description: data.description?.trim() || null,
-        isActive: data.isActive ?? true,
-        lifecycleStatus: data.lifecycleStatus ?? null,
-        settlementStatus: data.settlementStatus ?? null,
-        plannedRevenueNet: data.plannedRevenueNet ?? null,
-        plannedCostNet: data.plannedCostNet ?? null,
-        startDate: data.startDate ? new Date(data.startDate) : null,
-        endDate: data.endDate ? new Date(data.endDate) : null,
-      },
-    });
-    return jsonData(row, { status: 201 });
+    try {
+      const row = await prisma.$transaction(async (tx) => {
+        const p = await tx.project.create({
+          data: {
+            name: data.name.trim(),
+            code: data.code?.trim() || null,
+            clientName: data.clientName?.trim() || null,
+            description: data.description?.trim() || null,
+            isActive: data.isActive ?? true,
+            lifecycleStatus: data.lifecycleStatus ?? null,
+            settlementStatus: data.settlementStatus ?? null,
+            plannedRevenueNet: data.plannedRevenueNet ?? null,
+            plannedCostNet: data.plannedCostNet ?? null,
+            startDate: data.startDate ? new Date(data.startDate) : null,
+            endDate: data.endDate ? new Date(data.endDate) : null,
+          },
+        });
+        try {
+          await syncProjectMissingItemsTx(tx, p.id, data.missingTypeIds);
+        } catch (e) {
+          if (e instanceof Error && e.message === "INVALID_MISSING_TYPES") {
+            throw new Error("INVALID_MISSING_TYPES");
+          }
+          throw e;
+        }
+        return p;
+      });
+      const full = await prisma.project.findUnique({ where: { id: row.id }, include: projectIncludeList });
+      return jsonData(full ?? row, { status: 201 });
+    } catch (e) {
+      if (e instanceof Error && e.message === "INVALID_MISSING_TYPES") {
+        return jsonError("Nieprawidłowy typ braku projektu.", 400);
+      }
+      throw e;
+    }
   } catch (e) {
     if (e instanceof ZodError) return zodErrorResponse(e);
     throw e;
