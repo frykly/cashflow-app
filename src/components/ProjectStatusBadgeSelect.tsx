@@ -85,19 +85,24 @@ export function ProjectStatusBadgeSelect({
     function onKeyDown(e: KeyboardEvent) {
       if (e.key === "Escape") onOpenKeyChange(null);
     }
-    function onScrollOrResize() {
+    function onScroll(e: Event) {
+      const t = e.target;
+      if (t instanceof Node && panelRef.current?.contains(t)) return;
+      onOpenKeyChange(null);
+    }
+    function onResize() {
       onOpenKeyChange(null);
     }
     document.addEventListener("mousedown", onDocMouseDown);
     document.addEventListener("keydown", onKeyDown);
-    window.addEventListener("scroll", onScrollOrResize, true);
-    window.addEventListener("resize", onScrollOrResize);
+    window.addEventListener("scroll", onScroll, true);
+    window.addEventListener("resize", onResize);
     return () => {
       if (focusT !== undefined) window.clearTimeout(focusT);
       document.removeEventListener("mousedown", onDocMouseDown);
       document.removeEventListener("keydown", onKeyDown);
-      window.removeEventListener("scroll", onScrollOrResize, true);
-      window.removeEventListener("resize", onScrollOrResize);
+      window.removeEventListener("scroll", onScroll, true);
+      window.removeEventListener("resize", onResize);
     };
   }, [open, onOpenKeyChange, options.length]);
 
