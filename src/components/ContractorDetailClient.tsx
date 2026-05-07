@@ -11,10 +11,6 @@ import { costInvoiceListEditHref } from "@/lib/navigation/invoice-deep-links";
 import { bankTransactionStatusLabel } from "@/lib/bank-import/bank-transaction-status-label";
 import { NewIncomeInvoiceFormModal } from "@/components/IncomeInvoiceFormModal";
 
-function EmptyState({ children }: { children: React.ReactNode }) {
-  return <p className="rounded-lg border border-dashed border-zinc-300 p-3 text-sm text-zinc-500 dark:border-zinc-700">{children}</p>;
-}
-
 function LinkButton({ href, children }: { href: string; children: React.ReactNode }) {
   return (
     <Link
@@ -48,6 +44,28 @@ function bankStatusBadge(status: string) {
   const variant = status === "UNMATCHED" || status === "NEW" ? "warning" : status === "BROKEN_LINK" ? "danger" : "muted";
   return <Badge variant={variant}>{bankTransactionStatusLabel(status)}</Badge>;
 }
+
+function ActivityEmpty() {
+  return <p className="text-xs text-zinc-500 dark:text-zinc-500">Brak dopasowań.</p>;
+}
+
+function ActivitySectionTitle({ title, tone = "default" }: { title: string; tone?: "default" | "muted" }) {
+  if (tone === "muted") {
+    return (
+      <h3 className="text-xs font-semibold uppercase tracking-wider text-zinc-400 dark:text-zinc-500">{title}</h3>
+    );
+  }
+  return <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">{title}</h3>;
+}
+
+const cardInteractive =
+  "group w-full rounded-2xl px-4 py-3 text-left transition-colors duration-150 cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-zinc-400/70 focus-visible:ring-offset-2 focus-visible:ring-offset-zinc-50 dark:focus-visible:ring-zinc-500 dark:focus-visible:ring-offset-zinc-950";
+
+const cardInvoice = `${cardInteractive} bg-zinc-50/80 hover:bg-zinc-100/90 dark:bg-zinc-900/50 dark:hover:bg-zinc-800/65`;
+
+const cardProject = `${cardInteractive} bg-zinc-100/70 hover:bg-zinc-100 dark:bg-zinc-900/55 dark:hover:bg-zinc-800/75`;
+
+const cardBank = `${cardInteractive} rounded-xl px-3 py-2.5 text-sm text-zinc-600 hover:bg-zinc-50/90 dark:text-zinc-400 dark:bg-zinc-950/30 dark:hover:bg-zinc-900/45`;
 
 function SummaryCard({
   title,
@@ -192,7 +210,7 @@ export function ContractorDetailClient({ data }: { data: ContractorDetailsResult
         <Textarea className="mt-3" rows={5} value={notes} onChange={(e) => setNotes(e.target.value)} disabled={saving} />
       </section>
 
-      <section className="space-y-4">
+      <section className="space-y-8">
         <div>
           <h2 className="text-lg font-semibold text-zinc-900 dark:text-zinc-50">Dokumenty i aktywność</h2>
           <p className="mt-1 text-sm text-zinc-500">
@@ -200,118 +218,143 @@ export function ContractorDetailClient({ data }: { data: ContractorDetailsResult
           </p>
         </div>
 
-        <div className="grid gap-4 lg:grid-cols-2">
-          <RelatedCard title="Faktury przychodowe">
-            {related.incomeInvoices.length === 0 ? (
-              <EmptyState>Brak dopasowań.</EmptyState>
-            ) : (
-              <ul className="divide-y divide-zinc-100 text-sm dark:divide-zinc-800">
-                {related.incomeInvoices.map((r) => (
-                  <li key={r.id} className="py-3">
-                    <div className="flex items-start justify-between gap-4">
-                      <div className="min-w-0">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setIncomeModalInvoiceId(r.id);
-                            setIncomeModalOpen(true);
-                          }}
-                          className="text-left font-medium text-blue-700 underline dark:text-blue-300"
-                        >
-                          Faktura {r.invoiceNumber}
-                        </button>
-                        <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-zinc-500">
-                          <span>{r.contractor}</span>
-                          <span>{formatDate(r.issueDate)}</span>
-                          {incomeStatusBadge(r.status)}
-                        </div>
-                      </div>
-                      <span className="shrink-0 font-medium tabular-nums">{formatMoney(r.grossAmount)}</span>
-                    </div>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </RelatedCard>
-
-          <RelatedCard title="Faktury kosztowe">
-            {related.costInvoices.length === 0 ? (
-              <EmptyState>Brak dopasowań.</EmptyState>
-            ) : (
-              <ul className="divide-y divide-zinc-100 text-sm dark:divide-zinc-800">
-                {related.costInvoices.map((r) => (
-                  <li key={r.id} className="py-3">
-                    <div className="flex items-start justify-between gap-4">
-                      <div className="min-w-0">
-                        <Link href={costInvoiceListEditHref(r.id)} className="font-medium text-blue-700 underline dark:text-blue-300">
-                          Faktura {r.documentNumber}
-                      </Link>
-                        <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-zinc-500">
-                          <span>{r.supplier}</span>
-                          <span>{formatDate(r.documentDate)}</span>
-                          {costStatusBadge(r.status)}
-                        </div>
-                      </div>
-                      <span className="shrink-0 font-medium tabular-nums">{formatMoney(r.grossAmount)}</span>
-                    </div>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </RelatedCard>
-
-          <RelatedCard title="Projekty">
+        <div className="space-y-10">
+          <div className="space-y-3">
+            <ActivitySectionTitle title="Projekty" />
             {related.projects.length === 0 ? (
-              <EmptyState>Brak dopasowań.</EmptyState>
+              <ActivityEmpty />
             ) : (
-              <ul className="divide-y divide-zinc-100 text-sm dark:divide-zinc-800">
+              <div className="flex flex-col gap-2.5">
                 {related.projects.map((r) => (
-                  <li key={r.id} className="py-3">
-                    <div className="flex items-start justify-between gap-4">
-                      <div className="min-w-0">
-                        <Link href={`/projects/${r.id}`} className="font-medium text-blue-700 underline dark:text-blue-300">
-                          Projekt {r.name}
-                        </Link>
-                        <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-zinc-500">
-                          {r.code ? <span>{r.code}</span> : null}
-                          <span>{r.clientName || "—"}</span>
+                  <Link key={r.id} href={`/projects/${r.id}`} className={cardProject}>
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="font-semibold text-zinc-950 dark:text-zinc-50">{r.name}</span>
                           {projectStatusBadge(r.isActive)}
                         </div>
+                        <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
+                          {[r.code, r.clientName || null].filter(Boolean).join(" · ") || "—"}
+                        </p>
+                        <p className="mt-1 text-[11px] leading-relaxed text-zinc-400 dark:text-zinc-500">
+                          Ostatnia aktywność · {formatDate(r.updatedAt)}
+                        </p>
                       </div>
                     </div>
-                  </li>
+                  </Link>
                 ))}
-              </ul>
+              </div>
             )}
-          </RelatedCard>
+          </div>
 
-          <RelatedCard title="Transakcje bankowe">
+          <div className="grid gap-10 lg:grid-cols-2 lg:gap-12">
+            <div className="space-y-3">
+              <ActivitySectionTitle title="Faktury przychodowe" />
+              {related.incomeInvoices.length === 0 ? (
+                <ActivityEmpty />
+              ) : (
+                <div className="flex flex-col gap-2">
+                  {related.incomeInvoices.map((r) => (
+                    <button
+                      key={r.id}
+                      type="button"
+                      onClick={() => {
+                        setIncomeModalInvoiceId(r.id);
+                        setIncomeModalOpen(true);
+                      }}
+                      className={cardInvoice}
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0 flex-1">
+                          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                            <span className="font-semibold text-zinc-900 dark:text-zinc-50">{r.invoiceNumber}</span>
+                            {incomeStatusBadge(r.status)}
+                          </div>
+                          <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
+                            <span className="line-clamp-1">{r.contractor}</span>
+                            <span className="mx-1.5 text-zinc-300 dark:text-zinc-600">·</span>
+                            <span>{formatDate(r.issueDate)}</span>
+                          </p>
+                        </div>
+                        <span className="shrink-0 text-sm font-semibold tabular-nums text-zinc-900 dark:text-zinc-100">
+                          {formatMoney(r.grossAmount)}
+                        </span>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="space-y-3">
+              <ActivitySectionTitle title="Faktury kosztowe" />
+              {related.costInvoices.length === 0 ? (
+                <ActivityEmpty />
+              ) : (
+                <div className="flex flex-col gap-2">
+                  {related.costInvoices.map((r) => (
+                    <Link key={r.id} href={costInvoiceListEditHref(r.id)} className={cardInvoice}>
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0 flex-1">
+                          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                            <span className="font-semibold text-zinc-900 dark:text-zinc-50">{r.documentNumber}</span>
+                            {costStatusBadge(r.status)}
+                          </div>
+                          <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
+                            <span className="line-clamp-1">{r.supplier}</span>
+                            <span className="mx-1.5 text-zinc-300 dark:text-zinc-600">·</span>
+                            <span>{formatDate(r.documentDate)}</span>
+                          </p>
+                        </div>
+                        <span className="shrink-0 text-sm font-semibold tabular-nums text-zinc-900 dark:text-zinc-100">
+                          {formatMoney(r.grossAmount)}
+                        </span>
+                      </div>
+                    </Link>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className="space-y-3 pt-1">
+            <ActivitySectionTitle title="Transakcje bankowe" tone="muted" />
             {related.bankTransactions.length === 0 ? (
-              <EmptyState>Brak dopasowań.</EmptyState>
+              <ActivityEmpty />
             ) : (
-              <ul className="divide-y divide-zinc-100 text-sm dark:divide-zinc-800">
+              <div className="flex flex-col gap-1.5 opacity-[0.92]">
                 {related.bankTransactions.map((r) => (
-                  <li key={r.id} className="py-3">
-                    <div className="flex items-start justify-between gap-4">
-                      <div className="min-w-0">
-                      <Link href={`/bank-imports/${r.importId}/transactions/${r.id}`} className="font-medium text-blue-700 underline dark:text-blue-300">
-                          Transakcja bankowa — {formatDate(r.bookingDate)}
-                      </Link>
-                        <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-zinc-500">
-                          <span>{r.counterpartyName || "—"}</span>
+                  <Link
+                    key={r.id}
+                    href={`/bank-imports/${r.importId}/transactions/${r.id}`}
+                    className={cardBank}
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="font-medium text-zinc-700 dark:text-zinc-300">
+                            {formatDate(r.bookingDate)}
+                          </span>
                           {bankStatusBadge(r.status)}
                         </div>
-                        <div className="mt-1 line-clamp-2 text-xs text-zinc-500">{r.description}</div>
+                        <p className="mt-0.5 line-clamp-1 text-xs text-zinc-500 dark:text-zinc-500">
+                          {r.counterpartyName || "—"}
+                          {r.description ? ` · ${r.description}` : ""}
+                        </p>
                       </div>
-                      <span className={`shrink-0 font-medium tabular-nums ${r.amount < 0 ? "text-red-700 dark:text-red-300" : "text-emerald-700 dark:text-emerald-300"}`}>
+                      <span
+                        className={`shrink-0 text-xs font-semibold tabular-nums ${
+                          r.amount < 0 ? "text-red-600/90 dark:text-red-400/90" : "text-emerald-600/90 dark:text-emerald-400/90"
+                        }`}
+                      >
                         {formatMoney(r.amount / 100)}
                       </span>
                     </div>
-                  </li>
+                  </Link>
                 ))}
-              </ul>
+              </div>
             )}
-          </RelatedCard>
+          </div>
         </div>
       </section>
 
@@ -349,14 +392,5 @@ export function ContractorDetailClient({ data }: { data: ContractorDetailsResult
         }}
       />
     </div>
-  );
-}
-
-function RelatedCard({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <section className="rounded-xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-950">
-      <h3 className="mb-2 text-sm font-semibold uppercase tracking-wide text-zinc-600 dark:text-zinc-400">{title}</h3>
-      {children}
-    </section>
   );
 }
