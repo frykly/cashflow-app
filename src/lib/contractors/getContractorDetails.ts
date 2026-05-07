@@ -1,5 +1,6 @@
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
+import { decToNumber, round2 } from "@/lib/cashflow/money";
 
 const TAKE = 50;
 
@@ -13,6 +14,14 @@ function nonEmptyNames(contractor: ContractorWithAliases): string[] {
 
 function stringMatchFilter(field: string, names: string[]): Prisma.StringFilter[] {
   return names.map((name) => ({ contains: name }));
+}
+
+function sumPayments(payments: { amountGross: Prisma.Decimal }[]): number {
+  return round2(payments.reduce((sum, p) => sum + decToNumber(p.amountGross), 0));
+}
+
+function remainingGross(grossAmount: Prisma.Decimal, payments: { amountGross: Prisma.Decimal }[]): number {
+  return Math.max(0, round2(decToNumber(grossAmount) - sumPayments(payments)));
 }
 
 export async function getContractorDetails(id: string) {
@@ -32,7 +41,16 @@ export async function getContractorDetails(id: string) {
   const bankWhere: Prisma.BankTransactionWhereInput =
     names.length > 0 ? { OR: stringMatchFilter("counterpartyName", names).map((counterpartyName) => ({ counterpartyName })) } : {};
 
-  const [incomeInvoices, costInvoices, projects, bankTransactions] = await Promise.all([
+  const [
+    incomeInvoices,
+    costInvoices,
+    projects,
+    bankTransactions,
+    incomeSummaryRows,
+    costSummaryRows,
+    projectSummaryRows,
+    bankSummaryRows,
+  ] = await Promise.all([
     prisma.incomeInvoice.findMany({
       where: incomeWhere,
       orderBy: { issueDate: "desc" },
@@ -87,7 +105,42 @@ export async function getContractorDetails(id: string) {
         status: true,
       },
     }),
+    prisma.incomeInvoice.findMany({
+      where: incomeWhere,
+      select: {
+        grossAmount: true,
+        payments: { select: { amountGross: true } },
+      },
+    }),
+    prisma.costInvoice.findMany({
+      where: costWhere,
+      select: {
+        grossAmount: true,
+        payments: { select: { amountGross: true } },
+      },
+    }),
+    prisma.project.findMany({
+      where: projectWhere,
+      select: {
+        isActive: true,
+      },
+    }),
+    prisma.bankTransaction.findMany({
+      where: bankWhere,
+      select: {
+        amount: true,
+      },
+    }),
   ]);
+
+  const incomeGross = round2(incomeSummaryRows.reduce((sum, r) => sum + decToNumber(r.grossAmount), 0));
+  const incomeReceived = round2(incomeSummaryRows.reduce((sum, r) => sum + sumPayments(r.payments), 0));
+  const incomeRemaining = round2(incomeSummaryRows.reduce((sum, r) => sum + remainingGross(r.grossAmount, r.payments), 0));
+  const costGross = round2(costSummaryRows.reduce((sum, r) => sum + decToNumber(r.grossAmount), 0));
+  const costPaid = round2(costSummaryRows.reduce((sum, r) => sum + sumPayments(r.payments), 0));
+  const costRemaining = round2(costSummaryRows.reduce((sum, r) => sum + remainingGross(r.grossAmount, r.payments), 0));
+  const bankIncome = round2(bankSummaryRows.reduce((sum, r) => sum + (r.amount > 0 ? r.amount / 100 : 0), 0));
+  const bankExpenses = round2(bankSummaryRows.reduce((sum, r) => sum + (r.amount < 0 ? Math.abs(r.amount) / 100 : 0), 0));
 
   return {
     contractor: {
@@ -119,6 +172,29 @@ export async function getContractorDetails(id: string) {
         ...r,
         bookingDate: r.bookingDate.toISOString(),
       })),
+    },
+    summary: {
+      income: {
+        count: incomeSummaryRows.length,
+        grossAmount: incomeGross,
+        receivedAmount: incomeReceived,
+        remainingAmount: incomeRemaining,
+      },
+      costs: {
+        count: costSummaryRows.length,
+        grossAmount: costGross,
+        paidAmount: costPaid,
+        remainingAmount: costRemaining,
+      },
+      projects: {
+        count: projectSummaryRows.length,
+        activeCount: projectSummaryRows.filter((r) => r.isActive).length,
+      },
+      bank: {
+        count: bankSummaryRows.length,
+        incomeAmount: bankIncome,
+        expenseAmount: bankExpenses,
+      },
     },
   };
 }
