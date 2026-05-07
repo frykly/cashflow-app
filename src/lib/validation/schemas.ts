@@ -216,6 +216,34 @@ export const projectUpdateSchema = z.object({
   endDate: optionalIsoNullable(),
 });
 
+const projectTaskStatusSchema = z.enum(["TODO", "IN_PROGRESS", "DONE"]);
+const projectTaskPrioritySchema = z.enum(["LOW", "NORMAL", "HIGH"]);
+
+const optionalTaskPriority = z.preprocess(
+  (v) => (v === "" || v === null || v === undefined ? null : v),
+  z.union([projectTaskPrioritySchema, z.null()]).optional(),
+);
+
+export const projectTaskCreateSchema = z.object({
+  title: z.string().min(1).max(500),
+  description: optionalTrimmed(5000),
+  assigneeName: optionalTrimmed(200),
+  plannedDate: optionalIsoNullable(),
+  status: projectTaskStatusSchema.optional().default("TODO"),
+  priority: optionalTaskPriority,
+  isDone: z.boolean().optional(),
+});
+
+export const projectTaskUpdateSchema = z.object({
+  title: z.string().min(1).max(500).optional(),
+  description: optionalTrimmed(5000),
+  assigneeName: optionalTrimmed(200),
+  plannedDate: optionalIsoNullable(),
+  status: projectTaskStatusSchema.optional(),
+  priority: optionalTaskPriority,
+  isDone: z.boolean().optional(),
+});
+
 const contractorAliasInputSchema = z.object({
   aliasName: z.string().min(1).max(500),
   source: optionalTrimmed(100),

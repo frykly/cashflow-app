@@ -1,6 +1,6 @@
 import { prisma } from "@/lib/db";
 import { decToNumber } from "@/lib/cashflow/money";
-import type { CostInvoice, IncomeInvoice, PlannedFinancialEvent, Project } from "@prisma/client";
+import type { CostInvoice, IncomeInvoice, PlannedFinancialEvent, Project, ProjectTask } from "@prisma/client";
 import {
   computeProjectBalanceKpis,
   costNetPaidForProject,
@@ -44,6 +44,7 @@ export type ProjectDetailsResult = {
     createdAt: Date;
     missingType: { id: string; name: string; slug: string };
   }>;
+  tasks: ProjectTask[];
   counts: { income: number; cost: number; planned: number };
   balance: ReturnType<typeof computeProjectBalanceKpis>;
   incomeInvoices: (IncomeInvoice & {
@@ -77,13 +78,17 @@ export async function getProjectDetails(projectId: string): Promise<ProjectDetai
   const project = await prisma.project.findUnique({ where: { id: projectId } });
   if (!project) return null;
 
-  const [lifeOpts, setOpts, missingItems] = await Promise.all([
+  const [lifeOpts, setOpts, missingItems, tasks] = await Promise.all([
     prisma.projectLifecycleStatusOption.findMany({ select: { slug: true, name: true } }),
     prisma.projectSettlementStatusOption.findMany({ select: { slug: true, name: true } }),
     prisma.projectMissingItem.findMany({
       where: { projectId },
       include: { missingType: { select: { id: true, name: true, slug: true } } },
       orderBy: { createdAt: "asc" },
+    }),
+    prisma.projectTask.findMany({
+      where: { projectId },
+      orderBy: [{ isDone: "asc" }, { plannedDate: "asc" }, { createdAt: "asc" }],
     }),
   ]);
   const lifeMap = new Map(lifeOpts.map((o) => [o.slug, o.name]));
@@ -183,6 +188,7 @@ export async function getProjectDetails(projectId: string): Promise<ProjectDetai
     project,
     statusDisplay,
     missingItems,
+    tasks,
     counts: { income: incomeCount, cost: costCount, planned: plannedCount },
     balance,
     incomeInvoices,

@@ -14,6 +14,7 @@ import {
 } from "@/lib/project-quick-links";
 import { ContractorNameLink } from "@/components/ContractorNameLink";
 import { ProjectIncomeInvoiceModalButton } from "@/components/ProjectIncomeInvoiceModalButton";
+import { ProjectTasksSection, type ProjectTaskRow } from "@/components/ProjectTasksSection";
 
 function moneyFromDecimal(v: Decimal | null | undefined): string {
   if (v == null) return "—";
@@ -28,8 +29,25 @@ function plannedStatusLabel(s: string): string {
   return s;
 }
 
+function serializeProjectTasks(tasks: ProjectDetailsResult["tasks"]): ProjectTaskRow[] {
+  return tasks.map((t) => ({
+    id: t.id,
+    title: t.title,
+    description: t.description,
+    plannedDate: t.plannedDate ? t.plannedDate.toISOString() : null,
+    assigneeName: t.assigneeName,
+    status: t.status,
+    isDone: t.isDone,
+    doneAt: t.doneAt ? t.doneAt.toISOString() : null,
+    priority: t.priority,
+    createdAt: t.createdAt.toISOString(),
+    updatedAt: t.updatedAt.toISOString(),
+  }));
+}
+
 export function ProjectDetailView({ data }: { data: ProjectDetailsResult }) {
-  const { project, statusDisplay, missingItems, counts, balance, incomeInvoices, costInvoices, plannedEvents } = data;
+  const { project, statusDisplay, missingItems, tasks, counts, balance, incomeInvoices, costInvoices, plannedEvents } =
+    data;
 
   return (
     <div className="space-y-8">
@@ -74,6 +92,8 @@ export function ProjectDetailView({ data }: { data: ProjectDetailsResult }) {
           Edytuj
         </Link>
       </div>
+
+      <ProjectTasksSection projectId={project.id} initialTasks={serializeProjectTasks(tasks)} />
 
       <section className="rounded-xl border border-zinc-200 bg-zinc-50/80 p-4 dark:border-zinc-800 dark:bg-zinc-900/40">
         <h2 className="text-base font-semibold text-zinc-900 dark:text-zinc-50">Bilans projektu</h2>
