@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter, usePathname } from "next/navigation";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ContractorNameLink } from "@/components/ContractorNameLink";
 import { NameAutocomplete } from "@/components/NameAutocomplete";
 import { Alert, Badge, Button, Field, Input, Modal, Select, Spinner, Textarea } from "@/components/ui";
@@ -175,6 +175,10 @@ export function ProjectsClient({ initialEditId = null }: { initialEditId?: strin
   const [lifeOpts, setLifeOpts] = useState<StatusOpt[]>([]);
   const [settlementOpts, setSettlementOpts] = useState<StatusOpt[]>([]);
   const [missingOpts, setMissingOpts] = useState<StatusOpt[]>([]);
+  const [inlinePick, setInlinePick] = useState<{ projectId: string; field: "lifecycle" | "settlement" } | null>(null);
+  const [statusPatchSavingKey, setStatusPatchSavingKey] = useState<string | null>(null);
+  const [statusPatchError, setStatusPatchError] = useState<string | null>(null);
+  const statusPatchInFlightRef = useRef(false);
 
   const lifeMap = useMemo(() => new Map(lifeOpts.map((o) => [o.slug, o.name])), [lifeOpts]);
   const settlementMap = useMemo(() => new Map(settlementOpts.map((o) => [o.slug, o.name])), [settlementOpts]);
@@ -218,6 +222,7 @@ export function ProjectsClient({ initialEditId = null }: { initialEditId?: strin
       const j = await r.json();
       if (!r.ok) throw new Error(readApiErrorBody(j));
       setRows(Array.isArray(j) ? j : []);
+      setStatusPatchError(null);
     } catch (e) {
       setRows([]);
       setLoadError(e instanceof Error ? e.message : "Nie udało się wczytać projektów");
@@ -332,6 +337,50 @@ export function ProjectsClient({ initialEditId = null }: { initialEditId?: strin
     } finally {
       setSaving(false);
     }
+  }
+
+  async function patchProjectStatusField(projectId: string, field: "lifecycle" | "settlement", rawSlug: string) {
+    const slug = rawSlug.trim() === "" ? null : rawSlug.trim();
+    const row = rows.find((x) => x.id === projectId);
+    const prevRaw = field === "lifecycle" ? row?.lifecycleStatus : row?.settlementStatus;
+    const prevNorm = prevRaw?.trim() ? prevRaw.trim() : null;
+    if (slug === prevNorm) {
+      setInlinePick(null);
+      return;
+    }
+    const key = `${projectId}:${field}`;
+    statusPatchInFlightRef.current = true;
+    setStatusPatchSavingKey(key);
+    setStatusPatchError(null);
+    try {
+      const body = field === "lifecycle" ? { lifecycleStatus: slug } : { settlementStatus: slug };
+      const res = await fetch(`/api/projects/${projectId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const j = await res.json();
+      if (!res.ok) {
+        setStatusPatchError(readApiErrorBody(j));
+        setInlinePick(null);
+        return;
+      }
+      setInlinePick(null);
+      await load();
+    } catch {
+      setStatusPatchError("Błąd sieci");
+      setInlinePick(null);
+    } finally {
+      statusPatchInFlightRef.current = false;
+      setStatusPatchSavingKey(null);
+    }
+  }
+
+  function statusPickerBlurClose(projectId: string, field: "lifecycle" | "settlement") {
+    window.setTimeout(() => {
+      if (statusPatchInFlightRef.current) return;
+      setInlinePick((p) => (p?.projectId === projectId && p.field === field ? null : p));
+    }, 150);
   }
 
   async function remove(id: string) {
@@ -455,6 +504,7 @@ export function ProjectsClient({ initialEditId = null }: { initialEditId?: strin
       </div>
 
       {loadError && <Alert variant="error">{loadError}</Alert>}
+      {statusPatchError ? <Alert variant="error">{statusPatchError}</Alert> : null}
 
       <div className="w-full max-w-full rounded-xl border border-zinc-200 shadow-sm dark:border-zinc-800">
         <table className="w-full table-fixed text-left text-sm">
@@ -490,6 +540,10 @@ export function ProjectsClient({ initialEditId = null }: { initialEditId?: strin
               rows.map((r) => {
                 const lifeLabel = projectLifecycleDisplay(r.lifecycleStatus, lifeMap);
                 const setLabel = projectSettlementDisplay(r.settlementStatus, settlementMap);
+                const lifeOpen = inlinePick?.projectId === r.id && inlinePick.field === "lifecycle";
+                const setOpen = inlinePick?.projectId === r.id && inlinePick.field === "settlement";
+                const lifeSaving = statusPatchSavingKey === `${r.id}:lifecycle`;
+                const setSaving = statusPatchSavingKey === `${r.id}:settlement`;
                 return (
                   <tr key={r.id} className="bg-white align-top dark:bg-zinc-950">
                     <td className="min-w-0 px-2 py-2.5 pl-3">
@@ -511,9 +565,37 @@ export function ProjectsClient({ initialEditId = null }: { initialEditId?: strin
                     </td>
                     <td className="min-w-0 px-1 py-2.5" title={lifeLabel}>
                       <div className="flex flex-col gap-1">
-                        <Badge variant={lifecycleBadgeVariant(r.lifecycleStatus)}>
-                          <span className="line-clamp-2 text-[11px] leading-snug break-words">{lifeLabel}</span>
-                        </Badge>
+                        {lifeOpen ? (
+                          <Select
+                            autoFocus
+                            disabled={lifeSaving}
+                            className="!text-xs"
+                            value={(r.lifecycleStatus ?? "").trim()}
+                            onChange={(e) => void patchProjectStatusField(r.id, "lifecycle", e.target.value)}
+                            onBlur={() => statusPickerBlurClose(r.id, "lifecycle")}
+                          >
+                            <option value="">(brak)</option>
+                            {statusSelectOptions(r.lifecycleStatus, lifeOpts).map((o) => (
+                              <option key={o.value} value={o.value}>
+                                {o.label}
+                              </option>
+                            ))}
+                          </Select>
+                        ) : (
+                          <button
+                            type="button"
+                            disabled={statusPatchSavingKey !== null}
+                            className="max-w-full rounded-md text-left transition hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-400 disabled:opacity-50 dark:focus-visible:ring-zinc-600"
+                            onClick={() => {
+                              setStatusPatchError(null);
+                              setInlinePick({ projectId: r.id, field: "lifecycle" });
+                            }}
+                          >
+                            <Badge variant={lifecycleBadgeVariant(r.lifecycleStatus)}>
+                              <span className="line-clamp-2 text-[11px] leading-snug break-words">{lifeLabel}</span>
+                            </Badge>
+                          </button>
+                        )}
                         <div className="flex flex-wrap gap-0.5 text-[9px] leading-tight">
                           {(r.missingItems ?? []).map((mi) => (
                             <Badge key={mi.id} variant="warning">
@@ -524,9 +606,37 @@ export function ProjectsClient({ initialEditId = null }: { initialEditId?: strin
                       </div>
                     </td>
                     <td className="min-w-0 px-1 py-2.5" title={setLabel}>
-                      <Badge variant={settlementBadgeVariant(r.settlementStatus)}>
-                        <span className="line-clamp-2 text-[11px] leading-snug break-words">{setLabel}</span>
-                      </Badge>
+                      {setOpen ? (
+                        <Select
+                          autoFocus
+                          disabled={setSaving}
+                          className="!text-xs"
+                          value={(r.settlementStatus ?? "").trim()}
+                          onChange={(e) => void patchProjectStatusField(r.id, "settlement", e.target.value)}
+                          onBlur={() => statusPickerBlurClose(r.id, "settlement")}
+                        >
+                          <option value="">(brak)</option>
+                          {statusSelectOptions(r.settlementStatus, settlementOpts).map((o) => (
+                            <option key={o.value} value={o.value}>
+                              {o.label}
+                            </option>
+                          ))}
+                        </Select>
+                      ) : (
+                        <button
+                          type="button"
+                          disabled={statusPatchSavingKey !== null}
+                          className="max-w-full rounded-md text-left transition hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-400 disabled:opacity-50 dark:focus-visible:ring-zinc-600"
+                          onClick={() => {
+                            setStatusPatchError(null);
+                            setInlinePick({ projectId: r.id, field: "settlement" });
+                          }}
+                        >
+                          <Badge variant={settlementBadgeVariant(r.settlementStatus)}>
+                            <span className="line-clamp-2 text-[11px] leading-snug break-words">{setLabel}</span>
+                          </Badge>
+                        </button>
+                      )}
                     </td>
                     <td className="px-2 py-2.5 text-right text-sm tabular-nums text-zinc-800 dark:text-zinc-200">
                       {r.actualResultNet == null ? "—" : formatMoney(r.actualResultNet)}

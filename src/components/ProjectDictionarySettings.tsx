@@ -29,7 +29,7 @@ export function ProjectDictionarySettings({
   const [newName, setNewName] = useState("");
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editTarget, setEditTarget] = useState<Row | null>(null);
   const [editName, setEditName] = useState("");
   const [editSort, setEditSort] = useState("0");
   const [blockOpen, setBlockOpen] = useState(false);
@@ -80,14 +80,19 @@ export function ProjectDictionarySettings({
     }
   }
 
-  async function saveEdit(id: string) {
+  function closeEditModal() {
+    setEditTarget(null);
+  }
+
+  async function saveEdit() {
+    if (!editTarget) return;
     const n = editName.trim();
     const so = Number.parseInt(editSort, 10);
     if (!n || Number.isNaN(so) || so < 0) return;
     setSaving(true);
     setErr(null);
     try {
-      const r = await fetch(`${api}/${id}`, {
+      const r = await fetch(`${api}/${editTarget.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name: n, sortOrder: so }),
@@ -97,7 +102,7 @@ export function ProjectDictionarySettings({
         setErr(readApiErrorBody(j));
         return;
       }
-      setEditingId(null);
+      closeEditModal();
       await load();
     } catch {
       setErr("Błąd sieci");
@@ -177,83 +182,64 @@ export function ProjectDictionarySettings({
         </Button>
       </form>
 
-      <div className="overflow-x-auto rounded-lg border border-zinc-200 dark:border-zinc-800">
-        <table className="w-full min-w-[560px] text-left text-sm">
+      <div className="rounded-lg border border-zinc-200 dark:border-zinc-800">
+        <table className="w-full table-fixed text-left text-sm">
           <thead className="border-b border-zinc-200 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900/80">
             <tr>
-              <th className="px-3 py-2 font-medium">Kolejność</th>
-              <th className="px-3 py-2 font-medium">Nazwa</th>
-              <th className="px-3 py-2 font-medium">Slug</th>
-              <th className="px-3 py-2 font-medium">Stan</th>
-              <th className="px-3 py-2 font-medium text-right">Akcje</th>
+              <th className="w-24 px-2 py-2 font-medium">Kolejność</th>
+              <th className="px-2 py-2 font-medium">Nazwa</th>
+              <th className="w-36 px-2 py-2 font-medium">Stan</th>
+              <th className="w-[13.75rem] shrink-0 px-1 py-2 pr-2 text-right font-medium">Akcje</th>
             </tr>
           </thead>
           <tbody>
             {rows.map((c) => (
               <tr key={c.id} className="border-b border-zinc-100 dark:border-zinc-800/80">
-                <td className="px-3 py-2 tabular-nums text-zinc-600 dark:text-zinc-400">{c.sortOrder}</td>
-                <td className="px-3 py-2">
-                  {editingId === c.id ? (
-                    <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-                      <Input className="max-w-xs" value={editName} onChange={(e) => setEditName(e.target.value)} disabled={saving} />
-                      <Input
-                        className="w-24"
-                        inputMode="numeric"
-                        value={editSort}
-                        onChange={(e) => setEditSort(e.target.value)}
-                        disabled={saving}
-                      />
-                      <div className="flex flex-wrap gap-2">
-                        <Button type="button" className="!py-1 !text-xs" onClick={() => saveEdit(c.id)} disabled={saving}>
-                          Zapisz
-                        </Button>
-                        <Button type="button" variant="secondary" className="!py-1 !text-xs" onClick={() => setEditingId(null)} disabled={saving}>
-                          Anuluj
-                        </Button>
-                      </div>
-                    </div>
-                  ) : (
-                    <span className={!c.isActive ? "text-zinc-500 line-through" : ""}>{c.name}</span>
-                  )}
+                <td className="px-2 py-2 align-top tabular-nums text-zinc-600 dark:text-zinc-400">{c.sortOrder}</td>
+                <td className="min-w-0 px-2 py-2 align-top">
+                  <span
+                    className={
+                      !c.isActive
+                        ? "break-words text-zinc-500 line-through"
+                        : "break-words text-zinc-900 dark:text-zinc-100"
+                    }
+                  >
+                    {c.name}
+                  </span>
                 </td>
-                <td className="px-3 py-2 font-mono text-xs text-zinc-500">{c.slug}</td>
-                <td className="px-3 py-2">
+                <td className="px-2 py-2 align-top">
                   {c.isActive ? (
                     <span className="text-emerald-700 dark:text-emerald-400">Aktywna</span>
                   ) : (
-                    <span className="text-zinc-500">Zarchiwizowana</span>
+                    <span className="break-words text-zinc-500">Zarchiwizowana</span>
                   )}
                 </td>
-                <td className="whitespace-nowrap px-3 py-2 text-right">
-                  {editingId !== c.id ? (
-                    <>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        className="!py-1 !text-xs"
-                        onClick={() => {
-                          setEditingId(c.id);
-                          setEditName(c.name);
-                          setEditSort(String(c.sortOrder));
-                        }}
-                        disabled={saving}
-                      >
-                        Edytuj
-                      </Button>
-                      <Button type="button" variant="ghost" className="!py-1 !text-xs" onClick={() => setArchived(c.id, !c.isActive)} disabled={saving}>
-                        {c.isActive ? "Archiwizuj" : "Przywróć"}
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        className="!py-1 !text-xs text-red-600 dark:text-red-400"
-                        onClick={() => void tryDelete(c)}
-                        disabled={saving}
-                      >
-                        Usuń
-                      </Button>
-                    </>
-                  ) : null}
+                <td className="px-1 py-2 pr-2 align-middle text-right whitespace-nowrap">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    className="!px-1 !py-1 !text-xs"
+                    onClick={() => {
+                      setEditTarget(c);
+                      setEditName(c.name);
+                      setEditSort(String(c.sortOrder));
+                    }}
+                    disabled={saving}
+                  >
+                    Edytuj
+                  </Button>
+                  <Button type="button" variant="ghost" className="!px-1 !py-1 !text-xs" onClick={() => setArchived(c.id, !c.isActive)} disabled={saving}>
+                    {c.isActive ? "Archiwizuj" : "Przywróć"}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    className="!px-1 !py-1 !text-xs text-red-600 dark:text-red-400"
+                    onClick={() => void tryDelete(c)}
+                    disabled={saving}
+                  >
+                    Usuń
+                  </Button>
                 </td>
               </tr>
             ))}
@@ -262,6 +248,39 @@ export function ProjectDictionarySettings({
       </div>
 
       <p className="text-xs text-zinc-500">{description}</p>
+
+      <Modal
+        open={editTarget !== null}
+        title={`Edycja — ${title}`}
+        onClose={() => !saving && closeEditModal()}
+        size="md"
+      >
+        <div className="space-y-4">
+          <Field label="Nazwa">
+            <Input value={editName} onChange={(e) => setEditName(e.target.value)} disabled={saving} autoFocus />
+          </Field>
+          <Field label="Kolejność (sortowanie na listach)">
+            <Input inputMode="numeric" value={editSort} onChange={(e) => setEditSort(e.target.value)} disabled={saving} />
+          </Field>
+          <div className="flex flex-wrap justify-end gap-2 pt-2">
+            <Button type="button" variant="secondary" onClick={closeEditModal} disabled={saving}>
+              Anuluj
+            </Button>
+            <Button
+              type="button"
+              onClick={() => void saveEdit()}
+              disabled={
+                saving ||
+                !editName.trim() ||
+                Number.isNaN(Number.parseInt(editSort, 10)) ||
+                Number.parseInt(editSort, 10) < 0
+              }
+            >
+              Zapisz
+            </Button>
+          </div>
+        </div>
+      </Modal>
 
       <Modal open={blockOpen} title="Nie można usunąć" onClose={() => setBlockOpen(false)} size="md">
         <p className="text-sm text-zinc-700 dark:text-zinc-300">{blockMsg}</p>
