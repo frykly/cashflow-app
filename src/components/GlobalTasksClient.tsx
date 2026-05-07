@@ -1,11 +1,13 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { Alert, Badge, Button, Field, Input, Modal, Select, Textarea } from "@/components/ui";
 import { readApiErrorBody } from "@/lib/api-client";
 import { dateInputToIso, isoToDateInputValue } from "@/lib/date-input";
 import { formatDate } from "@/lib/format";
+import type { GlobalProjectTaskRow, GlobalTaskTabCounts, GlobalTaskView, StatusFilter } from "@/lib/projects/global-task-filters";
 import {
   TASK_STATUS_LABEL,
   PRIORITY_LABEL,
@@ -14,19 +16,40 @@ import {
   scheduleLabel,
   isTaskOverdue,
   isTaskToday,
-  sortActiveTasks,
-  sortDoneTasks,
   type ProjectTaskRow,
 } from "@/lib/projects/project-task-ui";
 
-export type { ProjectTaskRow };
+function tasksHref(view: GlobalTaskView, assignee: string, status: StatusFilter): string {
+  const p = new URLSearchParams();
+  p.set("view", view);
+  if (assignee.trim()) p.set("assignee", assignee.trim());
+  if (status) p.set("status", status);
+  const q = p.toString();
+  return `/tasks?${q}`;
+}
 
-export function ProjectTasksSection({ projectId, initialTasks }: { projectId: string; initialTasks: ProjectTaskRow[] }) {
+type Props = {
+  tasks: GlobalProjectTaskRow[];
+  view: GlobalTaskView;
+  tabCounts: GlobalTaskTabCounts;
+  assignee: string;
+  status: StatusFilter;
+};
+
+const TABS: { id: GlobalTaskView; label: string; countKey: keyof GlobalTaskTabCounts }[] = [
+  { id: "active", label: "Wszystkie aktywne", countKey: "active" },
+  { id: "overdue", label: "Zaległe", countKey: "overdue" },
+  { id: "today", label: "Dzisiaj", countKey: "today" },
+  { id: "week", label: "Ten tydzień", countKey: "week" },
+  { id: "done", label: "Wykonane", countKey: "done" },
+];
+
+export function GlobalTasksClient({ tasks, view, tabCounts, assignee, status }: Props) {
   const router = useRouter();
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
-  const [editing, setEditing] = useState<ProjectTaskRow | null>(null);
+  const [editing, setEditing] = useState<GlobalProjectTaskRow | null>(null);
   const [formTitle, setFormTitle] = useState("");
   const [formDescription, setFormDescription] = useState("");
   const [formPlannedStart, setFormPlannedStart] = useState("");
@@ -37,36 +60,11 @@ export function ProjectTasksSection({ projectId, initialTasks }: { projectId: st
   const [formIsDone, setFormIsDone] = useState(false);
   const [saving, setSaving] = useState(false);
 
-  const { activeTasks, doneTasks, todoCount, overdueCount, doneCount } = useMemo(() => {
-    const active = initialTasks.filter((t) => !t.isDone);
-    const done = initialTasks.filter((t) => t.isDone);
-    const overdue = active.filter((t) => isTaskOverdue(t)).length;
-    const sortedActive = [...active].sort(sortActiveTasks);
-    const sortedDone = [...done].sort(sortDoneTasks);
-    return {
-      activeTasks: sortedActive,
-      doneTasks: sortedDone,
-      todoCount: active.length,
-      overdueCount: overdue,
-      doneCount: done.length,
-    };
-  }, [initialTasks]);
-
-  function openNew() {
-    setEditing(null);
-    setFormTitle("");
-    setFormDescription("");
-    setFormPlannedStart("");
-    setFormPlannedEnd("");
-    setFormAssignee("");
-    setFormStatus("TODO");
-    setFormPriority("");
-    setFormIsDone(false);
-    setError(null);
-    setModalOpen(true);
+  async function refresh() {
+    router.refresh();
   }
 
-  function openEdit(t: ProjectTaskRow) {
+  function openEdit(t: GlobalProjectTaskRow) {
     setEditing(t);
     setFormTitle(t.title);
     setFormDescription(t.description ?? "");
@@ -75,9 +73,7 @@ export function ProjectTasksSection({ projectId, initialTasks }: { projectId: st
     setFormAssignee(t.assigneeName ?? "");
     const st = t.status as "TODO" | "IN_PROGRESS" | "DONE";
     setFormStatus(st === "IN_PROGRESS" || st === "DONE" ? st : "TODO");
-    setFormPriority(
-      t.priority === "LOW" || t.priority === "NORMAL" || t.priority === "HIGH" ? t.priority : "",
-    );
+    setFormPriority(t.priority === "LOW" || t.priority === "NORMAL" || t.priority === "HIGH" ? t.priority : "");
     setFormIsDone(t.isDone);
     setError(null);
     setModalOpen(true);
@@ -88,10 +84,6 @@ export function ProjectTasksSection({ projectId, initialTasks }: { projectId: st
     setEditing(null);
   }
 
-  async function refresh() {
-    router.refresh();
-  }
-
   function reconcileStatusForSave(): "TODO" | "IN_PROGRESS" | "DONE" {
     if (formIsDone) return "DONE";
     if (formStatus === "DONE") return "TODO";
@@ -100,6 +92,7 @@ export function ProjectTasksSection({ projectId, initialTasks }: { projectId: st
 
   async function saveTask(e: React.FormEvent) {
     e.preventDefault();
+    if (!editing) return;
     const title = formTitle.trim();
     if (!title) {
       setError("Podaj tytuł zadania.");
@@ -107,50 +100,27 @@ export function ProjectTasksSection({ projectId, initialTasks }: { projectId: st
     }
     setSaving(true);
     setError(null);
-    const status = reconcileStatusForSave();
+    const statusSave = reconcileStatusForSave();
     const body = {
       title,
       description: formDescription.trim() || null,
       assigneeName: formAssignee.trim() || null,
       plannedStartDate: dateInputToIso(formPlannedStart),
       plannedEndDate: dateInputToIso(formPlannedEnd),
-      status,
+      status: statusSave,
       priority: formPriority === "" ? null : formPriority,
       isDone: formIsDone,
     };
     try {
-      if (editing) {
-        const res = await fetch(`/api/projects/${projectId}/tasks/${editing.id}`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(body),
-        });
-        const j = await res.json();
-        if (!res.ok) {
-          setError(readApiErrorBody(j));
-          return;
-        }
-      } else {
-        const payload: Record<string, unknown> = {
-          title: body.title,
-          description: body.description,
-          assigneeName: body.assigneeName,
-          plannedStartDate: body.plannedStartDate,
-          plannedEndDate: body.plannedEndDate,
-          status: body.status,
-          priority: body.priority,
-        };
-        if (formIsDone) payload.isDone = true;
-        const res = await fetch(`/api/projects/${projectId}/tasks`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload),
-        });
-        const j = await res.json();
-        if (!res.ok) {
-          setError(readApiErrorBody(j));
-          return;
-        }
+      const res = await fetch(`/api/projects/${editing.projectId}/tasks/${editing.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const j = await res.json();
+      if (!res.ok) {
+        setError(readApiErrorBody(j));
+        return;
       }
       closeModal();
       await refresh();
@@ -161,11 +131,11 @@ export function ProjectTasksSection({ projectId, initialTasks }: { projectId: st
     }
   }
 
-  async function toggleDone(t: ProjectTaskRow, done: boolean) {
+  async function toggleDone(t: GlobalProjectTaskRow, done: boolean) {
     setBusyId(t.id);
     setError(null);
     try {
-      const res = await fetch(`/api/projects/${projectId}/tasks/${t.id}`, {
+      const res = await fetch(`/api/projects/${t.projectId}/tasks/${t.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ isDone: done }),
@@ -183,12 +153,12 @@ export function ProjectTasksSection({ projectId, initialTasks }: { projectId: st
     }
   }
 
-  async function deleteTask(t: ProjectTaskRow) {
+  async function deleteTask(t: GlobalProjectTaskRow) {
     if (!confirm(`Usunąć zadanie „${t.title}”?`)) return;
     setBusyId(t.id);
     setError(null);
     try {
-      const res = await fetch(`/api/projects/${projectId}/tasks/${t.id}`, { method: "DELETE" });
+      const res = await fetch(`/api/projects/${t.projectId}/tasks/${t.id}`, { method: "DELETE" });
       if (!res.ok) {
         const j = await res.json();
         setError(readApiErrorBody(j));
@@ -202,10 +172,12 @@ export function ProjectTasksSection({ projectId, initialTasks }: { projectId: st
     }
   }
 
-  function renderTaskRow(t: ProjectTaskRow, tone: "active" | "done") {
+  function renderRow(t: GlobalProjectTaskRow) {
+    const row: ProjectTaskRow = t;
     const busy = busyId === t.id;
-    const overdue = tone === "active" && isTaskOverdue(t);
-    const today = tone === "active" && isTaskToday(t);
+    const tone = t.isDone ? "done" : "active";
+    const overdue = tone === "active" && isTaskOverdue(row);
+    const today = tone === "active" && isTaskToday(row);
     const hasSchedule = !!(t.plannedStartDate || t.plannedEndDate);
 
     const accentClass =
@@ -239,21 +211,25 @@ export function ProjectTasksSection({ projectId, initialTasks }: { projectId: st
                 >
                   {t.title}
                 </span>
+                <Link
+                  href={`/projects/${t.projectId}`}
+                  className="shrink-0 rounded-md bg-zinc-200/80 px-1.5 py-0.5 text-xs font-medium text-zinc-800 hover:bg-zinc-300/90 dark:bg-zinc-800 dark:text-zinc-200 dark:hover:bg-zinc-700"
+                >
+                  {t.projectName}
+                </Link>
                 <Badge variant={statusBadgeVariant(t.status, t.isDone)}>
                   {TASK_STATUS_LABEL[t.status] ?? t.status}
                 </Badge>
-                {tone === "active" && overdue ? (
-                  <Badge variant="danger">Zaległe</Badge>
-                ) : null}
-                {tone === "active" && today ? (
-                  <Badge variant="warning">Dzisiaj</Badge>
-                ) : null}
+                {tone === "active" && overdue ? <Badge variant="danger">Zaległe</Badge> : null}
+                {tone === "active" && today ? <Badge variant="warning">Dzisiaj</Badge> : null}
                 {t.priority ? (
                   <Badge variant={priorityBadgeVariant(t.priority)}>{PRIORITY_LABEL[t.priority] ?? t.priority}</Badge>
                 ) : null}
               </div>
               {t.description ? (
-                <p className={`mt-1 text-sm whitespace-pre-wrap ${tone === "done" ? "text-zinc-500 dark:text-zinc-500" : "text-zinc-600 dark:text-zinc-400"}`}>
+                <p
+                  className={`mt-1 text-sm whitespace-pre-wrap ${tone === "done" ? "text-zinc-500 dark:text-zinc-500" : "text-zinc-600 dark:text-zinc-400"}`}
+                >
                   {t.description}
                 </p>
               ) : null}
@@ -270,9 +246,9 @@ export function ProjectTasksSection({ projectId, initialTasks }: { projectId: st
                   }
                 >
                   {hasSchedule ? (
-                    <span className="tabular-nums text-zinc-800 dark:text-zinc-200">{scheduleLabel(t)}</span>
+                    <span className="tabular-nums text-zinc-800 dark:text-zinc-200">{scheduleLabel(row)}</span>
                   ) : (
-                    scheduleLabel(t)
+                    scheduleLabel(row)
                   )}
                 </span>
                 {t.assigneeName ? (
@@ -310,62 +286,69 @@ export function ProjectTasksSection({ projectId, initialTasks }: { projectId: st
   }
 
   return (
-    <section className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-950">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h2 className="text-base font-semibold text-zinc-900 dark:text-zinc-50">Zadania</h2>
-          <p className="mt-0.5 text-xs text-zinc-500">Operacyjna lista prac przy projekcie — bez wpływu na cashflow.</p>
-          {initialTasks.length > 0 ? (
-            <p className="mt-2 text-sm tabular-nums text-zinc-700 dark:text-zinc-300">
-              <span className="font-medium text-zinc-900 dark:text-zinc-100">{todoCount}</span> do zrobienia
-              <span className="text-zinc-400"> · </span>
-              <span className={overdueCount > 0 ? "font-medium text-red-600 dark:text-red-400" : ""}>{overdueCount}</span>{" "}
-              zaległe
-              <span className="text-zinc-400"> · </span>
-              <span className="font-medium text-zinc-900 dark:text-zinc-100">{doneCount}</span> wykonane
-            </p>
-          ) : null}
-        </div>
-        <Button type="button" onClick={openNew} disabled={busyId !== null}>
-          Dodaj zadanie
-        </Button>
+    <div className="space-y-6">
+      <div>
+        <h1 className="text-xl font-semibold text-zinc-900 dark:text-zinc-50">Zadania</h1>
+        <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
+          Wszystkie zadania projektów — ta sama logika co na karcie projektu.
+        </p>
       </div>
 
-      {error ? (
-        <div className="mt-3">
-          <Alert variant="error">{error}</Alert>
+      {error ? <Alert variant="error">{error}</Alert> : null}
+
+      <div className="flex flex-wrap gap-2 border-b border-zinc-200 pb-3 dark:border-zinc-800">
+        {TABS.map((tab) => {
+          const href = tasksHref(tab.id, assignee, status);
+          const active = view === tab.id;
+          const n = tabCounts[tab.countKey];
+          return (
+            <Link
+              key={tab.id}
+              href={href}
+              className={
+                active
+                  ? "rounded-lg bg-zinc-900 px-3 py-1.5 text-sm font-medium text-white dark:bg-zinc-100 dark:text-zinc-900"
+                  : "rounded-lg px-3 py-1.5 text-sm text-zinc-600 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-900"
+              }
+            >
+              {tab.label}
+              <span className="ml-1 tabular-nums opacity-80">({n})</span>
+            </Link>
+          );
+        })}
+      </div>
+
+      <form method="get" action="/tasks" className="flex flex-wrap items-end gap-3 rounded-lg border border-zinc-200 bg-white p-3 dark:border-zinc-800 dark:bg-zinc-950">
+        <input type="hidden" name="view" value={view} />
+        <div className="min-w-[200px] flex-1">
+          <Field label="Odpowiedzialny (zawiera)">
+            <Input type="search" name="assignee" defaultValue={assignee} placeholder="np. Jan" />
+          </Field>
         </div>
-      ) : null}
+        <div className="w-full sm:w-44">
+          <Field label="Status">
+            <Select name="status" defaultValue={status}>
+              <option value="">Wszystkie</option>
+              <option value="TODO">{TASK_STATUS_LABEL.TODO}</option>
+              <option value="IN_PROGRESS">{TASK_STATUS_LABEL.IN_PROGRESS}</option>
+              <option value="DONE">{TASK_STATUS_LABEL.DONE}</option>
+            </Select>
+          </Field>
+        </div>
+        <Button type="submit" variant="secondary" className="shrink-0">
+          Zastosuj
+        </Button>
+      </form>
 
-      {initialTasks.length === 0 ? (
-        <p className="mt-6 py-6 text-center text-sm text-zinc-500">Brak zadań. Dodaj pierwsze zadanie projektu.</p>
+      {tasks.length === 0 ? (
+        <p className="rounded-lg border border-dashed border-zinc-200 px-4 py-8 text-center text-sm text-zinc-500 dark:border-zinc-700">
+          Brak zadań w tym widoku.
+        </p>
       ) : (
-        <>
-          <div className="mt-4">
-            <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
-              Aktywne
-            </h3>
-            {activeTasks.length === 0 ? (
-              <p className="rounded-lg border border-dashed border-zinc-200 px-3 py-4 text-center text-sm text-zinc-500 dark:border-zinc-700">
-                Wszystkie zadania wykonane.
-              </p>
-            ) : (
-              <ul className="flex flex-col gap-2">{activeTasks.map((t) => renderTaskRow(t, "active"))}</ul>
-            )}
-          </div>
-
-          {doneTasks.length > 0 ? (
-            <div className="mt-6 opacity-[0.72] transition-opacity hover:opacity-100">
-              <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
-                Wykonane
-              </h3>
-              <ul className="flex flex-col gap-2">{doneTasks.map((t) => renderTaskRow(t, "done"))}</ul>
-            </div>
-          ) : null}
-        </>
+        <ul className="flex flex-col gap-2">{tasks.map((t) => renderRow(t))}</ul>
       )}
 
-      <Modal open={modalOpen} title={editing ? "Edycja zadania" : "Nowe zadanie"} onClose={() => !saving && closeModal()} size="lg">
+      <Modal open={modalOpen} title="Edycja zadania" onClose={() => !saving && closeModal()} size="lg">
         <form
           onSubmit={(e) => {
             e.preventDefault();
@@ -374,6 +357,14 @@ export function ProjectTasksSection({ projectId, initialTasks }: { projectId: st
           className="space-y-3"
         >
           {error && modalOpen ? <Alert variant="error">{error}</Alert> : null}
+          {editing ? (
+            <p className="text-sm text-zinc-600 dark:text-zinc-400">
+              Projekt:{" "}
+              <Link href={`/projects/${editing.projectId}`} className="font-medium text-zinc-900 underline dark:text-zinc-100">
+                {editing.projectName}
+              </Link>
+            </p>
+          ) : null}
           <Field label="Tytuł">
             <Input value={formTitle} onChange={(e) => setFormTitle(e.target.value)} disabled={saving} required />
           </Field>
@@ -433,6 +424,6 @@ export function ProjectTasksSection({ projectId, initialTasks }: { projectId: st
           </div>
         </form>
       </Modal>
-    </section>
+    </div>
   );
 }

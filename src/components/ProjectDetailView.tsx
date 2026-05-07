@@ -14,7 +14,8 @@ import {
 } from "@/lib/project-quick-links";
 import { ContractorNameLink } from "@/components/ContractorNameLink";
 import { ProjectIncomeInvoiceModalButton } from "@/components/ProjectIncomeInvoiceModalButton";
-import { ProjectTasksSection, type ProjectTaskRow } from "@/components/ProjectTasksSection";
+import { ProjectTasksSection } from "@/components/ProjectTasksSection";
+import type { ProjectTaskRow } from "@/lib/projects/project-task-ui";
 
 function moneyFromDecimal(v: Decimal | null | undefined): string {
   if (v == null) return "—";

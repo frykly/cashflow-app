@@ -19,7 +19,7 @@ export function compareProjectTasksBySchedule(a: ProjectTask, b: ProjectTask): n
 }
 
 /** Niewykonane pierwsze, potem jak `compareProjectTasksBySchedule`. */
-export function sortProjectTasksForList(tasks: ProjectTask[]): ProjectTask[] {
+export function sortProjectTasksForList<T extends ProjectTask>(tasks: T[]): T[] {
   return [...tasks].sort((a, b) => {
     if (a.isDone !== b.isDone) return a.isDone ? 1 : -1;
     return compareProjectTasksBySchedule(a, b);
