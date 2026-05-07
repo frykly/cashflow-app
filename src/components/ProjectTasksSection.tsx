@@ -97,13 +97,10 @@ function isTaskOverdue(t: ProjectTaskRow): boolean {
 function isTaskToday(t: ProjectTaskRow): boolean {
   if (t.isDone) return false;
   const t0 = todayStartMs();
-  if (t.plannedEndDate) {
-    const pe = plannedDayStartMs(t.plannedEndDate);
-    if (pe !== null && pe === t0) return true;
-  }
-  if (!t.plannedEndDate && t.plannedStartDate) {
-    const ps = plannedDayStartMs(t.plannedStartDate);
-    if (ps !== null && ps === t0) return true;
+  for (const iso of [t.plannedStartDate, t.plannedEndDate]) {
+    if (!iso) continue;
+    const p = plannedDayStartMs(iso);
+    if (p !== null && p === t0) return true;
   }
   return false;
 }
