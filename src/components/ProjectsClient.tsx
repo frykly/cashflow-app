@@ -5,6 +5,7 @@ import { useRouter, usePathname } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ContractorNameLink } from "@/components/ContractorNameLink";
 import { NameAutocomplete } from "@/components/NameAutocomplete";
+import { ProjectStatusBadgeSelect } from "@/components/ProjectStatusBadgeSelect";
 import { Alert, Badge, Button, Field, Input, Modal, Select, Spinner, Textarea } from "@/components/ui";
 import { readApiErrorBody } from "@/lib/api-client";
 import { decToNumber } from "@/lib/cashflow/money";
@@ -175,7 +176,7 @@ export function ProjectsClient({ initialEditId = null }: { initialEditId?: strin
   const [lifeOpts, setLifeOpts] = useState<StatusOpt[]>([]);
   const [settlementOpts, setSettlementOpts] = useState<StatusOpt[]>([]);
   const [missingOpts, setMissingOpts] = useState<StatusOpt[]>([]);
-  const [inlinePick, setInlinePick] = useState<{ projectId: string; field: "lifecycle" | "settlement" } | null>(null);
+  const [statusDropdownKey, setStatusDropdownKey] = useState<string | null>(null);
   const [statusPatchSavingKey, setStatusPatchSavingKey] = useState<string | null>(null);
   const [statusPatchError, setStatusPatchError] = useState<string | null>(null);
   const statusPatchInFlightRef = useRef(false);
@@ -345,7 +346,7 @@ export function ProjectsClient({ initialEditId = null }: { initialEditId?: strin
     const prevRaw = field === "lifecycle" ? row?.lifecycleStatus : row?.settlementStatus;
     const prevNorm = prevRaw?.trim() ? prevRaw.trim() : null;
     if (slug === prevNorm) {
-      setInlinePick(null);
+      setStatusDropdownKey(null);
       return;
     }
     const key = `${projectId}:${field}`;
@@ -362,25 +363,23 @@ export function ProjectsClient({ initialEditId = null }: { initialEditId?: strin
       const j = await res.json();
       if (!res.ok) {
         setStatusPatchError(readApiErrorBody(j));
-        setInlinePick(null);
+        setStatusDropdownKey(null);
         return;
       }
-      setInlinePick(null);
+      setStatusDropdownKey(null);
       await load();
     } catch {
       setStatusPatchError("Błąd sieci");
-      setInlinePick(null);
+      setStatusDropdownKey(null);
     } finally {
       statusPatchInFlightRef.current = false;
       setStatusPatchSavingKey(null);
     }
   }
 
-  function statusPickerBlurClose(projectId: string, field: "lifecycle" | "settlement") {
-    window.setTimeout(() => {
-      if (statusPatchInFlightRef.current) return;
-      setInlinePick((p) => (p?.projectId === projectId && p.field === field ? null : p));
-    }, 150);
+  function onStatusMenuOpenChange(key: string | null) {
+    if (key) setStatusPatchError(null);
+    setStatusDropdownKey(key);
   }
 
   async function remove(id: string) {
@@ -540,10 +539,10 @@ export function ProjectsClient({ initialEditId = null }: { initialEditId?: strin
               rows.map((r) => {
                 const lifeLabel = projectLifecycleDisplay(r.lifecycleStatus, lifeMap);
                 const setLabel = projectSettlementDisplay(r.settlementStatus, settlementMap);
-                const lifeOpen = inlinePick?.projectId === r.id && inlinePick.field === "lifecycle";
-                const setOpen = inlinePick?.projectId === r.id && inlinePick.field === "settlement";
                 const lifeSaving = statusPatchSavingKey === `${r.id}:lifecycle`;
                 const setSaving = statusPatchSavingKey === `${r.id}:settlement`;
+                const lifeOptions = [{ value: "", label: "(brak)" }, ...statusSelectOptions(r.lifecycleStatus, lifeOpts)];
+                const settlementOptions = [{ value: "", label: "(brak)" }, ...statusSelectOptions(r.settlementStatus, settlementOpts)];
                 return (
                   <tr key={r.id} className="bg-white align-top dark:bg-zinc-950">
                     <td className="min-w-0 px-2 py-2.5 pl-3">
@@ -565,37 +564,18 @@ export function ProjectsClient({ initialEditId = null }: { initialEditId?: strin
                     </td>
                     <td className="min-w-0 px-1 py-2.5" title={lifeLabel}>
                       <div className="flex flex-col gap-1">
-                        {lifeOpen ? (
-                          <Select
-                            autoFocus
-                            disabled={lifeSaving}
-                            className="!text-xs"
-                            value={(r.lifecycleStatus ?? "").trim()}
-                            onChange={(e) => void patchProjectStatusField(r.id, "lifecycle", e.target.value)}
-                            onBlur={() => statusPickerBlurClose(r.id, "lifecycle")}
-                          >
-                            <option value="">(brak)</option>
-                            {statusSelectOptions(r.lifecycleStatus, lifeOpts).map((o) => (
-                              <option key={o.value} value={o.value}>
-                                {o.label}
-                              </option>
-                            ))}
-                          </Select>
-                        ) : (
-                          <button
-                            type="button"
-                            disabled={statusPatchSavingKey !== null}
-                            className="max-w-full rounded-md text-left transition hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-400 disabled:opacity-50 dark:focus-visible:ring-zinc-600"
-                            onClick={() => {
-                              setStatusPatchError(null);
-                              setInlinePick({ projectId: r.id, field: "lifecycle" });
-                            }}
-                          >
-                            <Badge variant={lifecycleBadgeVariant(r.lifecycleStatus)}>
-                              <span className="line-clamp-2 text-[11px] leading-snug break-words">{lifeLabel}</span>
-                            </Badge>
-                          </button>
-                        )}
+                        <ProjectStatusBadgeSelect
+                          menuKey={`${r.id}:lifecycle`}
+                          openKey={statusDropdownKey}
+                          onOpenKeyChange={onStatusMenuOpenChange}
+                          variant={lifecycleBadgeVariant(r.lifecycleStatus)}
+                          displayLabel={lifeLabel}
+                          valueSlug={r.lifecycleStatus}
+                          options={lifeOptions}
+                          saving={lifeSaving}
+                          globalPatchBusy={statusPatchSavingKey !== null}
+                          onPick={(slug) => void patchProjectStatusField(r.id, "lifecycle", slug)}
+                        />
                         <div className="flex flex-wrap gap-0.5 text-[9px] leading-tight">
                           {(r.missingItems ?? []).map((mi) => (
                             <Badge key={mi.id} variant="warning">
@@ -606,37 +586,18 @@ export function ProjectsClient({ initialEditId = null }: { initialEditId?: strin
                       </div>
                     </td>
                     <td className="min-w-0 px-1 py-2.5" title={setLabel}>
-                      {setOpen ? (
-                        <Select
-                          autoFocus
-                          disabled={setSaving}
-                          className="!text-xs"
-                          value={(r.settlementStatus ?? "").trim()}
-                          onChange={(e) => void patchProjectStatusField(r.id, "settlement", e.target.value)}
-                          onBlur={() => statusPickerBlurClose(r.id, "settlement")}
-                        >
-                          <option value="">(brak)</option>
-                          {statusSelectOptions(r.settlementStatus, settlementOpts).map((o) => (
-                            <option key={o.value} value={o.value}>
-                              {o.label}
-                            </option>
-                          ))}
-                        </Select>
-                      ) : (
-                        <button
-                          type="button"
-                          disabled={statusPatchSavingKey !== null}
-                          className="max-w-full rounded-md text-left transition hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-400 disabled:opacity-50 dark:focus-visible:ring-zinc-600"
-                          onClick={() => {
-                            setStatusPatchError(null);
-                            setInlinePick({ projectId: r.id, field: "settlement" });
-                          }}
-                        >
-                          <Badge variant={settlementBadgeVariant(r.settlementStatus)}>
-                            <span className="line-clamp-2 text-[11px] leading-snug break-words">{setLabel}</span>
-                          </Badge>
-                        </button>
-                      )}
+                      <ProjectStatusBadgeSelect
+                        menuKey={`${r.id}:settlement`}
+                        openKey={statusDropdownKey}
+                        onOpenKeyChange={onStatusMenuOpenChange}
+                        variant={settlementBadgeVariant(r.settlementStatus)}
+                        displayLabel={setLabel}
+                        valueSlug={r.settlementStatus}
+                        options={settlementOptions}
+                        saving={setSaving}
+                        globalPatchBusy={statusPatchSavingKey !== null}
+                        onPick={(slug) => void patchProjectStatusField(r.id, "settlement", slug)}
+                      />
                     </td>
                     <td className="px-2 py-2.5 text-right text-sm tabular-nums text-zinc-800 dark:text-zinc-200">
                       {r.actualResultNet == null ? "—" : formatMoney(r.actualResultNet)}
