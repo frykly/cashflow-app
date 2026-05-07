@@ -23,7 +23,8 @@ export type ProjectTaskRow = {
   id: string;
   title: string;
   description: string | null;
-  plannedDate: string | null;
+  plannedStartDate: string | null;
+  plannedEndDate: string | null;
   assigneeName: string | null;
   status: string;
   isDone: boolean;
@@ -63,28 +64,55 @@ function todayStartMs(): number {
   return localDayStartMs(new Date());
 }
 
+function sameLocalDayIso(a: string | null | undefined, b: string | null | undefined): boolean {
+  if (!a || !b) return false;
+  const da = plannedDayStartMs(a);
+  const db = plannedDayStartMs(b);
+  return da !== null && db !== null && da === db;
+}
+
+function scheduleLabel(t: ProjectTaskRow): string {
+  const s = t.plannedStartDate;
+  const e = t.plannedEndDate;
+  if (s && e && sameLocalDayIso(s, e)) return formatDate(s);
+  if (s && e) return `${formatDate(s)} → ${formatDate(e)}`;
+  if (e) return `Termin: ${formatDate(e)}`;
+  if (s) return `Start: ${formatDate(s)}`;
+  return "Bez terminu";
+}
+
+function dayKeyFromIso(iso: string | null | undefined): number {
+  if (!iso) return Number.MAX_SAFE_INTEGER;
+  const p = plannedDayStartMs(iso);
+  return p === null ? Number.MAX_SAFE_INTEGER : p;
+}
+
 function isTaskOverdue(t: ProjectTaskRow): boolean {
-  if (t.isDone || !t.plannedDate) return false;
-  const p = plannedDayStartMs(t.plannedDate);
+  if (t.isDone || !t.plannedEndDate) return false;
+  const p = plannedDayStartMs(t.plannedEndDate);
   if (p === null) return false;
   return p < todayStartMs();
 }
 
 function isTaskToday(t: ProjectTaskRow): boolean {
-  if (t.isDone || !t.plannedDate) return false;
-  const p = plannedDayStartMs(t.plannedDate);
-  return p !== null && p === todayStartMs();
+  if (t.isDone) return false;
+  const t0 = todayStartMs();
+  if (t.plannedEndDate) {
+    const pe = plannedDayStartMs(t.plannedEndDate);
+    if (pe !== null && pe === t0) return true;
+  }
+  if (!t.plannedEndDate && t.plannedStartDate) {
+    const ps = plannedDayStartMs(t.plannedStartDate);
+    if (ps !== null && ps === t0) return true;
+  }
+  return false;
 }
 
 function sortActiveTasks(a: ProjectTaskRow, b: ProjectTaskRow): number {
-  const aHas = !!a.plannedDate;
-  const bHas = !!b.plannedDate;
-  if (aHas && bHas) {
-    const ta = plannedDayStartMs(a.plannedDate)!;
-    const tb = plannedDayStartMs(b.plannedDate)!;
-    if (ta !== tb) return ta - tb;
-  } else if (aHas && !bHas) return -1;
-  else if (!aHas && bHas) return 1;
+  const s = dayKeyFromIso(a.plannedStartDate) - dayKeyFromIso(b.plannedStartDate);
+  if (s !== 0) return s;
+  const e = dayKeyFromIso(a.plannedEndDate) - dayKeyFromIso(b.plannedEndDate);
+  if (e !== 0) return e;
   return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
 }
 
@@ -103,7 +131,8 @@ export function ProjectTasksSection({ projectId, initialTasks }: { projectId: st
   const [editing, setEditing] = useState<ProjectTaskRow | null>(null);
   const [formTitle, setFormTitle] = useState("");
   const [formDescription, setFormDescription] = useState("");
-  const [formPlanned, setFormPlanned] = useState("");
+  const [formPlannedStart, setFormPlannedStart] = useState("");
+  const [formPlannedEnd, setFormPlannedEnd] = useState("");
   const [formAssignee, setFormAssignee] = useState("");
   const [formStatus, setFormStatus] = useState<"TODO" | "IN_PROGRESS" | "DONE">("TODO");
   const [formPriority, setFormPriority] = useState<"" | "LOW" | "NORMAL" | "HIGH">("");
@@ -129,7 +158,8 @@ export function ProjectTasksSection({ projectId, initialTasks }: { projectId: st
     setEditing(null);
     setFormTitle("");
     setFormDescription("");
-    setFormPlanned("");
+    setFormPlannedStart("");
+    setFormPlannedEnd("");
     setFormAssignee("");
     setFormStatus("TODO");
     setFormPriority("");
@@ -142,7 +172,8 @@ export function ProjectTasksSection({ projectId, initialTasks }: { projectId: st
     setEditing(t);
     setFormTitle(t.title);
     setFormDescription(t.description ?? "");
-    setFormPlanned(isoToDateInputValue(t.plannedDate));
+    setFormPlannedStart(isoToDateInputValue(t.plannedStartDate));
+    setFormPlannedEnd(isoToDateInputValue(t.plannedEndDate));
     setFormAssignee(t.assigneeName ?? "");
     const st = t.status as "TODO" | "IN_PROGRESS" | "DONE";
     setFormStatus(st === "IN_PROGRESS" || st === "DONE" ? st : "TODO");
@@ -183,7 +214,8 @@ export function ProjectTasksSection({ projectId, initialTasks }: { projectId: st
       title,
       description: formDescription.trim() || null,
       assigneeName: formAssignee.trim() || null,
-      plannedDate: dateInputToIso(formPlanned),
+      plannedStartDate: dateInputToIso(formPlannedStart),
+      plannedEndDate: dateInputToIso(formPlannedEnd),
       status,
       priority: formPriority === "" ? null : formPriority,
       isDone: formIsDone,
@@ -205,7 +237,8 @@ export function ProjectTasksSection({ projectId, initialTasks }: { projectId: st
           title: body.title,
           description: body.description,
           assigneeName: body.assigneeName,
-          plannedDate: body.plannedDate,
+          plannedStartDate: body.plannedStartDate,
+          plannedEndDate: body.plannedEndDate,
           status: body.status,
           priority: body.priority,
         };
@@ -275,6 +308,7 @@ export function ProjectTasksSection({ projectId, initialTasks }: { projectId: st
     const busy = busyId === t.id;
     const overdue = tone === "active" && isTaskOverdue(t);
     const today = tone === "active" && isTaskToday(t);
+    const hasSchedule = !!(t.plannedStartDate || t.plannedEndDate);
 
     const accentClass =
       tone === "done"
@@ -326,22 +360,23 @@ export function ProjectTasksSection({ projectId, initialTasks }: { projectId: st
                 </p>
               ) : null}
               <div className="mt-1.5 flex flex-wrap gap-x-4 gap-y-0.5 text-xs text-zinc-500 dark:text-zinc-400">
-                {t.plannedDate ? (
-                  <span
-                    className={
-                      overdue
+                <span
+                  className={
+                    !hasSchedule
+                      ? "text-zinc-400 dark:text-zinc-500"
+                      : overdue
                         ? "font-medium text-red-700 dark:text-red-300"
                         : today
                           ? "font-medium text-amber-800 dark:text-amber-200"
                           : undefined
-                    }
-                  >
-                    Plan:{" "}
-                    <span className="tabular-nums text-zinc-800 dark:text-zinc-200">{formatDate(t.plannedDate)}</span>
-                  </span>
-                ) : (
-                  <span className="text-zinc-400">Bez daty planu</span>
-                )}
+                  }
+                >
+                  {hasSchedule ? (
+                    <span className="tabular-nums text-zinc-800 dark:text-zinc-200">{scheduleLabel(t)}</span>
+                  ) : (
+                    scheduleLabel(t)
+                  )}
+                </span>
                 {t.assigneeName ? (
                   <span>
                     <span className="text-zinc-400">Odpowiedzialny:</span>{" "}
@@ -448,18 +483,21 @@ export function ProjectTasksSection({ projectId, initialTasks }: { projectId: st
             <Textarea rows={3} value={formDescription} onChange={(e) => setFormDescription(e.target.value)} disabled={saving} />
           </Field>
           <div className="grid gap-3 sm:grid-cols-2">
-            <Field label="Planowana data">
-              <Input type="date" value={formPlanned} onChange={(e) => setFormPlanned(e.target.value)} disabled={saving} />
+            <Field label="Data rozpoczęcia (opcjonalnie)">
+              <Input type="date" value={formPlannedStart} onChange={(e) => setFormPlannedStart(e.target.value)} disabled={saving} />
             </Field>
-            <Field label="Osoba odpowiedzialna">
-              <Input
-                value={formAssignee}
-                onChange={(e) => setFormAssignee(e.target.value)}
-                disabled={saving}
-                placeholder="np. Jan Kowalski"
-              />
+            <Field label="Termin / data zakończenia (opcjonalnie)">
+              <Input type="date" value={formPlannedEnd} onChange={(e) => setFormPlannedEnd(e.target.value)} disabled={saving} />
             </Field>
           </div>
+          <Field label="Osoba odpowiedzialna">
+            <Input
+              value={formAssignee}
+              onChange={(e) => setFormAssignee(e.target.value)}
+              disabled={saving}
+              placeholder="np. Jan Kowalski"
+            />
+          </Field>
           <div className="grid gap-3 sm:grid-cols-2">
             <Field label="Status">
               <Select value={formStatus} onChange={(e) => setFormStatus(e.target.value as typeof formStatus)} disabled={saving || formIsDone}>

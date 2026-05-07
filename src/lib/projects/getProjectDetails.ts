@@ -9,6 +9,7 @@ import {
   incomeNetRemainingForProject,
 } from "@/lib/projects/project-balance";
 import { projectLifecycleDisplay, projectSettlementDisplay } from "@/lib/project-status-labels";
+import { sortProjectTasksForList } from "@/lib/projects/project-task-sort";
 
 const LIST_TAKE = 250;
 
@@ -78,7 +79,7 @@ export async function getProjectDetails(projectId: string): Promise<ProjectDetai
   const project = await prisma.project.findUnique({ where: { id: projectId } });
   if (!project) return null;
 
-  const [lifeOpts, setOpts, missingItems, tasks] = await Promise.all([
+  const [lifeOpts, setOpts, missingItems, tasksRaw] = await Promise.all([
     prisma.projectLifecycleStatusOption.findMany({ select: { slug: true, name: true } }),
     prisma.projectSettlementStatusOption.findMany({ select: { slug: true, name: true } }),
     prisma.projectMissingItem.findMany({
@@ -88,9 +89,9 @@ export async function getProjectDetails(projectId: string): Promise<ProjectDetai
     }),
     prisma.projectTask.findMany({
       where: { projectId },
-      orderBy: [{ isDone: "asc" }, { plannedDate: "asc" }, { createdAt: "asc" }],
     }),
   ]);
+  const tasks = sortProjectTasksForList(tasksRaw);
   const lifeMap = new Map(lifeOpts.map((o) => [o.slug, o.name]));
   const setMap = new Map(setOpts.map((o) => [o.slug, o.name]));
   const statusDisplay = {

@@ -63,21 +63,22 @@ model Project {
 
 /// Zadania operacyjne projektu (bez powiązania z cashflow / zdarzeniami planowanymi).
 model ProjectTask {
-  id            String    @id @default(cuid())
-  projectId     String
-  project       Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  title         String
-  description   String?
-  plannedDate   DateTime?
-  assigneeName  String?
+  id               String    @id @default(cuid())
+  projectId        String
+  project          Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  title            String
+  description      String?
+  plannedStartDate DateTime?
+  plannedEndDate   DateTime?
+  assigneeName     String?
   /// TODO | IN_PROGRESS | DONE
-  status        String    @default("TODO")
-  isDone        Boolean   @default(false)
-  doneAt        DateTime?
+  status           String    @default("TODO")
+  isDone           Boolean   @default(false)
+  doneAt           DateTime?
   /// LOW | NORMAL | HIGH
-  priority      String?
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
+  priority         String?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
 
   @@index([projectId])
 }

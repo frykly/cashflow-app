@@ -44,8 +44,11 @@ export async function PATCH(req: Request, ctx: Ctx) {
     if (data.title !== undefined) update.title = data.title.trim();
     if (data.description !== undefined) update.description = data.description;
     if (data.assigneeName !== undefined) update.assigneeName = data.assigneeName;
-    if (data.plannedDate !== undefined) {
-      update.plannedDate = data.plannedDate ? new Date(data.plannedDate) : null;
+    if (data.plannedStartDate !== undefined) {
+      update.plannedStartDate = data.plannedStartDate ? new Date(data.plannedStartDate) : null;
+    }
+    if (data.plannedEndDate !== undefined) {
+      update.plannedEndDate = data.plannedEndDate ? new Date(data.plannedEndDate) : null;
     }
     if (data.priority !== undefined) update.priority = data.priority;
 

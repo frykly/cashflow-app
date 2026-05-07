@@ -3,6 +3,7 @@ import { jsonData } from "@/lib/api/json-response";
 import { jsonError, zodErrorResponse } from "@/lib/api/errors";
 import { projectTaskCreateSchema } from "@/lib/validation/schemas";
 import { mergeTaskLifecycle } from "@/lib/projects/project-task-lifecycle";
+import { sortProjectTasksForList } from "@/lib/projects/project-task-sort";
 import { ZodError } from "zod";
 
 type Ctx = { params: Promise<{ id: string }> };
@@ -11,10 +12,10 @@ export async function GET(_req: Request, ctx: Ctx) {
   const { id } = await ctx.params;
   const project = await prisma.project.findUnique({ where: { id }, select: { id: true } });
   if (!project) return jsonError("Nie znaleziono", 404);
-  const tasks = await prisma.projectTask.findMany({
+  const tasksRaw = await prisma.projectTask.findMany({
     where: { projectId: id },
-    orderBy: [{ isDone: "asc" }, { plannedDate: "asc" }, { createdAt: "asc" }],
   });
+  const tasks = sortProjectTasksForList(tasksRaw);
   return jsonData(tasks);
 }
 
@@ -44,7 +45,8 @@ export async function POST(req: Request, ctx: Ctx) {
         title: data.title.trim(),
         description: data.description ?? null,
         assigneeName: data.assigneeName ?? null,
-        plannedDate: data.plannedDate ? new Date(data.plannedDate) : null,
+        plannedStartDate: data.plannedStartDate ? new Date(data.plannedStartDate) : null,
+        plannedEndDate: data.plannedEndDate ? new Date(data.plannedEndDate) : null,
         priority: data.priority ?? null,
         status: life.status,
         isDone: life.isDone,
