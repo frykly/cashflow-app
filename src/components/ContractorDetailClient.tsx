@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { Alert, Badge, Button, Spinner, Textarea } from "@/components/ui";
 import { readApiErrorBody } from "@/lib/api-client";
@@ -8,6 +9,7 @@ import { formatDate, formatMoney } from "@/lib/format";
 import type { ContractorDetailsResult } from "@/lib/contractors/getContractorDetails";
 import { costInvoiceListEditHref, incomeInvoiceListEditHref } from "@/lib/navigation/invoice-deep-links";
 import { bankTransactionStatusLabel } from "@/lib/bank-import/bank-transaction-status-label";
+import { NewIncomeInvoiceFormModal } from "@/components/IncomeInvoiceFormModal";
 
 function EmptyState({ children }: { children: React.ReactNode }) {
   return <p className="rounded-lg border border-dashed border-zinc-300 p-3 text-sm text-zinc-500 dark:border-zinc-700">{children}</p>;
@@ -74,10 +76,12 @@ function SummaryCard({
 }
 
 export function ContractorDetailClient({ data }: { data: ContractorDetailsResult }) {
+  const router = useRouter();
   const [notes, setNotes] = useState(data.contractor.notes ?? "");
   const [savedNotes, setSavedNotes] = useState(data.contractor.notes ?? "");
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState<{ type: "ok" | "err"; text: string } | null>(null);
+  const [incomeModalOpen, setIncomeModalOpen] = useState(false);
   const { contractor, related, summary } = data;
   const encodedName = encodeURIComponent(contractor.displayName);
 
@@ -122,7 +126,9 @@ export function ContractorDetailClient({ data }: { data: ContractorDetailsResult
             </p>
           </div>
           <div className="flex flex-wrap gap-2 lg:justify-end">
-            <LinkButton href={`/income-invoices?new=1&clientName=${encodedName}`}>+ Faktura przychodowa</LinkButton>
+            <Button type="button" variant="secondary" onClick={() => setIncomeModalOpen(true)}>
+              + Faktura przychodowa
+            </Button>
             <LinkButton href={`/cost-invoices?new=1&clientName=${encodedName}`}>+ Faktura kosztowa</LinkButton>
             <LinkButton href="/projects">+ Projekt</LinkButton>
             <LinkButton href="/contractors">Edytuj kontrahenta</LinkButton>
@@ -319,6 +325,16 @@ export function ContractorDetailClient({ data }: { data: ContractorDetailsResult
           </div>
         )}
       </section>
+
+      <NewIncomeInvoiceFormModal
+        open={incomeModalOpen}
+        contractorName={contractor.displayName}
+        onClose={() => setIncomeModalOpen(false)}
+        onSaved={() => {
+          setIncomeModalOpen(false);
+          router.refresh();
+        }}
+      />
     </div>
   );
 }
