@@ -1003,8 +1003,8 @@ export function IncomeInvoicesClient({ initialQueryString = "" }: { initialQuery
     }
   }
 
-  async function remove(id: string) {
-    if (!confirm("Usunąć tę fakturę?")) return;
+  async function remove(id: string, opts: { skipConfirm?: boolean } = {}) {
+    if (!opts.skipConfirm && !confirm("Usunąć tę fakturę?")) return;
     const res = await fetch(`/api/income-invoices/${id}`, { method: "DELETE" });
     if (!res.ok) {
       const j = await res.json();
@@ -1383,6 +1383,10 @@ export function IncomeInvoicesClient({ initialQueryString = "" }: { initialQuery
         prefillIncomePaymentProjectRows={prefillIncomePaymentProjectRows}
         incomeInvoiceMultiProject={incomeInvoiceMultiProject}
         deletePayment={deletePayment}
+        deleteInvoice={async (id) => {
+          await remove(id, { skipConfirm: true });
+          closeModal();
+        }}
       />
     </div>
   );

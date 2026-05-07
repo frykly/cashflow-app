@@ -7,7 +7,7 @@ import { Alert, Badge, Button, Spinner, Textarea } from "@/components/ui";
 import { readApiErrorBody } from "@/lib/api-client";
 import { formatDate, formatMoney } from "@/lib/format";
 import type { ContractorDetailsResult } from "@/lib/contractors/getContractorDetails";
-import { costInvoiceListEditHref, incomeInvoiceListEditHref } from "@/lib/navigation/invoice-deep-links";
+import { costInvoiceListEditHref } from "@/lib/navigation/invoice-deep-links";
 import { bankTransactionStatusLabel } from "@/lib/bank-import/bank-transaction-status-label";
 import { NewIncomeInvoiceFormModal } from "@/components/IncomeInvoiceFormModal";
 
@@ -82,6 +82,7 @@ export function ContractorDetailClient({ data }: { data: ContractorDetailsResult
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState<{ type: "ok" | "err"; text: string } | null>(null);
   const [incomeModalOpen, setIncomeModalOpen] = useState(false);
+  const [incomeModalInvoiceId, setIncomeModalInvoiceId] = useState<string | null>(null);
   const { contractor, related, summary } = data;
   const encodedName = encodeURIComponent(contractor.displayName);
 
@@ -209,9 +210,16 @@ export function ContractorDetailClient({ data }: { data: ContractorDetailsResult
                   <li key={r.id} className="py-3">
                     <div className="flex items-start justify-between gap-4">
                       <div className="min-w-0">
-                        <Link href={incomeInvoiceListEditHref(r.id)} className="font-medium text-blue-700 underline dark:text-blue-300">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setIncomeModalInvoiceId(r.id);
+                            setIncomeModalOpen(true);
+                          }}
+                          className="text-left font-medium text-blue-700 underline dark:text-blue-300"
+                        >
                           Faktura {r.invoiceNumber}
-                      </Link>
+                        </button>
                         <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-zinc-500">
                           <span>{r.contractor}</span>
                           <span>{formatDate(r.issueDate)}</span>
@@ -329,9 +337,14 @@ export function ContractorDetailClient({ data }: { data: ContractorDetailsResult
       <NewIncomeInvoiceFormModal
         open={incomeModalOpen}
         contractorName={contractor.displayName}
-        onClose={() => setIncomeModalOpen(false)}
+        invoiceId={incomeModalInvoiceId}
+        onClose={() => {
+          setIncomeModalOpen(false);
+          setIncomeModalInvoiceId(null);
+        }}
         onSaved={() => {
           setIncomeModalOpen(false);
+          setIncomeModalInvoiceId(null);
           router.refresh();
         }}
       />

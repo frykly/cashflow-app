@@ -1,12 +1,14 @@
 "use client";
 
+import Link from "next/link";
 import type { Dispatch, FormEvent, MutableRefObject, SetStateAction } from "react";
 import { useEffect, useRef, useState } from "react";
 import { ProjectSearchPicker } from "@/components/ProjectSearchPicker";
 import { Alert, Button, Field, Input, Modal, Select, Spinner, Textarea } from "@/components/ui";
 import { formatDate, formatMoney } from "@/lib/format";
 import { toIsoOrNull } from "@/lib/format";
-import { amountsFromGrossRate, amountsFromNetRate, type VatRatePct } from "@/lib/vat-rate";
+import { isoToDateInputValue } from "@/lib/date-input";
+import { amountsFromGrossRate, amountsFromNetRate, inferVatRateFromAmounts, type VatRatePct } from "@/lib/vat-rate";
 import { InvoiceAmountFields, type AmountEntryMode } from "@/components/InvoiceAmountFields";
 import { ContractorAutocomplete } from "@/components/ContractorAutocomplete";
 import type { IncomeInvoice, IncomeInvoicePayment } from "@prisma/client";
@@ -17,6 +19,8 @@ import { normalizeDecimalInput } from "@/lib/decimal-input";
 import { InvoicePdfDraftSection } from "@/components/InvoicePdfDraftSection";
 import type { InvoicePdfDraftResponse } from "@/lib/invoice-pdf/types";
 import { readApiErrorBody } from "@/lib/api-client";
+import { documentGrossSlicesFromInvoice } from "@/lib/payment-project-allocation/distribute-read";
+import { defaultProportionalPaymentAllocationRows } from "@/lib/payment-project-allocation/default-rows";
 
 type PayPick = Pick<IncomeInvoicePayment, "amountGross">;
 
@@ -81,12 +85,25 @@ function todayYmd(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
-function createEmptyIncomeDraft(contractor = ""): DraftLike {
+function projectDescription(projectName?: string | null, projectCode?: string | null): string {
+  const parts = [
+    projectName?.trim() ? `Projekt: ${projectName.trim()}` : "",
+    projectCode?.trim() ? `Numer zlecenia: ${projectCode.trim()}` : "",
+  ].filter(Boolean);
+  return parts.join(" · ");
+}
+
+function createEmptyIncomeDraft(
+  contractor = "",
+  projectId: string | null = null,
+  projectName?: string | null,
+  projectCode?: string | null,
+): DraftLike {
   const { vatAmount, grossAmount } = amountsFromNetRate("0", 23);
   return {
     invoiceNumber: "",
     contractor,
-    description: "",
+    description: projectDescription(projectName, projectCode),
     vatRate: 23,
     netAmount: "0",
     vatAmount,
@@ -100,7 +117,7 @@ function createEmptyIncomeDraft(contractor = ""): DraftLike {
     actualIncomeDate: null,
     notes: "",
     incomeCategoryId: null,
-    projectId: null,
+    projectId,
     plannedPayments: [],
   };
 }
@@ -125,6 +142,23 @@ function incomeInvoiceMultiProject(editing: Pick<DraftLike, "projectAllocations"
   return (editing.projectAllocations?.length ?? 0) > 1;
 }
 
+function normalizePlannedFromApi(raw: DraftLike["plannedPayments"] | undefined): NonNullable<DraftLike["plannedPayments"]> {
+  if (!raw?.length) return [];
+  return [...raw]
+    .slice()
+    .sort((a, b) => a.sortOrder - b.sortOrder)
+    .map((p) => ({
+      id: p.id,
+      clientKey: p.clientKey,
+      dueDate: isoToDateInputValue(typeof p.dueDate === "string" ? p.dueDate : String(p.dueDate)),
+      plannedMainAmount: String(p.plannedMainAmount ?? "0"),
+      plannedVatAmount: String(p.plannedVatAmount ?? "0"),
+      note: p.note ?? "",
+      sortOrder: p.sortOrder ?? 0,
+      status: p.status ?? "PLANNED",
+    }));
+}
+
 function prefillIncomePaymentCashflowSplit(editing: DraftLike, grossStr: string): { main: string; vat: string } {
   if (editing.vatDestination !== "VAT" || incomeInvoiceMultiProject(editing)) {
     return { main: "", vat: "" };
@@ -137,6 +171,19 @@ function prefillIncomePaymentCashflowSplit(editing: DraftLike, grossStr: string)
   const vPart = round2(vat * ratio);
   const mPart = round2(pay - vPart);
   return { main: mPart.toFixed(2), vat: vPart.toFixed(2) };
+}
+
+function prefillIncomePaymentProjectRows(editing: DraftLike, amountGrossStr: string) {
+  const inv = {
+    projectAllocations: (editing.projectAllocations ?? []).map((a) => ({
+      projectId: a.projectId,
+      grossAmount: a.grossAmount,
+    })),
+    grossAmount: editing.grossAmount,
+    projectId: editing.projectId ?? null,
+  };
+  const slices = documentGrossSlicesFromInvoice(inv);
+  return defaultProportionalPaymentAllocationRows(slices, amountGrossStr);
 }
 
 type IncomeInvoiceFormModalProps = {
@@ -184,6 +231,7 @@ type IncomeInvoiceFormModalProps = {
   prefillIncomePaymentProjectRows: (editing: DraftLike, amountGrossStr: string) => PayProjectRow[];
   incomeInvoiceMultiProject: (editing: Pick<DraftLike, "projectAllocations" | "projectId">) => boolean;
   deletePayment: (paymentId: string) => Promise<void>;
+  deleteInvoice?: (invoiceId: string) => Promise<void>;
 };
 
 export function IncomeInvoiceFormModal({
@@ -231,7 +279,14 @@ export function IncomeInvoiceFormModal({
   prefillIncomePaymentProjectRows,
   incomeInvoiceMultiProject,
   deletePayment,
+  deleteInvoice,
 }: IncomeInvoiceFormModalProps) {
+  async function handleDeleteInvoice() {
+    if (!editing.id || !deleteInvoice) return;
+    if (!confirm("Usunąć tę fakturę przychodową? Tej operacji nie można cofnąć.")) return;
+    await deleteInvoice(editing.id);
+  }
+
   return (
     <>
       <Modal
@@ -329,7 +384,18 @@ export function IncomeInvoiceFormModal({
                     key={idx}
                     className="grid gap-2 rounded-md border border-zinc-100 p-2 dark:border-zinc-800 sm:grid-cols-2 lg:grid-cols-4"
                   >
-                    <Field label="Projekt">
+                    <div className="block text-sm">
+                      <div className="mb-1 flex min-h-[1.25rem] items-center justify-between gap-2">
+                        <span className="block font-medium text-zinc-700 dark:text-zinc-300">Projekt</span>
+                        {row.projectId.trim() ? (
+                          <Link
+                            href={`/projects/${row.projectId.trim()}`}
+                            className="shrink-0 text-xs font-medium text-zinc-700 underline dark:text-zinc-300"
+                          >
+                            Otwórz
+                          </Link>
+                        ) : null}
+                      </div>
                       <ProjectSearchPicker
                         value={row.projectId.trim() || null}
                         onChange={(id) =>
@@ -340,7 +406,7 @@ export function IncomeInvoiceFormModal({
                         listSort="code"
                         disabled={saving}
                       />
-                    </Field>
+                    </div>
                     <Field label="Netto (alokacja)">
                       <Input
                         value={row.netAmount}
@@ -402,7 +468,18 @@ export function IncomeInvoiceFormModal({
                 </div>
               </div>
             ) : (
-              <Field label="Projekt">
+              <div className="block text-sm">
+                <div className="mb-1 flex min-h-[1.25rem] items-center justify-between gap-2">
+                  <span className="block font-medium text-zinc-700 dark:text-zinc-300">Projekt</span>
+                  {editing.projectId ? (
+                    <Link
+                      href={`/projects/${editing.projectId}`}
+                      className="shrink-0 text-xs font-medium text-zinc-700 underline dark:text-zinc-300"
+                    >
+                      Otwórz projekt
+                    </Link>
+                  ) : null}
+                </div>
                 <ProjectSearchPicker
                   value={editing.projectId ?? null}
                   onChange={(id) => setEditing({ ...editing, projectId: id })}
@@ -413,7 +490,7 @@ export function IncomeInvoiceFormModal({
                     Legacy: „{(editing.projectName ?? "").trim()}” — wybierz projekt z listy, aby powiązać rekord.
                   </p>
                 ) : null}
-              </Field>
+              </div>
             )}
           </div>
           <InvoiceAmountFields
@@ -966,6 +1043,11 @@ export function IncomeInvoiceFormModal({
             <Button type="button" variant="secondary" onClick={closeModal} disabled={saving}>
               Anuluj
             </Button>
+            {editing.id && deleteInvoice ? (
+              <Button type="button" variant="danger" onClick={() => void handleDeleteInvoice()} disabled={saving}>
+                Usuń fakturę
+              </Button>
+            ) : null}
           </div>
         </form>
       </Modal>
@@ -1118,15 +1200,25 @@ export function IncomeInvoiceFormModal({
 export function NewIncomeInvoiceFormModal({
   open,
   contractorName,
+  invoiceId,
+  projectId,
+  projectName,
+  projectCode,
   onClose,
   onSaved,
 }: {
   open: boolean;
   contractorName: string;
+  invoiceId?: string | null;
+  projectId?: string | null;
+  projectName?: string | null;
+  projectCode?: string | null;
   onClose: () => void;
   onSaved: () => void;
 }) {
-  const [editing, setEditing] = useState<DraftLike>(() => createEmptyIncomeDraft(contractorName));
+  const [editing, setEditing] = useState<DraftLike>(() =>
+    createEmptyIncomeDraft(contractorName, projectId ?? null, projectName, projectCode),
+  );
   const [formError, setFormError] = useState<string | null>(null);
   const [pdfDraftNote, setPdfDraftNote] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -1146,8 +1238,8 @@ export function NewIncomeInvoiceFormModal({
 
   useEffect(() => {
     if (!open) return;
+    let cancelled = false;
     plannedIncomeManualRef.current = false;
-    setEditing(createEmptyIncomeDraft(contractorName));
     setFormError(null);
     setPdfDraftNote(null);
     setSaving(false);
@@ -1160,7 +1252,61 @@ export function NewIncomeInvoiceFormModal({
     setPayProjectManual(false);
     setPaySplitMain("");
     setPaySplitVat("");
-  }, [contractorName, open]);
+    if (!invoiceId) {
+      setEditing(createEmptyIncomeDraft(contractorName, projectId ?? null, projectName, projectCode));
+      return;
+    }
+    setSaving(true);
+    void (async () => {
+      try {
+        const res = await fetch(`/api/income-invoices/${invoiceId}`);
+        const row = await res.json();
+        if (cancelled) return;
+        if (!res.ok) {
+          setFormError(readApiErrorBody(row));
+          return;
+        }
+        const rate = (row.vatRate ?? inferVatRateFromAmounts(Number(row.netAmount), Number(row.vatAmount))) as VatRatePct;
+        const plannedIncomeDate = isoToDateInputValue(row.plannedIncomeDate);
+        const paymentDueDate = isoToDateInputValue(row.paymentDueDate);
+        plannedIncomeManualRef.current = plannedIncomeDate !== paymentDueDate;
+        setEditing({
+          ...row,
+          isGeneratedFromRecurring: !!row.isGeneratedFromRecurring,
+          isRecurringDetached: !!row.isRecurringDetached,
+          vatRate: rate,
+          incomeCategoryId: row.incomeCategoryId ?? null,
+          issueDate: isoToDateInputValue(row.issueDate),
+          paymentDueDate,
+          plannedIncomeDate,
+          actualIncomeDate: row.actualIncomeDate ? isoToDateInputValue(row.actualIncomeDate) : null,
+          netAmount: String(row.netAmount),
+          vatAmount: String(row.vatAmount),
+          grossAmount: String(row.grossAmount),
+          plannedPayments: normalizePlannedFromApi(row.plannedPayments),
+        });
+        const allocations = row.projectAllocations;
+        if (Array.isArray(allocations) && allocations.length > 0) {
+          setProjectAllocMode("multi");
+          setProjectAllocRows(
+            allocations.map((a) => ({
+              projectId: a.projectId,
+              netAmount: String(a.netAmount),
+              grossAmount: String(a.grossAmount),
+              description: a.description ?? "",
+            })),
+          );
+        }
+      } catch {
+        if (!cancelled) setFormError("Błąd sieci przy pobieraniu faktury.");
+      } finally {
+        if (!cancelled) setSaving(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [contractorName, invoiceId, open, projectCode, projectId, projectName]);
 
   useEffect(() => {
     if (!open) return;
@@ -1250,21 +1396,28 @@ export function NewIncomeInvoiceFormModal({
       }
     }
 
-    const allocPart =
-      projectAllocMode === "multi"
-        ? {
-            projectAllocations: projectAllocRows
-              .filter((row) => row.projectId.trim())
-              .map((row) => ({
-                projectId: row.projectId,
-                netAmount: normalizeDecimalInput(row.netAmount),
-                grossAmount: normalizeDecimalInput(row.grossAmount),
-                description: row.description.trim(),
-              })),
-          }
-        : {};
+    const allocPart: Record<string, unknown> = (() => {
+      if (projectAllocMode === "multi") {
+        return {
+          projectAllocations: projectAllocRows
+            .filter((row) => row.projectId.trim())
+            .map((row) => ({
+              projectId: row.projectId,
+              netAmount: normalizeDecimalInput(row.netAmount),
+              grossAmount: normalizeDecimalInput(row.grossAmount),
+              description: row.description.trim(),
+            })),
+        };
+      }
+      if (editing.id) return { projectAllocations: [] as never[] };
+      return {};
+    })();
 
     const projectField = projectAllocMode === "multi" ? { projectId: null } : { projectId: editing.projectId?.trim() || null };
+    const recurringPatch =
+      editing.id && editing.isGeneratedFromRecurring
+        ? { isRecurringDetached: !!editing.isRecurringDetached }
+        : {};
     const body = {
       invoiceNumber: editing.invoiceNumber,
       contractor: editing.contractor,
@@ -1281,12 +1434,13 @@ export function NewIncomeInvoiceFormModal({
       notes: editing.notes,
       ...projectField,
       incomeCategoryId: editing.incomeCategoryId || null,
+      ...recurringPatch,
       ...allocPart,
     };
 
     try {
-      const res = await fetch("/api/income-invoices", {
-        method: "POST",
+      const res = await fetch(editing.id ? `/api/income-invoices/${editing.id}` : "/api/income-invoices", {
+        method: editing.id ? "PATCH" : "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
@@ -1303,8 +1457,170 @@ export function NewIncomeInvoiceFormModal({
     }
   }
 
-  async function noopSubmitPayment(e: FormEvent) {
+  async function refreshPaymentsForInvoice(id: string) {
+    const res = await fetch(`/api/income-invoices/${id}`);
+    const row = await res.json();
+    if (!res.ok) return;
+    setEditing((prev) => {
+      if (prev.id !== id) return prev;
+      plannedIncomeManualRef.current = isoToDateInputValue(row.plannedIncomeDate) !== isoToDateInputValue(row.paymentDueDate);
+      return {
+        ...prev,
+        ...row,
+        isGeneratedFromRecurring: !!row.isGeneratedFromRecurring,
+        isRecurringDetached: !!row.isRecurringDetached,
+        incomeCategoryId: row.incomeCategoryId ?? null,
+        vatRate: row.vatRate ?? prev.vatRate,
+        issueDate: isoToDateInputValue(row.issueDate),
+        paymentDueDate: isoToDateInputValue(row.paymentDueDate),
+        plannedIncomeDate: isoToDateInputValue(row.plannedIncomeDate),
+        actualIncomeDate: row.actualIncomeDate ? isoToDateInputValue(row.actualIncomeDate) : null,
+        netAmount: String(row.netAmount),
+        vatAmount: String(row.vatAmount),
+        grossAmount: String(row.grossAmount),
+        plannedPayments: normalizePlannedFromApi(row.plannedPayments),
+      };
+    });
+  }
+
+  async function submitPayment(e: FormEvent) {
     e.preventDefault();
+    if (!editing.id) return;
+    const paymentDate = toIsoOrNull(payDraft.paymentDate);
+    if (!paymentDate) {
+      setFormError("Ustaw datę wpłaty.");
+      return;
+    }
+    const amountGross = normalizeDecimalInput(payDraft.amountGross);
+    const body: Record<string, unknown> = {
+      amountGross,
+      paymentDate,
+      notes: payDraft.notes,
+    };
+    if (editing.vatDestination === "VAT" && !incomeInvoiceMultiProject(editing)) {
+      body.allocatedMainAmount = normalizeDecimalInput(paySplitMain.trim() || "0");
+      body.allocatedVatAmount = normalizeDecimalInput(paySplitVat.trim() || "0");
+    }
+    if (incomeInvoiceMultiProject(editing) && payProjectRows.length > 0) {
+      body.projectAllocations = payProjectRows.map((row) => ({
+        projectId: row.projectId,
+        grossAmount: normalizeDecimalInput(row.grossAmount),
+        description: "",
+      }));
+    }
+    setSaving(true);
+    try {
+      const res = await fetch(`/api/income-invoices/${editing.id}/payments`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const j = await res.json();
+      if (!res.ok) {
+        setFormError(readApiErrorBody(j));
+        return;
+      }
+      setPayOpen(false);
+      setPayDraft({ amountGross: "", paymentDate: "", notes: "" });
+      setPayProjectRows([]);
+      setPayProjectManual(false);
+      setPaySplitMain("");
+      setPaySplitVat("");
+      await refreshPaymentsForInvoice(editing.id);
+    } catch {
+      setFormError("Błąd sieci");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function deletePayment(paymentId: string) {
+    if (!editing.id) return;
+    if (!confirm("Usunąć tę wpłatę?")) return;
+    const res = await fetch(`/api/income-invoices/${editing.id}/payments/${paymentId}`, { method: "DELETE" });
+    if (!res.ok) {
+      const j = await res.json();
+      alert(readApiErrorBody(j));
+      return;
+    }
+    await refreshPaymentsForInvoice(editing.id);
+  }
+
+  async function deleteInvoice(invoiceId: string) {
+    const res = await fetch(`/api/income-invoices/${invoiceId}`, { method: "DELETE" });
+    if (!res.ok) {
+      const j = await res.json();
+      alert(readApiErrorBody(j));
+      return;
+    }
+    onSaved();
+  }
+
+  async function savePaymentPlan() {
+    if (!editing.id) return;
+    setSaving(true);
+    setFormError(null);
+    const rows = editing.plannedPayments ?? [];
+    for (const row of rows) {
+      if (!String(row.dueDate ?? "").trim()) {
+        setFormError("Uzupełnij termin (datę) w każdym wierszu planu wpłat.");
+        setSaving(false);
+        return;
+      }
+    }
+    const payload = {
+      rows: rows.map((row, i) => ({
+        dueDate: `${row.dueDate}T12:00:00.000Z`,
+        plannedMainAmount: normalizeDecimalInput(row.plannedMainAmount || "0"),
+        plannedVatAmount: normalizeDecimalInput(row.plannedVatAmount || "0"),
+        note: row.note.trim(),
+        sortOrder: i,
+        status: row.status || "PLANNED",
+      })),
+    };
+    try {
+      const res = await fetch(`/api/income-invoices/${editing.id}/payment-plan`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const j = await res.json();
+      if (!res.ok) {
+        setFormError(readApiErrorBody(j));
+        return;
+      }
+      await refreshPaymentsForInvoice(editing.id);
+    } catch {
+      setFormError("Błąd sieci");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  function applyPlanQuickFill(mode: "vat" | "main" | "rest") {
+    setEditing((prev) => {
+      const rows = [...(prev.plannedPayments ?? [])];
+      if (rows.length === 0) rows.push(newPlanRow(0));
+      const idx = Math.min(Math.max(0, planRowFocusIdxRef.current), rows.length - 1);
+      const invNet = round2(Number(normalizeDecimalInput(prev.netAmount || "0")));
+      const invVat = round2(Number(normalizeDecimalInput(prev.vatAmount || "0")));
+      let otherMain = 0;
+      let otherVat = 0;
+      for (let i = 0; i < rows.length; i++) {
+        if (i === idx) continue;
+        otherMain = round2(otherMain + Number(normalizeDecimalInput(rows[i].plannedMainAmount || "0")));
+        otherVat = round2(otherVat + Number(normalizeDecimalInput(rows[i].plannedVatAmount || "0")));
+      }
+      const current = { ...rows[idx] };
+      if (mode === "vat") current.plannedVatAmount = round2(Math.max(0, invVat - otherVat)).toFixed(2);
+      else if (mode === "main") current.plannedMainAmount = round2(Math.max(0, invNet - otherMain)).toFixed(2);
+      else {
+        current.plannedMainAmount = round2(Math.max(0, invNet - otherMain)).toFixed(2);
+        current.plannedVatAmount = round2(Math.max(0, invVat - otherVat)).toFixed(2);
+      }
+      rows[idx] = current;
+      return { ...prev, plannedPayments: rows.map((row, i) => ({ ...row, sortOrder: i })) };
+    });
   }
 
   return (
@@ -1329,17 +1645,17 @@ export function NewIncomeInvoiceFormModal({
       handleAmountModeChange={handleAmountModeChange}
       applyPaymentDue={applyPaymentDue}
       plannedIncomeManualRef={plannedIncomeManualRef}
-      planSaving={false}
+      planSaving={saving}
       newPlanRow={newPlanRow}
-      savePaymentPlan={async () => undefined}
-      applyPlanQuickFill={() => undefined}
+      savePaymentPlan={savePaymentPlan}
+      applyPlanQuickFill={applyPlanQuickFill}
       planRowFocusIdxRef={planRowFocusIdxRef}
       payOpen={payOpen}
       setPayOpen={setPayOpen}
-      submitPayment={noopSubmitPayment}
+      submitPayment={submitPayment}
       payDraft={payDraft}
       setPayDraft={setPayDraft}
-      paySaving={false}
+      paySaving={saving}
       payProjectManual={payProjectManual}
       setPayProjectManual={setPayProjectManual}
       payProjectRows={payProjectRows}
@@ -1350,9 +1666,10 @@ export function NewIncomeInvoiceFormModal({
       setPaySplitVat={setPaySplitVat}
       todayYmd={todayYmd}
       prefillIncomePaymentCashflowSplit={prefillIncomePaymentCashflowSplit}
-      prefillIncomePaymentProjectRows={() => []}
+      prefillIncomePaymentProjectRows={prefillIncomePaymentProjectRows}
       incomeInvoiceMultiProject={incomeInvoiceMultiProject}
-      deletePayment={async () => undefined}
+      deletePayment={deletePayment}
+      deleteInvoice={deleteInvoice}
     />
   );
 }

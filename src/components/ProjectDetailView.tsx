@@ -12,10 +12,10 @@ import {
 } from "@/lib/project-status-labels";
 import {
   costInvoiceNewFromProjectQuery,
-  incomeInvoiceNewFromProjectQuery,
   plannedEventNewFromProjectQuery,
 } from "@/lib/project-quick-links";
 import { ContractorNameLink } from "@/components/ContractorNameLink";
+import { ProjectIncomeInvoiceModalButton } from "@/components/ProjectIncomeInvoiceModalButton";
 
 function moneyFromDecimal(v: Decimal | null | undefined): string {
   if (v == null) return "—";
@@ -184,12 +184,15 @@ export function ProjectDetailView({ data }: { data: ProjectDetailsResult }) {
       <section>
         <h2 className="mb-2 text-sm font-semibold text-zinc-800 dark:text-zinc-200">Szybkie akcje</h2>
         <div className="flex flex-wrap gap-2">
-          <Link
-            href={`/income-invoices?${incomeInvoiceNewFromProjectQuery(project)}`}
+          <ProjectIncomeInvoiceModalButton
+            contractorName={project.clientName}
+            projectId={project.id}
+            projectName={project.name}
+            projectCode={project.code}
             className="inline-flex items-center rounded-lg border border-zinc-300 bg-white px-3 py-2 text-xs font-medium text-zinc-900 hover:bg-zinc-50 dark:border-zinc-600 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800"
           >
             + Faktura przychodowa
-          </Link>
+          </ProjectIncomeInvoiceModalButton>
           <Link
             href={`/cost-invoices?${costInvoiceNewFromProjectQuery(project)}`}
             className="inline-flex items-center rounded-lg border border-zinc-300 bg-white px-3 py-2 text-xs font-medium text-zinc-900 hover:bg-zinc-50 dark:border-zinc-600 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800"
@@ -244,12 +247,16 @@ export function ProjectDetailView({ data }: { data: ProjectDetailsResult }) {
                     <td className="px-3 py-2 tabular-nums">{formatMoney(r.row?.netRemaining ?? 0)}</td>
                     <td className="px-3 py-2 text-xs">{r.status}</td>
                     <td className="px-3 py-2 text-right">
-                      <Link
-                        href={`/income-invoices?editIncome=${r.id}`}
+                      <ProjectIncomeInvoiceModalButton
+                        contractorName={project.clientName}
+                        projectId={project.id}
+                        projectName={project.name}
+                        projectCode={project.code}
+                        invoiceId={r.id}
                         className="text-xs font-medium text-zinc-700 underline dark:text-zinc-300"
                       >
                         Otwórz
-                      </Link>
+                      </ProjectIncomeInvoiceModalButton>
                     </td>
                   </tr>
                 ))
