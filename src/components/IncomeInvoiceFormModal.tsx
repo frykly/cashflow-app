@@ -1,0 +1,1051 @@
+"use client";
+
+import type { Dispatch, FormEvent, MutableRefObject, SetStateAction } from "react";
+import { ProjectSearchPicker } from "@/components/ProjectSearchPicker";
+import { Alert, Button, Field, Input, Modal, Select, Spinner, Textarea } from "@/components/ui";
+import { formatDate, formatMoney } from "@/lib/format";
+import { amountsFromGrossRate, amountsFromNetRate, type VatRatePct } from "@/lib/vat-rate";
+import { InvoiceAmountFields, type AmountEntryMode } from "@/components/InvoiceAmountFields";
+import { ContractorAutocomplete } from "@/components/ContractorAutocomplete";
+import type { IncomeInvoice, IncomeInvoicePayment } from "@prisma/client";
+import { round2 } from "@/lib/cashflow/money";
+import { incomeRemainingGross, PAY_EPS, sumIncomePaymentsGross } from "@/lib/cashflow/settlement";
+import { DueDateOffsetControls } from "@/components/DueDateOffsetControls";
+import { normalizeDecimalInput } from "@/lib/decimal-input";
+import { InvoicePdfDraftSection } from "@/components/InvoicePdfDraftSection";
+import type { InvoicePdfDraftResponse } from "@/lib/invoice-pdf/types";
+
+type PayPick = Pick<IncomeInvoicePayment, "amountGross">;
+
+type Cat = { id: string; name: string; slug: string };
+type ProjectOption = { id: string; name: string; isActive: boolean; code?: string | null };
+
+type DraftLike = {
+  id?: string;
+  invoiceNumber: string;
+  contractor: string;
+  description: string;
+  vatRate: number;
+  netAmount: string;
+  vatAmount: string;
+  grossAmount: string;
+  issueDate?: string | null;
+  paymentDueDate?: string | null;
+  plannedIncomeDate?: string | null;
+  status: string;
+  vatDestination: string;
+  confirmedIncome: boolean;
+  actualIncomeDate: string | null;
+  notes: string;
+  incomeCategoryId?: string | null;
+  payments?: {
+    id: string;
+    amountGross: string;
+    paymentDate: string;
+    notes: string;
+    allocatedMainAmount?: string | null;
+    allocatedVatAmount?: string | null;
+  }[];
+  isGeneratedFromRecurring?: boolean;
+  isRecurringDetached?: boolean;
+  projectId?: string | null;
+  projectName?: string | null;
+  projectAllocations?: {
+    id: string;
+    projectId: string;
+    netAmount: unknown;
+    grossAmount: unknown;
+    description: string;
+    project?: { id: string; name: string } | null;
+  }[];
+  plannedPayments?: {
+    id?: string;
+    clientKey?: string;
+    dueDate: string;
+    plannedMainAmount: string;
+    plannedVatAmount: string;
+    note: string;
+    sortOrder: number;
+    status: string;
+  }[];
+};
+
+type ProjectAllocRow = { projectId: string; netAmount: string; grossAmount: string; description: string };
+type PayProjectRow = { projectId: string; grossAmount: string };
+type PayDraft = { amountGross: string; paymentDate: string; notes: string };
+
+type IncomeInvoiceFormModalProps = {
+  open: boolean;
+  editing: DraftLike;
+  setEditing: Dispatch<SetStateAction<DraftLike>>;
+  formError: string | null;
+  setFormError: Dispatch<SetStateAction<string | null>>;
+  pdfDraftNote: string | null;
+  saving: boolean;
+  categories: Cat[];
+  projects: ProjectOption[];
+  closeModal: () => void;
+  save: (e: FormEvent) => Promise<void>;
+  applyIncomePdfDraft: (res: InvoicePdfDraftResponse) => void;
+  projectAllocMode: "simple" | "multi";
+  setProjectAllocMode: Dispatch<SetStateAction<"simple" | "multi">>;
+  projectAllocRows: ProjectAllocRow[];
+  setProjectAllocRows: Dispatch<SetStateAction<ProjectAllocRow[]>>;
+  amountEntryMode: AmountEntryMode;
+  handleAmountModeChange: (mode: AmountEntryMode) => void;
+  applyPaymentDue: (dueYmd: string) => void;
+  plannedIncomeManualRef: MutableRefObject<boolean>;
+  planSaving: boolean;
+  newPlanRow: (sortOrder: number) => NonNullable<DraftLike["plannedPayments"]>[number];
+  savePaymentPlan: () => Promise<void>;
+  applyPlanQuickFill: (mode: "vat" | "main" | "rest") => void;
+  planRowFocusIdxRef: MutableRefObject<number>;
+  payOpen: boolean;
+  setPayOpen: Dispatch<SetStateAction<boolean>>;
+  submitPayment: (e: FormEvent) => Promise<void>;
+  payDraft: PayDraft;
+  setPayDraft: Dispatch<SetStateAction<PayDraft>>;
+  paySaving: boolean;
+  payProjectManual: boolean;
+  setPayProjectManual: Dispatch<SetStateAction<boolean>>;
+  payProjectRows: PayProjectRow[];
+  setPayProjectRows: Dispatch<SetStateAction<PayProjectRow[]>>;
+  paySplitMain: string;
+  setPaySplitMain: Dispatch<SetStateAction<string>>;
+  paySplitVat: string;
+  setPaySplitVat: Dispatch<SetStateAction<string>>;
+  todayYmd: () => string;
+  prefillIncomePaymentCashflowSplit: (editing: DraftLike, grossStr: string) => { main: string; vat: string };
+  prefillIncomePaymentProjectRows: (editing: DraftLike, amountGrossStr: string) => PayProjectRow[];
+  incomeInvoiceMultiProject: (editing: Pick<DraftLike, "projectAllocations" | "projectId">) => boolean;
+  deletePayment: (paymentId: string) => Promise<void>;
+};
+
+export function IncomeInvoiceFormModal({
+  open,
+  editing,
+  setEditing,
+  formError,
+  setFormError,
+  pdfDraftNote,
+  saving,
+  categories,
+  projects,
+  closeModal,
+  save,
+  applyIncomePdfDraft,
+  projectAllocMode,
+  setProjectAllocMode,
+  projectAllocRows,
+  setProjectAllocRows,
+  amountEntryMode,
+  handleAmountModeChange,
+  applyPaymentDue,
+  plannedIncomeManualRef,
+  planSaving,
+  newPlanRow,
+  savePaymentPlan,
+  applyPlanQuickFill,
+  planRowFocusIdxRef,
+  payOpen,
+  setPayOpen,
+  submitPayment,
+  payDraft,
+  setPayDraft,
+  paySaving,
+  payProjectManual,
+  setPayProjectManual,
+  payProjectRows,
+  setPayProjectRows,
+  paySplitMain,
+  setPaySplitMain,
+  paySplitVat,
+  setPaySplitVat,
+  todayYmd,
+  prefillIncomePaymentCashflowSplit,
+  prefillIncomePaymentProjectRows,
+  incomeInvoiceMultiProject,
+  deletePayment,
+}: IncomeInvoiceFormModalProps) {
+  return (
+    <>
+      <Modal
+        open={open}
+        title={editing.id ? "Edycja faktury przychodowej" : "Nowa faktura przychodowa"}
+        onClose={closeModal}
+        size="lg"
+      >
+        <form onSubmit={save} className="max-h-[75vh] space-y-3 overflow-y-auto pr-1">
+          {formError && <Alert variant="error">{formError}</Alert>}
+          {pdfDraftNote ? (
+            <Alert variant="info">
+              <p className="whitespace-pre-wrap text-sm">{pdfDraftNote}</p>
+            </Alert>
+          ) : null}
+          <InvoicePdfDraftSection kind="income" disabled={saving} onDraft={applyIncomePdfDraft} />
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Field label="Numer faktury">
+              <Input
+                value={editing.invoiceNumber}
+                onChange={(e) => setEditing({ ...editing, invoiceNumber: e.target.value })}
+                required
+                disabled={saving}
+              />
+            </Field>
+            <Field label="Kontrahent">
+              <ContractorAutocomplete
+                value={editing.contractor}
+                onChange={(contractor) => setEditing({ ...editing, contractor })}
+                required
+                disabled={saving}
+                placeholder="Wpisz lub wybierz kontrahenta z katalogu"
+              />
+            </Field>
+          </div>
+          <Field label="Kategoria przychodu">
+            <Select
+              value={editing.incomeCategoryId ?? ""}
+              onChange={(e) => setEditing({ ...editing, incomeCategoryId: e.target.value || null })}
+              disabled={saving}
+            >
+              <option value="">(brak)</option>
+              {categories.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
+              ))}
+            </Select>
+          </Field>
+          <Field label="Opis">
+            <Textarea
+              rows={2}
+              value={editing.description}
+              onChange={(e) => setEditing({ ...editing, description: e.target.value })}
+              disabled={saving}
+            />
+          </Field>
+          <div className="rounded-lg border border-zinc-200 p-3 dark:border-zinc-700">
+            <label className="flex cursor-pointer items-center gap-2 text-sm font-medium text-zinc-800 dark:text-zinc-200">
+              <input
+                type="checkbox"
+                className="size-4 rounded border-zinc-300"
+                checked={projectAllocMode === "multi"}
+                disabled={saving}
+                onChange={(e) => {
+                  const on = e.target.checked;
+                  setProjectAllocMode(on ? "multi" : "simple");
+                  if (on) {
+                    setProjectAllocRows((prev) => {
+                      if (prev.length > 0) return prev;
+                      const pid = editing.projectId?.trim();
+                      if (pid) {
+                        return [
+                          {
+                            projectId: pid,
+                            netAmount: editing.netAmount,
+                            grossAmount: editing.grossAmount,
+                            description: "",
+                          },
+                        ];
+                      }
+                      return [{ projectId: "", netAmount: editing.netAmount, grossAmount: editing.grossAmount, description: "" }];
+                    });
+                  } else {
+                    setProjectAllocRows([]);
+                  }
+                }}
+              />
+              Alokacja na kilka projektów (suma netto i brutto = dokument)
+            </label>
+            {projectAllocMode === "multi" ? (
+              <div className="mt-3 space-y-2">
+                {projectAllocRows.map((row, idx) => (
+                  <div
+                    key={idx}
+                    className="grid gap-2 rounded-md border border-zinc-100 p-2 dark:border-zinc-800 sm:grid-cols-2 lg:grid-cols-4"
+                  >
+                    <Field label="Projekt">
+                      <ProjectSearchPicker
+                        value={row.projectId.trim() || null}
+                        onChange={(id) =>
+                          setProjectAllocRows((rows) =>
+                            rows.map((x, i) => (i === idx ? { ...x, projectId: id ?? "" } : x)),
+                          )
+                        }
+                        listSort="code"
+                        disabled={saving}
+                      />
+                    </Field>
+                    <Field label="Netto (alokacja)">
+                      <Input
+                        value={row.netAmount}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          setProjectAllocRows((rows) => rows.map((x, i) => (i === idx ? { ...x, netAmount: v } : x)));
+                        }}
+                        disabled={saving}
+                      />
+                    </Field>
+                    <Field label="Brutto (alokacja)">
+                      <Input
+                        value={row.grossAmount}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          setProjectAllocRows((rows) => rows.map((x, i) => (i === idx ? { ...x, grossAmount: v } : x)));
+                        }}
+                        disabled={saving}
+                      />
+                    </Field>
+                    <Field label="Notatka (opcjonalnie)">
+                      <Input
+                        value={row.description}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          setProjectAllocRows((rows) => rows.map((x, i) => (i === idx ? { ...x, description: v } : x)));
+                        }}
+                        disabled={saving}
+                      />
+                    </Field>
+                  </div>
+                ))}
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    className="!text-xs"
+                    disabled={saving}
+                    onClick={() =>
+                      setProjectAllocRows((rows) => [
+                        ...rows,
+                        { projectId: "", netAmount: editing.netAmount, grossAmount: editing.grossAmount, description: "" },
+                      ])
+                    }
+                  >
+                    + Wiersz
+                  </Button>
+                  {projectAllocRows.length > 1 ? (
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      className="!text-xs"
+                      disabled={saving}
+                      onClick={() => setProjectAllocRows((rows) => rows.slice(0, -1))}
+                    >
+                      Usuń ostatni
+                    </Button>
+                  ) : null}
+                </div>
+              </div>
+            ) : (
+              <Field label="Projekt">
+                <ProjectSearchPicker
+                  value={editing.projectId ?? null}
+                  onChange={(id) => setEditing({ ...editing, projectId: id })}
+                  disabled={saving}
+                />
+                {!editing.projectId && (editing.projectName ?? "").trim() ? (
+                  <p className="mt-1 text-xs text-amber-700 dark:text-amber-400">
+                    Legacy: „{(editing.projectName ?? "").trim()}” — wybierz projekt z listy, aby powiązać rekord.
+                  </p>
+                ) : null}
+              </Field>
+            )}
+          </div>
+          <InvoiceAmountFields
+            mode={amountEntryMode}
+            onModeChange={handleAmountModeChange}
+            netAmount={editing.netAmount}
+            vatRate={editing.vatRate}
+            vatAmount={editing.vatAmount}
+            grossAmount={editing.grossAmount}
+            disabled={saving}
+            onNetChange={(net) => {
+              setEditing((prev) => {
+                const a = amountsFromNetRate(net, prev.vatRate as VatRatePct);
+                return { ...prev, netAmount: net, ...a };
+              });
+            }}
+            onGrossChange={(gross) => {
+              setEditing((prev) => {
+                const a = amountsFromGrossRate(gross, prev.vatRate as VatRatePct);
+                return { ...prev, grossAmount: gross, netAmount: a.netAmount, vatAmount: a.vatAmount };
+              });
+            }}
+            onVatRateChange={(rate) => {
+              setEditing((prev) => {
+                if (amountEntryMode === "gross") {
+                  const a = amountsFromGrossRate(prev.grossAmount, rate);
+                  return { ...prev, vatRate: rate, netAmount: a.netAmount, vatAmount: a.vatAmount };
+                }
+                const a = amountsFromNetRate(prev.netAmount, rate);
+                return { ...prev, vatRate: rate, ...a };
+              });
+            }}
+          />
+          <div className="grid gap-3 sm:grid-cols-3">
+            <Field label="Data wystawienia">
+              <Input
+                type="date"
+                value={editing.issueDate ?? ""}
+                onChange={(e) => setEditing({ ...editing, issueDate: e.target.value })}
+                required
+                disabled={saving}
+              />
+            </Field>
+            <Field label="Termin płatności">
+              <Input
+                type="date"
+                value={editing.paymentDueDate ?? ""}
+                onChange={(e) => applyPaymentDue(e.target.value)}
+                required
+                disabled={saving}
+              />
+              <DueDateOffsetControls
+                baseYmd={editing.issueDate ?? ""}
+                disabled={saving}
+                onApplyDue={applyPaymentDue}
+              />
+            </Field>
+            <Field label="Planowana data wpływu">
+              <Input
+                type="date"
+                value={editing.plannedIncomeDate ?? ""}
+                onChange={(e) => {
+                  plannedIncomeManualRef.current = true;
+                  setEditing({ ...editing, plannedIncomeDate: e.target.value });
+                }}
+                required
+                disabled={saving || (editing.plannedPayments?.length ?? 0) > 0}
+                className={
+                  (editing.plannedPayments?.length ?? 0) > 0 ? "opacity-60" : undefined
+                }
+              />
+              {(editing.plannedPayments?.length ?? 0) > 0 ? (
+                <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
+                  Aktywny plan wpłat — daty wpływu w prognozie biorą się z harmonogramu poniżej; to pole zostaje jako
+                  zapas przy braku planu.
+                </p>
+              ) : null}
+            </Field>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Field label="Status">
+              <Select
+                value={editing.status}
+                onChange={(e) => setEditing({ ...editing, status: e.target.value })}
+                disabled={saving}
+              >
+                <option value="PLANOWANA">Planowana</option>
+                <option value="WYSTAWIONA">Wystawiona</option>
+                <option value="PARTIALLY_RECEIVED">Częściowo opłacona</option>
+                <option value="OPLACONA">Opłacona</option>
+              </Select>
+            </Field>
+            <Field label="Rozliczenie VAT (konto docelowe)">
+              <Select
+                value={editing.vatDestination}
+                onChange={(e) => setEditing({ ...editing, vatDestination: e.target.value })}
+                disabled={saving}
+              >
+                <option value="MAIN">MAIN — całe brutto na konto główne</option>
+                <option value="VAT">VAT — netto na MAIN, VAT na konto VAT</option>
+              </Select>
+            </Field>
+          </div>
+          <label className="flex cursor-pointer items-center gap-2 text-sm text-zinc-700 dark:text-zinc-300">
+            <input
+              type="checkbox"
+              className="size-4 rounded border-zinc-300"
+              checked={editing.confirmedIncome}
+              onChange={(e) => setEditing({ ...editing, confirmedIncome: e.target.checked })}
+              disabled={saving}
+            />
+            Wpływ potwierdzony (informacyjnie)
+          </label>
+          <Field label="Data faktycznego wpływu (gdy status: opłacona)">
+            <Input
+              type="date"
+              value={editing.actualIncomeDate ?? ""}
+              onChange={(e) => {
+                const v = e.target.value;
+                setEditing({ ...editing, actualIncomeDate: v || null });
+              }}
+              disabled={saving}
+            />
+          </Field>
+          {editing.isGeneratedFromRecurring ? (
+            <label className="flex cursor-pointer items-start gap-2 text-sm text-zinc-700 dark:text-zinc-300">
+              <input
+                type="checkbox"
+                className="mt-0.5 size-4 rounded border-zinc-300"
+                checked={!!editing.isRecurringDetached}
+                onChange={(e) => setEditing({ ...editing, isRecurringDetached: e.target.checked })}
+                disabled={saving}
+              />
+              <span>
+                Odłącz od reguły cyklicznej — zmiany reguły nie nadpiszą tej faktury przy synchronizacji.
+              </span>
+            </label>
+          ) : null}
+          <Field label="Notatki">
+            <Textarea
+              rows={2}
+              value={editing.notes}
+              onChange={(e) => setEditing({ ...editing, notes: e.target.value })}
+              disabled={saving}
+            />
+          </Field>
+          {editing.id ? (
+            <div className="rounded-lg border border-emerald-200/80 bg-emerald-50/40 p-3 dark:border-emerald-900/50 dark:bg-emerald-950/20">
+              <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                <span className="text-sm font-medium text-zinc-800 dark:text-zinc-200">Plan wpłat</span>
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    className="!py-1.5 !text-xs"
+                    disabled={saving || planSaving}
+                    onClick={() => {
+                      setEditing((prev) => {
+                        const next = [...(prev.plannedPayments ?? [])];
+                        next.push(newPlanRow(next.length));
+                        return { ...prev, plannedPayments: next };
+                      });
+                    }}
+                  >
+                    Dodaj termin
+                  </Button>
+                  <Button
+                    type="button"
+                    className="!py-1.5 !text-xs"
+                    disabled={saving || planSaving}
+                    onClick={() => void savePaymentPlan()}
+                  >
+                    {planSaving ? <Spinner className="!size-4" /> : null}
+                    Zapisz plan wpłat
+                  </Button>
+                </div>
+              </div>
+              <p className="mb-2 text-xs text-zinc-600 dark:text-zinc-400">
+                Harmonogram planowany (MAIN / VAT) — informacyjnie; nie zastępuje rzeczywistych wpłat poniżej. Edycja
+                wiersza używa bezpiecznej aktualizacji stanu — zapisz plan, aby trwale zapisać w bazie.
+              </p>
+              <div className="mb-2 flex flex-wrap gap-2">
+                <Button
+                  type="button"
+                  variant="secondary"
+                  className="!py-1 !text-xs"
+                  disabled={saving || planSaving}
+                  onClick={() => applyPlanQuickFill("vat")}
+                >
+                  Pozostały VAT
+                </Button>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  className="!py-1 !text-xs"
+                  disabled={saving || planSaving}
+                  onClick={() => applyPlanQuickFill("main")}
+                >
+                  Pozostałe MAIN
+                </Button>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  className="!py-1 !text-xs"
+                  disabled={saving || planSaving}
+                  onClick={() => applyPlanQuickFill("rest")}
+                >
+                  Uzupełnij resztę faktury
+                </Button>
+              </div>
+              {(() => {
+                const plan = editing.plannedPayments ?? [];
+                const sumMain = round2(
+                  plan.reduce((s, r) => s + Number(normalizeDecimalInput(r.plannedMainAmount || "0")), 0),
+                );
+                const sumVat = round2(
+                  plan.reduce((s, r) => s + Number(normalizeDecimalInput(r.plannedVatAmount || "0")), 0),
+                );
+                const sumTot = round2(sumMain + sumVat);
+                const invNet = round2(Number(normalizeDecimalInput(editing.netAmount || "0")));
+                const invVat = round2(Number(normalizeDecimalInput(editing.vatAmount || "0")));
+                const invGross = round2(invNet + invVat);
+                const dMain = round2(sumMain - invNet);
+                const dVat = round2(sumVat - invVat);
+                const dTot = round2(sumTot - invGross);
+                const over = dMain > PAY_EPS || dVat > PAY_EPS;
+                const incomplete = dMain < -PAY_EPS || dVat < -PAY_EPS;
+                const ok = !over && !incomplete;
+                return (
+                  <div
+                    className={`mb-2 space-y-1 rounded-md border p-2 text-xs ${
+                      over
+                        ? "border-red-300 bg-red-50/90 text-red-900 dark:border-red-900 dark:bg-red-950/40 dark:text-red-100"
+                        : incomplete
+                          ? "border-amber-300 bg-amber-50/80 text-amber-950 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-100"
+                          : "border-emerald-200/80 bg-white/60 text-zinc-800 dark:border-emerald-900/50 dark:bg-emerald-950/30 dark:text-zinc-100"
+                    }`}
+                  >
+                    <div className="grid gap-0.5 sm:grid-cols-2">
+                      <span>
+                        Suma MAIN (plan): <strong className="tabular-nums">{formatMoney(sumMain)}</strong> · netto
+                        faktury: <strong className="tabular-nums">{formatMoney(invNet)}</strong>
+                      </span>
+                      <span>
+                        Suma VAT (plan): <strong className="tabular-nums">{formatMoney(sumVat)}</strong> · VAT faktury:{" "}
+                        <strong className="tabular-nums">{formatMoney(invVat)}</strong>
+                      </span>
+                      <span>
+                        Suma razem (plan): <strong className="tabular-nums">{formatMoney(sumTot)}</strong> · brutto
+                        faktury: <strong className="tabular-nums">{formatMoney(invGross)}</strong>
+                      </span>
+                      <span>
+                        Różnica MAIN / VAT / razem:{" "}
+                        <strong className="tabular-nums">
+                          {formatMoney(dMain)} / {formatMoney(dVat)} / {formatMoney(dTot)}
+                        </strong>
+                      </span>
+                    </div>
+                    {over ? (
+                      <p className="font-medium">Plan przekracza fakturę — zapis planu jest zablokowany do skorygowania kwot.</p>
+                    ) : incomplete ? (
+                      <p className="font-medium">Plan niepełny (poniżej netto/VAT faktury) — zapis dozwolony.</p>
+                    ) : (
+                      <p className="text-emerald-800 dark:text-emerald-200/90">Plan zgodny z kwotami faktury (MAIN/VAT).</p>
+                    )}
+                  </div>
+                );
+              })()}
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs">
+                  <thead>
+                    <tr className="border-b border-emerald-200 dark:border-emerald-900/60">
+                      <th className="py-1 pr-2">Termin</th>
+                      <th className="py-1 pr-2">MAIN (plan)</th>
+                      <th className="py-1 pr-2">VAT (plan)</th>
+                      <th className="py-1 pr-2">Razem</th>
+                      <th className="py-1 pr-2">Status</th>
+                      <th className="py-1 pr-2">Opis</th>
+                      <th className="py-1 text-right"> </th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(editing.plannedPayments ?? []).length === 0 ? (
+                      <tr>
+                        <td colSpan={7} className="py-2 text-zinc-500">
+                          Brak pozycji — użyj „Dodaj termin”, np. transza 1: część netto + pełny VAT, transza 2: reszta netto.
+                        </td>
+                      </tr>
+                    ) : (
+                      (editing.plannedPayments ?? []).map((row, idx) => {
+                        const mainN = Number(normalizeDecimalInput(row.plannedMainAmount || "0"));
+                        const vatN = Number(normalizeDecimalInput(row.plannedVatAmount || "0"));
+                        const tot = mainN + vatN;
+                        const rowKey = row.id ?? row.clientKey ?? `plan-row-${idx}`;
+                        return (
+                          <tr
+                            key={rowKey}
+                            className="border-b border-emerald-100/80 dark:border-emerald-900/40"
+                            onFocusCapture={() => {
+                              planRowFocusIdxRef.current = idx;
+                            }}
+                          >
+                            <td className="py-1.5 pr-2 align-top">
+                              <Input
+                                type="date"
+                                className="!py-1 !text-xs"
+                                value={row.dueDate}
+                                onChange={(e) => {
+                                  const v = e.target.value;
+                                  setEditing((prev) => {
+                                    const next = [...(prev.plannedPayments ?? [])];
+                                    next[idx] = { ...next[idx], dueDate: v };
+                                    return { ...prev, plannedPayments: next };
+                                  });
+                                }}
+                                onFocus={() => {
+                                  planRowFocusIdxRef.current = idx;
+                                }}
+                                disabled={saving || planSaving}
+                              />
+                            </td>
+                            <td className="py-1.5 pr-2 align-top">
+                              <Input
+                                className="!py-1 !text-xs tabular-nums"
+                                value={row.plannedMainAmount}
+                                onChange={(e) => {
+                                  const v = e.target.value;
+                                  setEditing((prev) => {
+                                    const next = [...(prev.plannedPayments ?? [])];
+                                    next[idx] = { ...next[idx], plannedMainAmount: v };
+                                    return { ...prev, plannedPayments: next };
+                                  });
+                                }}
+                                onFocus={() => {
+                                  planRowFocusIdxRef.current = idx;
+                                }}
+                                disabled={saving || planSaving}
+                              />
+                            </td>
+                            <td className="py-1.5 pr-2 align-top">
+                              <Input
+                                className="!py-1 !text-xs tabular-nums"
+                                value={row.plannedVatAmount}
+                                onChange={(e) => {
+                                  const v = e.target.value;
+                                  setEditing((prev) => {
+                                    const next = [...(prev.plannedPayments ?? [])];
+                                    next[idx] = { ...next[idx], plannedVatAmount: v };
+                                    return { ...prev, plannedPayments: next };
+                                  });
+                                }}
+                                onFocus={() => {
+                                  planRowFocusIdxRef.current = idx;
+                                }}
+                                disabled={saving || planSaving}
+                              />
+                            </td>
+                            <td className="py-1.5 pr-2 tabular-nums align-top">{formatMoney(tot)}</td>
+                            <td className="py-1.5 pr-2 align-top">
+                              <Select
+                                className="!py-1 !text-xs"
+                                value={row.status}
+                                onChange={(e) => {
+                                  const v = e.target.value;
+                                  setEditing((prev) => {
+                                    const next = [...(prev.plannedPayments ?? [])];
+                                    next[idx] = { ...next[idx], status: v };
+                                    return { ...prev, plannedPayments: next };
+                                  });
+                                }}
+                                onFocus={() => {
+                                  planRowFocusIdxRef.current = idx;
+                                }}
+                                disabled={saving || planSaving}
+                              >
+                                <option value="PLANNED">Zaplanowane</option>
+                                <option value="DONE">Wykonane</option>
+                                <option value="CANCELLED">Anulowane</option>
+                              </Select>
+                            </td>
+                            <td className="py-1.5 pr-2 align-top">
+                              <Input
+                                className="!py-1 !text-xs"
+                                value={row.note}
+                                placeholder="np. po odbiorze bez usterek"
+                                onChange={(e) => {
+                                  const v = e.target.value;
+                                  setEditing((prev) => {
+                                    const next = [...(prev.plannedPayments ?? [])];
+                                    next[idx] = { ...next[idx], note: v };
+                                    return { ...prev, plannedPayments: next };
+                                  });
+                                }}
+                                onFocus={() => {
+                                  planRowFocusIdxRef.current = idx;
+                                }}
+                                disabled={saving || planSaving}
+                              />
+                            </td>
+                            <td className="py-1.5 text-right align-top">
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                className="!py-0.5 !text-xs text-red-600"
+                                disabled={saving || planSaving}
+                                onClick={() => {
+                                  setEditing((prev) => {
+                                    const next = (prev.plannedPayments ?? []).filter((_, i) => i !== idx);
+                                    return {
+                                      ...prev,
+                                      plannedPayments: next.map((r, i) => ({ ...r, sortOrder: i })),
+                                    };
+                                  });
+                                }}
+                              >
+                                Usuń
+                              </Button>
+                            </td>
+                          </tr>
+                        );
+                      })
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          ) : null}
+          {editing.id ? (
+            <div className="rounded-lg border border-zinc-200 p-3 dark:border-zinc-700">
+              <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                <span className="text-sm font-medium text-zinc-800 dark:text-zinc-200">Wpłaty (brutto)</span>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  className="!py-1.5 !text-xs"
+                  onClick={() => {
+                    setFormError(null);
+                    const inv = editing as unknown as IncomeInvoice;
+                    const pays = (editing.payments ?? []) as unknown as PayPick[];
+                    const remaining = incomeRemainingGross(inv, pays);
+                    const amt =
+                      remaining > 0 ? String(remaining) : (Number(editing.grossAmount) > 0 ? String(editing.grossAmount) : "");
+                    setPayProjectManual(false);
+                    setPayDraft({
+                      amountGross: amt,
+                      paymentDate: todayYmd(),
+                      notes: "",
+                    });
+                    const spl = prefillIncomePaymentCashflowSplit(editing, amt);
+                    setPaySplitMain(spl.main);
+                    setPaySplitVat(spl.vat);
+                    setPayProjectRows(
+                      incomeInvoiceMultiProject(editing) && amt ? prefillIncomePaymentProjectRows(editing, amt) : [],
+                    );
+                    setPayOpen(true);
+                  }}
+                  disabled={saving}
+                >
+                  Dodaj wpłatę
+                </Button>
+              </div>
+              <p className="mb-2 text-xs text-zinc-500 dark:text-zinc-400">
+                Częściowe lub rozłożone w czasie — dodawaj wpłaty ręcznie. Pełne rozliczenie możesz ustawić statusem
+                „Opłacona”: brakująca kwota zapisze się tu automatycznie (data z faktycznego wpływu lub planowanego).
+              </p>
+              {(() => {
+                const inv = editing as unknown as IncomeInvoice;
+                const pays = (editing.payments ?? []) as unknown as PayPick[];
+                const g = Number(editing.grossAmount) || 0;
+                const settled = sumIncomePaymentsGross(pays);
+                const remaining = incomeRemainingGross(inv, pays);
+                const pct = g > 0 ? Math.round((settled / g) * 1000) / 10 : 0;
+                return (
+                  <div className="mb-2 text-xs text-zinc-600 dark:text-zinc-400">
+                    Rozliczono: {formatMoney(settled)} / brutto {formatMoney(g)} · Pozostało: {formatMoney(remaining)} ·{" "}
+                    {pct}% dokumentu
+                  </div>
+                );
+              })()}
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs">
+                  <thead>
+                    <tr className="border-b border-zinc-200 dark:border-zinc-700">
+                      <th className="py-1 pr-2">Kwota</th>
+                      <th className="py-1 pr-2">Data</th>
+                      <th className="py-1 pr-2">Notatka</th>
+                      <th className="py-1 text-right"> </th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {((editing.payments ?? []) as {
+                      id: string;
+                      amountGross: string;
+                      paymentDate: string;
+                      notes: string;
+                      allocatedMainAmount?: string | null;
+                      allocatedVatAmount?: string | null;
+                    }[]).length === 0 ? (
+                      <tr>
+                        <td colSpan={4} className="py-2 text-zinc-500">
+                          Brak wpłat
+                        </td>
+                      </tr>
+                    ) : (
+                      ((editing.payments ?? []) as {
+                        id: string;
+                        amountGross: string;
+                        paymentDate: string;
+                        notes: string;
+                        allocatedMainAmount?: string | null;
+                        allocatedVatAmount?: string | null;
+                      }[]).map((p) => (
+                          <tr key={p.id} className="border-b border-zinc-100 dark:border-zinc-800">
+                            <td className="py-1.5 pr-2 tabular-nums">
+                              <div>{formatMoney(Number(p.amountGross))}</div>
+                              {p.allocatedMainAmount != null && p.allocatedVatAmount != null ? (
+                                <div className="mt-0.5 text-[10px] leading-tight text-zinc-500 dark:text-zinc-400">
+                                  cashflow: MAIN {formatMoney(Number(p.allocatedMainAmount))} · VAT{" "}
+                                  {formatMoney(Number(p.allocatedVatAmount))}
+                                </div>
+                              ) : null}
+                            </td>
+                            <td className="py-1.5 pr-2">{formatDate(p.paymentDate)}</td>
+                            <td className="py-1.5 pr-2">{p.notes || "—"}</td>
+                            <td className="py-1.5 text-right">
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                className="!py-0.5 !text-xs text-red-600"
+                                onClick={() => deletePayment(p.id)}
+                                disabled={saving}
+                              >
+                                Usuń
+                              </Button>
+                            </td>
+                          </tr>
+                        ),
+                      )
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          ) : null}
+          <div className="flex flex-wrap gap-2 border-t border-zinc-200 pt-4 dark:border-zinc-700">
+            <Button type="submit" disabled={saving}>
+              {saving ? <Spinner className="!size-4" /> : null}
+              Zapisz
+            </Button>
+            <Button type="button" variant="secondary" onClick={closeModal} disabled={saving}>
+              Anuluj
+            </Button>
+          </div>
+        </form>
+      </Modal>
+
+      <Modal open={payOpen} title="Nowa wpłata" onClose={() => setPayOpen(false)}>
+        <form onSubmit={submitPayment} className="space-y-3">
+          {formError && payOpen ? <Alert variant="error">{formError}</Alert> : null}
+          <Field label="Kwota brutto">
+            <Input
+              value={payDraft.amountGross}
+              onChange={(e) => {
+                const v = e.target.value;
+                setPayDraft({ ...payDraft, amountGross: v });
+                if (!payProjectManual && incomeInvoiceMultiProject(editing) && v.trim()) {
+                  setPayProjectRows(prefillIncomePaymentProjectRows(editing, v));
+                }
+              }}
+              required
+              disabled={paySaving}
+            />
+          </Field>
+          {incomeInvoiceMultiProject(editing) && payProjectRows.length > 0 ? (
+            <div className="rounded-lg border border-zinc-200 p-3 dark:border-zinc-700">
+              <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                <span className="text-sm font-medium text-zinc-800 dark:text-zinc-200">Podział na projekty (brutto)</span>
+                <label className="flex cursor-pointer items-center gap-2 text-xs text-zinc-600 dark:text-zinc-400">
+                  <input
+                    type="checkbox"
+                    className="size-4 rounded border-zinc-300"
+                    checked={payProjectManual}
+                    onChange={(e) => setPayProjectManual(e.target.checked)}
+                    disabled={paySaving}
+                  />
+                  Ręczny
+                </label>
+              </div>
+              <p className="mb-2 text-xs text-zinc-500">
+                Domyślnie proporcje jak w alokacji dokumentu. Zaznacz „Ręczny”, aby poprawić kwoty.
+              </p>
+              <div className="space-y-2">
+                {payProjectRows.map((row, idx) => {
+                  const name =
+                    editing.projectAllocations?.find((a) => a.projectId === row.projectId)?.project?.name ??
+                    projects.find((p) => p.id === row.projectId)?.name ??
+                    row.projectId;
+                  return (
+                    <div key={`${row.projectId}-${idx}`} className="flex flex-wrap items-center gap-2 text-sm">
+                      <span className="min-w-[120px] flex-1 font-medium text-zinc-800 dark:text-zinc-200">{name}</span>
+                      <Input
+                        className="max-w-[140px]"
+                        value={row.grossAmount}
+                        disabled={paySaving || !payProjectManual}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          setPayProjectRows((rows) => rows.map((x, i) => (i === idx ? { ...x, grossAmount: val } : x)));
+                        }}
+                      />
+                    </div>
+                  );
+                })}
+              </div>
+              <Button
+                type="button"
+                variant="secondary"
+                className="mt-2 !text-xs"
+                disabled={paySaving}
+                onClick={() => {
+                  setPayProjectManual(false);
+                  setPayProjectRows(prefillIncomePaymentProjectRows(editing, payDraft.amountGross || "0"));
+                }}
+              >
+                Przelicz wg proporcji dokumentu
+              </Button>
+            </div>
+          ) : null}
+          {editing.vatDestination === "VAT" && !incomeInvoiceMultiProject(editing) ? (
+            <div className="rounded-lg border border-zinc-200 p-3 dark:border-zinc-700">
+              <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                <span className="text-sm font-medium text-zinc-800 dark:text-zinc-200">
+                  Podział cashflow (MAIN / VAT)
+                </span>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  className="!py-1 !text-xs"
+                  disabled={paySaving}
+                  onClick={() => {
+                    const s = prefillIncomePaymentCashflowSplit(editing, payDraft.amountGross || "0");
+                    setPaySplitMain(s.main);
+                    setPaySplitVat(s.vat);
+                  }}
+                >
+                  Przelicz z kwoty brutto
+                </Button>
+              </div>
+              <p className="mb-2 text-xs text-zinc-500">
+                Suma musi równać się kwocie brutto wpłaty. Ustaw np. pełny VAT na konto VAT i resztę netto na MAIN.
+              </p>
+              <div className="flex flex-wrap gap-2">
+                <Field label="MAIN (netto)">
+                  <Input
+                    value={paySplitMain}
+                    onChange={(e) => setPaySplitMain(e.target.value)}
+                    disabled={paySaving}
+                    className="max-w-[160px] font-mono"
+                  />
+                </Field>
+                <Field label="VAT">
+                  <Input
+                    value={paySplitVat}
+                    onChange={(e) => setPaySplitVat(e.target.value)}
+                    disabled={paySaving}
+                    className="max-w-[160px] font-mono"
+                  />
+                </Field>
+              </div>
+            </div>
+          ) : null}
+          <Field label="Data wpłaty">
+            <Input
+              type="date"
+              value={payDraft.paymentDate}
+              onChange={(e) => setPayDraft({ ...payDraft, paymentDate: e.target.value })}
+              required
+              disabled={paySaving}
+            />
+          </Field>
+          <Field label="Notatka">
+            <Input
+              value={payDraft.notes}
+              onChange={(e) => setPayDraft({ ...payDraft, notes: e.target.value })}
+              disabled={paySaving}
+            />
+          </Field>
+          <div className="flex gap-2">
+            <Button type="submit" disabled={paySaving}>
+              {paySaving ? <Spinner className="!size-4" /> : null}
+              Zapisz wpłatę
+            </Button>
+            <Button type="button" variant="secondary" onClick={() => setPayOpen(false)} disabled={paySaving}>
+              Anuluj
+            </Button>
+          </div>
+        </form>
+      </Modal>
+    </>
+  );
+}
