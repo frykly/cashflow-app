@@ -17,6 +17,15 @@ export function isLifecycleAttentionSlug(slug: string | null | undefined): boole
   return false;
 }
 
+/** Status rozliczenia sugerujący blokadę / oczekiwanie (slug z bazy). */
+export function isSettlementAttentionSlug(slug: string | null | undefined): boolean {
+  if (!slug) return false;
+  const u = slug.toUpperCase();
+  if (u.includes("BLOKADA")) return true;
+  if (u.startsWith("OCZEKIW") || u.startsWith("OCZEKUW")) return true;
+  return false;
+}
+
 export type OperationalOverdueTask = {
   id: string;
   projectId: string;
@@ -243,9 +252,10 @@ export async function loadOperationalDashboardData(): Promise<{
   const attentionProjects: OperationalAttentionProject[] = projectsBase
     .filter((p) => {
       const lifecycleAttn = isLifecycleAttentionSlug(p.lifecycleStatus);
+      const settlementAttn = isSettlementAttentionSlug(p.settlementStatus);
       const missing = missingMap.get(p.id) ?? 0;
       const overdue = overdueMap.get(p.id) ?? 0;
-      return lifecycleAttn || missing > 0 || overdue > 0;
+      return lifecycleAttn || settlementAttn || missing > 0 || overdue > 0;
     })
     .map((p) => ({
       id: p.id,
