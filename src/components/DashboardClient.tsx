@@ -319,7 +319,7 @@ export function DashboardClient() {
             <div className="flex flex-col rounded-xl border border-sky-200/80 bg-gradient-to-b from-sky-50/70 to-white p-4 shadow-sm dark:border-sky-900/40 dark:from-sky-950/25 dark:to-zinc-950">
               <h3 className="text-sm font-semibold text-sky-900 dark:text-sky-200">Projekty wymagające uwagi</h3>
               <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
-                Status realizacji (DO_WYJASNIENIA, OCZEKIWANIE*, BLOKADA*), braki lub zaległe zadania.
+                Status realizacji / rozliczenia (np. DO_WYJASNIENIA, OCZEKIWANIE*, BLOKADA*), braki lub zaległe zadania.
               </p>
               {data.operational.attentionProjects.length === 0 ? (
                 <p className="mt-3 text-sm text-zinc-600 dark:text-zinc-400">Brak projektów spełniających te kryteria.</p>
