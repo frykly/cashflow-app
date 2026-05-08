@@ -176,27 +176,49 @@ export function TaskCalendarView({ monthLabel, weeks, tiles, ym, year, month, as
       patch: TaskPlannedDatePatch | null,
       options?: { alertOnError?: boolean },
     ) => {
-      const tile = displayTilesRef.current.find((t) => t.id === taskId) ?? eventTile;
-      if (!patch || isNoOpDatePatch(patch, tile)) return;
+      const dataTile = displayTilesRef.current.find((t) => t.id === taskId) ?? eventTile;
+      if (!patch || isNoOpDatePatch(patch, dataTile)) return;
 
-      const nextDates = mergePatchIntoTileDates(tile, patch);
+      /** URL z kotwicy interakcji (kafelek z UI); daty z `dataTile` (najświeższe, z overrides). */
+      const projectIdForUrl = eventTile.projectId.trim();
+      if (!projectIdForUrl) {
+        setCalendarError("Brak identyfikatora projektu — nie można zapisać.");
+        return;
+      }
+
+      const nextDates = mergePatchIntoTileDates(dataTile, patch);
       setCalendarError(null);
       setTileOverrides((prev) => ({ ...prev, [taskId]: nextDates }));
 
       try {
-        const res = await fetch(`/api/projects/${tile.projectId}/tasks/${taskId}`, {
+        const res = await fetch(`/api/projects/${projectIdForUrl}/tasks/${taskId}`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(patch),
         });
-        const j = await res.json();
+        const text = await res.text();
+        let body: unknown = null;
+        if (text) {
+          try {
+            body = JSON.parse(text) as unknown;
+          } catch {
+            body = null;
+          }
+        }
         if (!res.ok) {
           setTileOverrides((prev) => {
             const { [taskId]: _, ...rest } = prev;
             return rest;
           });
-          const msg = readApiErrorBody(j);
+          const msg =
+            readApiErrorBody(body) ||
+            (res.status === 404
+              ? "Nie znaleziono zadania (sprawdź przypisanie do projektu lub odśwież stronę)."
+              : `Żądanie nie powiodło się (${res.status})`.trim());
           setCalendarError(msg);
+          if (res.status === 404) {
+            router.refresh();
+          }
           if (options?.alertOnError) window.alert(msg);
           return;
         }
