@@ -1,7 +1,17 @@
+"use client";
+
 import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { useMemo, useState } from "react";
+import { ProjectTaskFormModal } from "@/components/ProjectTaskFormModal";
 import { Badge, Button, Field, Input } from "@/components/ui";
 import { layoutWeek, tileSpanMs } from "@/lib/calendar/calendar-week-layout";
-import type { CalendarWeekBlock, CalendarTaskTile } from "@/lib/calendar/load-calendar-data";
+import {
+  calendarTileToProjectTaskRow,
+  type CalendarDayHeader,
+  type CalendarTaskTile,
+  type CalendarWeekBlockJSON,
+} from "@/lib/calendar/load-calendar-data";
 import { addMonths, buildCalendarQuery, dayKeyFromDate, formatYm } from "@/lib/calendar/month-grid";
 import { formatDate } from "@/lib/format";
 import {
@@ -14,7 +24,7 @@ const WEEKDAY_LABELS = ["Pon", "Wt", "Śr", "Czw", "Pt", "Sob", "Nie"];
 
 type Props = {
   monthLabel: string;
-  weeks: CalendarWeekBlock[];
+  weeks: CalendarWeekBlockJSON[];
   tiles: CalendarTaskTile[];
   ym: string;
   year: number;
@@ -22,6 +32,16 @@ type Props = {
   assignee: string;
   hideDone: boolean;
 };
+
+function weekJsonToDayHeaders(weeks: CalendarWeekBlockJSON[]): CalendarDayHeader[][] {
+  return weeks.map((w) =>
+    w.days.map((d) => ({
+      dayKey: d.dayKey,
+      inMonth: d.inMonth,
+      date: new Date(d.dateIso),
+    })),
+  );
+}
 
 function taskBarClasses(t: CalendarTaskTile): string {
   const high = t.priority === "HIGH" ? "ring-1 ring-red-500/70 dark:ring-red-500/50" : "";
@@ -39,12 +59,12 @@ function singleCardClasses(t: CalendarTaskTile): string {
   const high = t.priority === "HIGH" ? "ring-1 ring-red-500/60" : "";
   const done = t.isDone || t.status === "DONE";
   if (done) {
-    return `block rounded-lg border px-1.5 py-1 text-left transition-colors hover:opacity-90 ${high} border-emerald-200/80 bg-emerald-50/90 opacity-85 dark:border-emerald-900/50 dark:bg-emerald-950/30`;
+    return `block w-full rounded-lg border px-1.5 py-1 text-left transition-colors hover:opacity-90 ${high} border-emerald-200/80 bg-emerald-50/90 opacity-85 dark:border-emerald-900/50 dark:bg-emerald-950/30`;
   }
   if (t.status === "IN_PROGRESS") {
-    return `block rounded-lg border px-1.5 py-1 text-left transition-colors hover:opacity-90 ${high} border-amber-200/80 bg-amber-50/90 dark:border-amber-900/45 dark:bg-amber-950/25`;
+    return `block w-full rounded-lg border px-1.5 py-1 text-left transition-colors hover:opacity-90 ${high} border-amber-200/80 bg-amber-50/90 dark:border-amber-900/45 dark:bg-amber-950/25`;
   }
-  return `block rounded-lg border px-1.5 py-1 text-left transition-colors hover:opacity-90 ${high} border-sky-200/80 bg-sky-50/90 dark:border-sky-900/45 dark:bg-sky-950/25`;
+  return `block w-full rounded-lg border px-1.5 py-1 text-left transition-colors hover:opacity-90 ${high} border-sky-200/80 bg-sky-50/90 dark:border-sky-900/45 dark:bg-sky-950/25`;
 }
 
 function buildTaskTitleAttr(t: CalendarTaskTile): string {
@@ -62,6 +82,10 @@ function buildTaskTitleAttr(t: CalendarTaskTile): string {
 }
 
 export function TaskCalendarView({ monthLabel, weeks, tiles, ym, year, month, assignee, hideDone }: Props) {
+  const router = useRouter();
+  const [editTile, setEditTile] = useState<CalendarTaskTile | null>(null);
+  const weekDayBlocks = useMemo(() => weekJsonToDayHeaders(weeks), [weeks]);
+
   const prev = addMonths(year, month, -1);
   const next = addMonths(year, month, 1);
   const prevYm = formatYm(prev.year, prev.month);
@@ -155,8 +179,8 @@ export function TaskCalendarView({ monthLabel, weeks, tiles, ym, year, month, as
           </div>
 
           <div className="divide-y divide-zinc-100 dark:divide-zinc-800/80">
-            {weeks.map((week, wkIndex) => {
-              const layout = layoutWeek(week.days, tiles);
+            {weekDayBlocks.map((week, wkIndex) => {
+              const layout = layoutWeek(week, tiles);
               const maxTrack = layout.multiSegments.reduce((m, s) => Math.max(m, s.track), -1);
               const barRowCount = maxTrack + 1;
               const showBarLane = layout.multiSegments.length > 0 || layout.overflowMulti.length > 0;
@@ -164,7 +188,7 @@ export function TaskCalendarView({ monthLabel, weeks, tiles, ym, year, month, as
               return (
                 <div key={wkIndex} className="bg-white dark:bg-zinc-950">
                   <div className="grid grid-cols-7 border-b border-zinc-100/90 dark:border-zinc-800/60">
-                    {week.days.map((d) => (
+                    {week.map((d) => (
                       <div
                         key={d.dayKey}
                         className={[
@@ -189,13 +213,15 @@ export function TaskCalendarView({ monthLabel, weeks, tiles, ym, year, month, as
                         }}
                       >
                         {layout.multiSegments.map((seg) => (
-                          <Link
+                          <button
                             key={`${wkIndex}-${seg.task.id}-${seg.startCol}-${seg.endCol}-${seg.track}`}
-                            href={`/projects/${seg.task.projectId}`}
+                            type="button"
                             title={buildTaskTitleAttr(seg.task)}
+                            onClick={() => setEditTile(seg.task)}
                             className={[
                               taskBarClasses(seg.task),
                               seg.task.isDone ? "line-through decoration-zinc-500/80" : "",
+                              "cursor-pointer text-left",
                             ].join(" ")}
                             style={{
                               gridColumn: `${seg.startCol + 1} / ${seg.endCol + 2}`,
@@ -217,7 +243,7 @@ export function TaskCalendarView({ monthLabel, weeks, tiles, ym, year, month, as
                                 {seg.task.assigneeName}
                               </span>
                             ) : null}
-                          </Link>
+                          </button>
                         ))}
                       </div>
                       {layout.overflowMulti.length > 0 ? (
@@ -228,9 +254,13 @@ export function TaskCalendarView({ monthLabel, weeks, tiles, ym, year, month, as
                           <ul className="mt-1.5 space-y-1 pb-1">
                             {layout.overflowMulti.map((t) => (
                               <li key={t.id}>
-                                <Link href={`/projects/${t.projectId}`} className="font-medium text-sky-800 underline dark:text-sky-300">
+                                <button
+                                  type="button"
+                                  onClick={() => setEditTile(t)}
+                                  className="font-medium text-sky-800 underline dark:text-sky-300"
+                                >
                                   {t.title}
-                                </Link>
+                                </button>
                                 <span className="text-zinc-500"> · {t.projectName}</span>
                               </li>
                             ))}
@@ -241,7 +271,7 @@ export function TaskCalendarView({ monthLabel, weeks, tiles, ym, year, month, as
                   ) : null}
 
                   <div className="grid grid-cols-7">
-                    {week.days.map((d) => {
+                    {week.map((d) => {
                       const pack = layout.singleByDay.get(d.dayKey)!;
                       const more = pack.rest.length;
                       return (
@@ -255,39 +285,44 @@ export function TaskCalendarView({ monthLabel, weeks, tiles, ym, year, month, as
                         >
                           <div className="flex flex-col gap-1">
                             {pack.visible.map((t) => (
-                              <Link
+                              <button
                                 key={t.id}
-                                href={`/projects/${t.projectId}`}
+                                type="button"
                                 title={buildTaskTitleAttr(t)}
+                                onClick={() => setEditTile(t)}
                                 className={singleCardClasses(t)}
                               >
-                                <div className={`text-[11px] font-medium leading-snug ${t.isDone ? "text-zinc-500 line-through" : "text-zinc-900 dark:text-zinc-100"}`}>
+                                <div className={`text-left text-[11px] font-medium leading-snug ${t.isDone ? "text-zinc-500 line-through" : "text-zinc-900 dark:text-zinc-100"}`}>
                                   {t.title}
                                 </div>
                                 {t.priority === "HIGH" ? (
-                                  <div className="mt-0.5 text-[9px] font-bold uppercase text-red-700 dark:text-red-300">Pilne</div>
+                                  <div className="mt-0.5 text-left text-[9px] font-bold uppercase text-red-700 dark:text-red-300">Pilne</div>
                                 ) : null}
                                 {t.assigneeName ? (
-                                  <div className="mt-0.5 truncate text-[10px] text-zinc-500 dark:text-zinc-500">{t.assigneeName}</div>
+                                  <div className="mt-0.5 truncate text-left text-[10px] text-zinc-500 dark:text-zinc-500">{t.assigneeName}</div>
                                 ) : null}
                                 <div className="mt-1 flex flex-wrap gap-0.5">
                                   <Badge variant={statusBadgeVariant(t.status, t.isDone)}>
                                     {TASK_STATUS_LABEL[t.status] ?? t.status}
                                   </Badge>
                                 </div>
-                              </Link>
+                              </button>
                             ))}
                             {more > 0 ? (
                               <details className="rounded border border-zinc-200/70 bg-zinc-50/80 text-[10px] dark:border-zinc-800 dark:bg-zinc-900/40">
                                 <summary className="cursor-pointer px-1 py-0.5 font-medium text-zinc-600 dark:text-zinc-400">
                                   +{more} więcej
                                 </summary>
-                                <ul className="space-y-0.5 border-t border-zinc-200/60 px-1 py-1 dark:border-zinc-800">
+                                <ul className="space-y-0.5 border-t border-zinc-200/60 px-1 py-1 text-left dark:border-zinc-800">
                                   {pack.rest.map((t) => (
                                     <li key={t.id}>
-                                      <Link href={`/projects/${t.projectId}`} className="font-medium text-sky-800 underline dark:text-sky-300">
+                                      <button
+                                        type="button"
+                                        onClick={() => setEditTile(t)}
+                                        className="font-medium text-sky-800 underline dark:text-sky-300"
+                                      >
                                         {t.title}
-                                      </Link>
+                                      </button>
                                     </li>
                                   ))}
                                 </ul>
@@ -304,6 +339,18 @@ export function TaskCalendarView({ monthLabel, weeks, tiles, ym, year, month, as
           </div>
         </div>
       </div>
+
+      {editTile ? (
+        <ProjectTaskFormModal
+          open={!!editTile}
+          projectId={editTile.projectId}
+          projectName={editTile.projectName}
+          task={calendarTileToProjectTaskRow(editTile)}
+          onClose={() => setEditTile(null)}
+          onSaved={() => router.refresh()}
+          showOpenProjectLink
+        />
+      ) : null}
     </div>
   );
 }

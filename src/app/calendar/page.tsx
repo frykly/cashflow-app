@@ -1,5 +1,5 @@
 import { TaskCalendarView } from "@/components/calendar/TaskCalendarView";
-import { loadCalendarMonthData } from "@/lib/calendar/load-calendar-data";
+import { loadCalendarMonthData, type CalendarWeekBlockJSON } from "@/lib/calendar/load-calendar-data";
 import { formatYm, parseYm } from "@/lib/calendar/month-grid";
 
 type PageProps = {
@@ -15,10 +15,18 @@ export default async function CalendarPage({ searchParams }: PageProps) {
 
   const { monthLabel, weeks, tiles } = await loadCalendarMonthData(year, month, { assignee, hideDone });
 
+  const weeksJson: CalendarWeekBlockJSON[] = weeks.map((w) => ({
+    days: w.days.map((d) => ({
+      dayKey: d.dayKey,
+      inMonth: d.inMonth,
+      dateIso: d.date.toISOString(),
+    })),
+  }));
+
   return (
     <TaskCalendarView
       monthLabel={monthLabel}
-      weeks={weeks}
+      weeks={weeksJson}
       tiles={tiles}
       ym={ym}
       year={year}

@@ -2,9 +2,9 @@
 
 import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
-import { Alert, Badge, Button, Field, Input, Modal, Select, Textarea } from "@/components/ui";
+import { ProjectTaskFormModal } from "@/components/ProjectTaskFormModal";
+import { Alert, Badge, Button } from "@/components/ui";
 import { readApiErrorBody } from "@/lib/api-client";
-import { dateInputToIso, isoToDateInputValue } from "@/lib/date-input";
 import { formatDate } from "@/lib/format";
 import {
   TASK_STATUS_LABEL,
@@ -27,15 +27,6 @@ export function ProjectTasksSection({ projectId, initialTasks }: { projectId: st
   const [busyId, setBusyId] = useState<string | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<ProjectTaskRow | null>(null);
-  const [formTitle, setFormTitle] = useState("");
-  const [formDescription, setFormDescription] = useState("");
-  const [formPlannedStart, setFormPlannedStart] = useState("");
-  const [formPlannedEnd, setFormPlannedEnd] = useState("");
-  const [formAssignee, setFormAssignee] = useState("");
-  const [formStatus, setFormStatus] = useState<"TODO" | "IN_PROGRESS" | "DONE">("TODO");
-  const [formPriority, setFormPriority] = useState<"" | "LOW" | "NORMAL" | "HIGH">("");
-  const [formIsDone, setFormIsDone] = useState(false);
-  const [saving, setSaving] = useState(false);
 
   const { activeTasks, doneTasks, todoCount, overdueCount, doneCount } = useMemo(() => {
     const active = initialTasks.filter((t) => !t.isDone);
@@ -54,31 +45,12 @@ export function ProjectTasksSection({ projectId, initialTasks }: { projectId: st
 
   function openNew() {
     setEditing(null);
-    setFormTitle("");
-    setFormDescription("");
-    setFormPlannedStart("");
-    setFormPlannedEnd("");
-    setFormAssignee("");
-    setFormStatus("TODO");
-    setFormPriority("");
-    setFormIsDone(false);
     setError(null);
     setModalOpen(true);
   }
 
   function openEdit(t: ProjectTaskRow) {
     setEditing(t);
-    setFormTitle(t.title);
-    setFormDescription(t.description ?? "");
-    setFormPlannedStart(isoToDateInputValue(t.plannedStartDate));
-    setFormPlannedEnd(isoToDateInputValue(t.plannedEndDate));
-    setFormAssignee(t.assigneeName ?? "");
-    const st = t.status as "TODO" | "IN_PROGRESS" | "DONE";
-    setFormStatus(st === "IN_PROGRESS" || st === "DONE" ? st : "TODO");
-    setFormPriority(
-      t.priority === "LOW" || t.priority === "NORMAL" || t.priority === "HIGH" ? t.priority : "",
-    );
-    setFormIsDone(t.isDone);
     setError(null);
     setModalOpen(true);
   }
@@ -90,75 +62,6 @@ export function ProjectTasksSection({ projectId, initialTasks }: { projectId: st
 
   async function refresh() {
     router.refresh();
-  }
-
-  function reconcileStatusForSave(): "TODO" | "IN_PROGRESS" | "DONE" {
-    if (formIsDone) return "DONE";
-    if (formStatus === "DONE") return "TODO";
-    return formStatus;
-  }
-
-  async function saveTask(e: React.FormEvent) {
-    e.preventDefault();
-    const title = formTitle.trim();
-    if (!title) {
-      setError("Podaj tytuł zadania.");
-      return;
-    }
-    setSaving(true);
-    setError(null);
-    const status = reconcileStatusForSave();
-    const body = {
-      title,
-      description: formDescription.trim() || null,
-      assigneeName: formAssignee.trim() || null,
-      plannedStartDate: dateInputToIso(formPlannedStart),
-      plannedEndDate: dateInputToIso(formPlannedEnd),
-      status,
-      priority: formPriority === "" ? null : formPriority,
-      isDone: formIsDone,
-    };
-    try {
-      if (editing) {
-        const res = await fetch(`/api/projects/${projectId}/tasks/${editing.id}`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(body),
-        });
-        const j = await res.json();
-        if (!res.ok) {
-          setError(readApiErrorBody(j));
-          return;
-        }
-      } else {
-        const payload: Record<string, unknown> = {
-          title: body.title,
-          description: body.description,
-          assigneeName: body.assigneeName,
-          plannedStartDate: body.plannedStartDate,
-          plannedEndDate: body.plannedEndDate,
-          status: body.status,
-          priority: body.priority,
-        };
-        if (formIsDone) payload.isDone = true;
-        const res = await fetch(`/api/projects/${projectId}/tasks`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload),
-        });
-        const j = await res.json();
-        if (!res.ok) {
-          setError(readApiErrorBody(j));
-          return;
-        }
-      }
-      closeModal();
-      await refresh();
-    } catch {
-      setError("Błąd sieci");
-    } finally {
-      setSaving(false);
-    }
   }
 
   async function toggleDone(t: ProjectTaskRow, done: boolean) {
@@ -228,7 +131,7 @@ export function ProjectTasksSection({ projectId, initialTasks }: { projectId: st
               type="checkbox"
               className="mt-[0.35rem] size-4 shrink-0 rounded border-zinc-300"
               checked={t.isDone}
-              disabled={busy || saving}
+              disabled={busy}
               onChange={(e) => void toggleDone(t, e.target.checked)}
               aria-label={t.isDone ? "Oznacz jako niewykonane" : "Oznacz jako wykonane"}
             />
@@ -365,74 +268,16 @@ export function ProjectTasksSection({ projectId, initialTasks }: { projectId: st
         </>
       )}
 
-      <Modal open={modalOpen} title={editing ? "Edycja zadania" : "Nowe zadanie"} onClose={() => !saving && closeModal()} size="lg">
-        <form
-          onSubmit={(e) => {
-            e.preventDefault();
-            void saveTask(e);
-          }}
-          className="space-y-3"
-        >
-          {error && modalOpen ? <Alert variant="error">{error}</Alert> : null}
-          <Field label="Tytuł">
-            <Input value={formTitle} onChange={(e) => setFormTitle(e.target.value)} disabled={saving} required />
-          </Field>
-          <Field label="Opis (opcjonalnie)">
-            <Textarea rows={3} value={formDescription} onChange={(e) => setFormDescription(e.target.value)} disabled={saving} />
-          </Field>
-          <div className="grid gap-3 sm:grid-cols-2">
-            <Field label="Data rozpoczęcia (opcjonalnie)">
-              <Input type="date" value={formPlannedStart} onChange={(e) => setFormPlannedStart(e.target.value)} disabled={saving} />
-            </Field>
-            <Field label="Termin / data zakończenia (opcjonalnie)">
-              <Input type="date" value={formPlannedEnd} onChange={(e) => setFormPlannedEnd(e.target.value)} disabled={saving} />
-            </Field>
-          </div>
-          <Field label="Osoba odpowiedzialna">
-            <Input
-              value={formAssignee}
-              onChange={(e) => setFormAssignee(e.target.value)}
-              disabled={saving}
-              placeholder="np. Jan Kowalski"
-            />
-          </Field>
-          <div className="grid gap-3 sm:grid-cols-2">
-            <Field label="Status">
-              <Select value={formStatus} onChange={(e) => setFormStatus(e.target.value as typeof formStatus)} disabled={saving || formIsDone}>
-                <option value="TODO">{TASK_STATUS_LABEL.TODO}</option>
-                <option value="IN_PROGRESS">{TASK_STATUS_LABEL.IN_PROGRESS}</option>
-                <option value="DONE">{TASK_STATUS_LABEL.DONE}</option>
-              </Select>
-            </Field>
-            <Field label="Priorytet (opcjonalnie)">
-              <Select value={formPriority} onChange={(e) => setFormPriority(e.target.value as typeof formPriority)} disabled={saving}>
-                <option value="">—</option>
-                <option value="LOW">{PRIORITY_LABEL.LOW}</option>
-                <option value="NORMAL">{PRIORITY_LABEL.NORMAL}</option>
-                <option value="HIGH">{PRIORITY_LABEL.HIGH}</option>
-              </Select>
-            </Field>
-          </div>
-          <label className="flex cursor-pointer items-center gap-2 text-sm text-zinc-700 dark:text-zinc-300">
-            <input
-              type="checkbox"
-              className="size-4 rounded border-zinc-300"
-              checked={formIsDone}
-              onChange={(e) => setFormIsDone(e.target.checked)}
-              disabled={saving}
-            />
-            Wykonane
-          </label>
-          <div className="flex flex-wrap justify-end gap-2 pt-2">
-            <Button type="button" variant="secondary" onClick={closeModal} disabled={saving}>
-              Anuluj
-            </Button>
-            <Button type="submit" disabled={saving}>
-              Zapisz
-            </Button>
-          </div>
-        </form>
-      </Modal>
+      <ProjectTaskFormModal
+        open={modalOpen}
+        projectId={projectId}
+        task={editing}
+        onClose={closeModal}
+        onSaved={() => {
+          void refresh();
+        }}
+        showOpenProjectLink={false}
+      />
     </section>
   );
 }

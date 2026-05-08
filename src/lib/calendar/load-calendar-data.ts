@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/db";
+import type { ProjectTaskRow } from "@/lib/projects/project-task-ui";
 import { buildMonthGrid, dayStartMs } from "@/lib/calendar/month-grid";
 import { spanOverlapsRange, taskCalendarSpanMs } from "@/lib/calendar/task-span";
 
@@ -7,12 +8,16 @@ export type CalendarTaskTile = {
   projectId: string;
   projectName: string;
   title: string;
+  description: string | null;
   assigneeName: string | null;
   priority: string | null;
   status: string;
   isDone: boolean;
+  doneAt: string | null;
   plannedStartDate: string | null;
   plannedEndDate: string | null;
+  createdAt: string;
+  updatedAt: string;
 };
 
 export type CalendarDayHeader = {
@@ -24,6 +29,27 @@ export type CalendarDayHeader = {
 export type CalendarWeekBlock = {
   days: CalendarDayHeader[];
 };
+
+export type CalendarWeekBlockJSON = {
+  days: { dayKey: string; inMonth: boolean; dateIso: string }[];
+};
+
+export function calendarTileToProjectTaskRow(t: CalendarTaskTile): ProjectTaskRow {
+  return {
+    id: t.id,
+    title: t.title,
+    description: t.description,
+    plannedStartDate: t.plannedStartDate,
+    plannedEndDate: t.plannedEndDate,
+    assigneeName: t.assigneeName,
+    status: t.status,
+    isDone: t.isDone,
+    doneAt: t.doneAt,
+    priority: t.priority,
+    createdAt: t.createdAt,
+    updatedAt: t.updatedAt,
+  };
+}
 
 export async function loadCalendarMonthData(
   year: number,
@@ -57,12 +83,16 @@ export async function loadCalendarMonthData(
       projectId: row.projectId,
       projectName: row.project.name,
       title: row.title,
+      description: row.description,
       assigneeName: row.assigneeName,
       priority: row.priority,
       status: row.status,
       isDone: row.isDone,
+      doneAt: row.doneAt ? row.doneAt.toISOString() : null,
       plannedStartDate: row.plannedStartDate ? row.plannedStartDate.toISOString() : null,
       plannedEndDate: row.plannedEndDate ? row.plannedEndDate.toISOString() : null,
+      createdAt: row.createdAt.toISOString(),
+      updatedAt: row.updatedAt.toISOString(),
     });
   }
 
