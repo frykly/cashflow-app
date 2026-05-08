@@ -115,3 +115,18 @@ export function layoutWeek(days: CalendarDayHeader[], tiles: CalendarTaskTile[])
 
   return { multiSegments, overflowMulti: overflowUnique, singleByDay: singlePacked };
 }
+
+/** Uchwyty resize tylko przy „prawdziwych” krawędziach zakresu (nie po przycięciu do tygodnia). */
+export function segmentResizeEdges(seg: WeekMultiSegment, week: CalendarDayHeader[]): { showLeft: boolean; showRight: boolean } {
+  if (!isMultiDayTile(seg.task)) return { showLeft: false, showRight: false };
+  const span = tileSpanMs(seg.task);
+  if (!span) return { showLeft: false, showRight: false };
+  const weekStartMs = dayStartMs(week[0]!.date);
+  const weekEndMs = dayStartMs(week[6]!.date);
+  const clampedStart = Math.max(span.startMs, weekStartMs);
+  const clampedEnd = Math.min(span.endMs, weekEndMs);
+  return {
+    showLeft: clampedStart === span.startMs,
+    showRight: clampedEnd === span.endMs,
+  };
+}

@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { useCallback, useMemo, useRef, useState } from "react";
 import { ProjectTaskFormModal } from "@/components/ProjectTaskFormModal";
 import { Alert, Badge, Button, Field, Input } from "@/components/ui";
-import { layoutWeek, tileSpanMs } from "@/lib/calendar/calendar-week-layout";
+import { layoutWeek, segmentResizeEdges, tileSpanMs } from "@/lib/calendar/calendar-week-layout";
 import {
   calendarTileToProjectTaskRow,
   type CalendarDayHeader,
@@ -13,7 +13,9 @@ import {
   type CalendarWeekBlockJSON,
 } from "@/lib/calendar/load-calendar-data";
 import {
+  calendarResizePreviewDayKeys,
   isNoOpDatePatch,
+  resizeTaskPlannedEdge,
   shiftTaskPlannedDatesToDay,
   type TaskPlannedDatePatch,
 } from "@/lib/calendar/task-calendar-shift-dates";
@@ -133,6 +135,7 @@ export function TaskCalendarView({ monthLabel, weeks, tiles, ym, year, month, as
   const [tileOverrides, setTileOverrides] = useState<Record<string, TileDateOverride>>({});
   const [draggingTaskId, setDraggingTaskId] = useState<string | null>(null);
   const [hoverDropDayKey, setHoverDropDayKey] = useState<string | null>(null);
+  const [resizeHighlightDayKeys, setResizeHighlightDayKeys] = useState<string[] | null>(null);
   const [calendarError, setCalendarError] = useState<string | null>(null);
 
   const weekDayBlocks = useMemo(() => weekJsonToDayHeaders(weeks), [weeks]);
@@ -159,10 +162,21 @@ export function TaskCalendarView({ monthLabel, weeks, tiles, ym, year, month, as
     weekIndex: number;
   } | null>(null);
 
-  const commitTaskMove = useCallback(
-    async (taskId: string, eventTile: CalendarTaskTile, dropDayKey: string) => {
+  const resizeRef = useRef<{
+    tile: CalendarTaskTile;
+    edge: "start" | "end";
+    pointerId: number;
+    weekIndex: number;
+  } | null>(null);
+
+  const persistTaskPlannedPatch = useCallback(
+    async (
+      taskId: string,
+      eventTile: CalendarTaskTile,
+      patch: TaskPlannedDatePatch | null,
+      options?: { alertOnError?: boolean },
+    ) => {
       const tile = displayTilesRef.current.find((t) => t.id === taskId) ?? eventTile;
-      const patch = shiftTaskPlannedDatesToDay(tile, dropDayKey);
       if (!patch || isNoOpDatePatch(patch, tile)) return;
 
       const nextDates = mergePatchIntoTileDates(tile, patch);
@@ -181,7 +195,9 @@ export function TaskCalendarView({ monthLabel, weeks, tiles, ym, year, month, as
             const { [taskId]: _, ...rest } = prev;
             return rest;
           });
-          setCalendarError(readApiErrorBody(j));
+          const msg = readApiErrorBody(j);
+          setCalendarError(msg);
+          if (options?.alertOnError) window.alert(msg);
           return;
         }
         setTileOverrides((prev) => {
@@ -194,10 +210,30 @@ export function TaskCalendarView({ monthLabel, weeks, tiles, ym, year, month, as
           const { [taskId]: _, ...rest } = prev;
           return rest;
         });
-        setCalendarError("Błąd sieci — nie zapisano przesunięcia.");
+        const msg = "Błąd sieci — nie zapisano zmian.";
+        setCalendarError(msg);
+        if (options?.alertOnError) window.alert(msg);
       }
     },
     [router],
+  );
+
+  const commitTaskMove = useCallback(
+    async (taskId: string, eventTile: CalendarTaskTile, dropDayKey: string) => {
+      const tile = displayTilesRef.current.find((t) => t.id === taskId) ?? eventTile;
+      const patch = shiftTaskPlannedDatesToDay(tile, dropDayKey);
+      await persistTaskPlannedPatch(taskId, eventTile, patch);
+    },
+    [persistTaskPlannedPatch],
+  );
+
+  const commitTaskResize = useCallback(
+    async (taskId: string, eventTile: CalendarTaskTile, edge: "start" | "end", dropDayKey: string) => {
+      const tile = displayTilesRef.current.find((t) => t.id === taskId) ?? eventTile;
+      const patch = resizeTaskPlannedEdge(tile, edge, dropDayKey);
+      await persistTaskPlannedPatch(taskId, eventTile, patch, { alertOnError: true });
+    },
+    [persistTaskPlannedPatch],
   );
 
   const endDragSession = useCallback(
@@ -281,6 +317,78 @@ export function TaskCalendarView({ monthLabel, weeks, tiles, ym, year, month, as
     setDraggingTaskId(null);
     setHoverDropDayKey(null);
   };
+
+  const onResizeEdgePointerDown = useCallback(
+    (e: React.PointerEvent, edge: "start" | "end", tile: CalendarTaskTile, weekIndex: number) => {
+      if (e.button !== 0) return;
+      e.stopPropagation();
+      e.preventDefault();
+      setCalendarError(null);
+      resizeRef.current = { tile, edge, pointerId: e.pointerId, weekIndex };
+      setHoverDropDayKey(null);
+      const week = weekDayBlocks[weekIndex];
+      const barEl = barGridRefs.current[weekIndex] ?? null;
+      const cur = displayTilesRef.current.find((t) => t.id === tile.id) ?? tile;
+      const hover = findDropDayKeyFromPoint(e.clientX, e.clientY, week, barEl);
+      setResizeHighlightDayKeys(calendarResizePreviewDayKeys(cur, edge, hover));
+      (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    },
+    [weekDayBlocks],
+  );
+
+  const onResizeEdgePointerMove = useCallback(
+    (e: React.PointerEvent) => {
+      const r = resizeRef.current;
+      if (!r || e.pointerId !== r.pointerId) return;
+      const week = weekDayBlocks[r.weekIndex];
+      const barEl = barGridRefs.current[r.weekIndex] ?? null;
+      const tile = displayTilesRef.current.find((t) => t.id === r.tile.id) ?? r.tile;
+      const hover = findDropDayKeyFromPoint(e.clientX, e.clientY, week, barEl);
+      setResizeHighlightDayKeys(calendarResizePreviewDayKeys(tile, r.edge, hover));
+    },
+    [weekDayBlocks],
+  );
+
+  const onResizeEdgePointerUp = useCallback(
+    (e: React.PointerEvent) => {
+      const r = resizeRef.current;
+      const el = e.currentTarget as HTMLElement;
+      if (!r || e.pointerId !== r.pointerId) return;
+      resizeRef.current = null;
+      try {
+        el.releasePointerCapture(e.pointerId);
+      } catch {
+        /* ignore */
+      }
+      const week = weekDayBlocks[r.weekIndex];
+      const barEl = barGridRefs.current[r.weekIndex] ?? null;
+      const dropKey = findDropDayKeyFromPoint(e.clientX, e.clientY, week, barEl);
+      const snapshot = r.tile;
+      setResizeHighlightDayKeys(null);
+      if (dropKey) {
+        void commitTaskResize(snapshot.id, snapshot, r.edge, dropKey);
+      }
+    },
+    [weekDayBlocks, commitTaskResize],
+  );
+
+  const onResizeEdgePointerCancel = useCallback((e: React.PointerEvent) => {
+    const r = resizeRef.current;
+    resizeRef.current = null;
+    if (r) {
+      try {
+        (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
+      } catch {
+        /* ignore */
+      }
+    }
+    setResizeHighlightDayKeys(null);
+  }, []);
+
+  const onResizeEdgeLostCapture = useCallback(() => {
+    resizeRef.current = null;
+    setResizeHighlightDayKeys(null);
+  }, []);
 
   const prev = addMonths(year, month, -1);
   const next = addMonths(year, month, 1);
@@ -398,7 +506,12 @@ export function TaskCalendarView({ monthLabel, weeks, tiles, ym, year, month, as
                           "py-1.5 text-center text-xs font-semibold tabular-nums",
                           d.inMonth ? "text-zinc-800 dark:text-zinc-100" : "text-zinc-400 opacity-[0.42]",
                           todayKey === d.dayKey ? "bg-sky-50/90 dark:bg-sky-950/45" : "",
-                          hoverDropDayKey === d.dayKey ? "ring-2 ring-inset ring-sky-400/80 dark:ring-sky-500/60" : "",
+                          hoverDropDayKey === d.dayKey
+                            ? "ring-2 ring-inset ring-sky-400/80 dark:ring-sky-500/60"
+                            : "",
+                          resizeHighlightDayKeys?.includes(d.dayKey)
+                            ? "bg-amber-100/75 ring-2 ring-inset ring-amber-400/85 dark:bg-amber-950/45 dark:ring-amber-500/55"
+                            : "",
                         ].join(" ")}
                       >
                         {d.date.getDate()}
@@ -419,44 +532,83 @@ export function TaskCalendarView({ monthLabel, weeks, tiles, ym, year, month, as
                           minHeight: barRowCount > 0 ? `${Math.max(1, barRowCount) * 28}px` : "8px",
                         }}
                       >
-                        {layout.multiSegments.map((seg) => (
-                          <button
-                            key={`${wkIndex}-${seg.task.id}-${seg.startCol}-${seg.endCol}-${seg.track}`}
-                            type="button"
-                            title={buildTaskTitleAttr(seg.task)}
-                            onPointerDown={(e) => onTaskPointerDown(e, seg.task, wkIndex)}
-                            onPointerMove={(e) => onTaskPointerMove(e, wkIndex)}
-                            onPointerUp={onTaskPointerUp}
-                            onPointerCancel={onTaskPointerCancel}
-                            onLostPointerCapture={onTaskLostPointerCapture}
-                            className={[
-                              taskBarClasses(seg.task),
-                              seg.task.isDone ? "line-through decoration-zinc-500/80" : "",
-                              "cursor-grab touch-none text-left active:cursor-grabbing",
-                              draggingTaskId === seg.task.id ? "opacity-55" : "",
-                            ].join(" ")}
-                            style={{
-                              gridColumn: `${seg.startCol + 1} / ${seg.endCol + 2}`,
-                              gridRow: seg.track + 1,
-                            }}
-                          >
-                            <span className={`min-w-0 flex-1 truncate font-medium ${seg.task.isDone ? "text-zinc-500" : ""}`}>
-                              {seg.task.title}
-                            </span>
-                            {seg.task.priority === "HIGH" ? (
-                              <span className="shrink-0 rounded px-1 text-[9px] font-bold uppercase tracking-wide text-red-700 dark:text-red-300">
-                                Pilne
-                              </span>
-                            ) : null}
-                            {seg.task.assigneeName ? (
-                              <span
-                                className={`hidden max-w-[40%] shrink-0 truncate text-[10px] md:inline ${seg.task.isDone ? "text-zinc-500" : "text-zinc-600 dark:text-zinc-400"}`}
-                              >
-                                {seg.task.assigneeName}
-                              </span>
-                            ) : null}
-                          </button>
-                        ))}
+                        {layout.multiSegments.map((seg) => {
+                          const edges = segmentResizeEdges(seg, week);
+                          return (
+                            <div
+                              key={`${wkIndex}-${seg.task.id}-${seg.startCol}-${seg.endCol}-${seg.track}`}
+                              className={[
+                                taskBarClasses(seg.task),
+                                draggingTaskId === seg.task.id ? "opacity-55" : "",
+                                "touch-none !gap-0 !px-0 !py-0",
+                              ].join(" ")}
+                              style={{
+                                gridColumn: `${seg.startCol + 1} / ${seg.endCol + 2}`,
+                                gridRow: seg.track + 1,
+                              }}
+                            >
+                              <div className="flex h-full min-h-[22px] w-full min-w-0 items-stretch overflow-hidden rounded-full">
+                                {edges.showLeft ? (
+                                  <button
+                                    type="button"
+                                    tabIndex={-1}
+                                    aria-label="Zmień początek zakresu"
+                                    className="z-[2] h-full w-1.5 shrink-0 cursor-ew-resize touch-none border-0 border-r border-black/15 bg-transparent p-0 hover:bg-black/10 dark:border-white/15 dark:hover:bg-white/15"
+                                    onPointerDown={(e) => onResizeEdgePointerDown(e, "start", seg.task, wkIndex)}
+                                    onPointerMove={onResizeEdgePointerMove}
+                                    onPointerUp={onResizeEdgePointerUp}
+                                    onPointerCancel={onResizeEdgePointerCancel}
+                                    onLostPointerCapture={onResizeEdgeLostCapture}
+                                  />
+                                ) : null}
+                                <button
+                                  type="button"
+                                  title={buildTaskTitleAttr(seg.task)}
+                                  onPointerDown={(e) => onTaskPointerDown(e, seg.task, wkIndex)}
+                                  onPointerMove={(e) => onTaskPointerMove(e, wkIndex)}
+                                  onPointerUp={onTaskPointerUp}
+                                  onPointerCancel={onTaskPointerCancel}
+                                  onLostPointerCapture={onTaskLostPointerCapture}
+                                  className={[
+                                    "flex min-h-[22px] min-w-0 flex-1 items-center gap-1 border-0 bg-transparent px-2 py-0.5 text-left outline-none",
+                                    "cursor-grab active:cursor-grabbing",
+                                  ].join(" ")}
+                                >
+                                  <span
+                                    className={`min-w-0 flex-1 truncate font-medium ${seg.task.isDone ? "text-zinc-500 line-through decoration-zinc-500/80" : ""}`}
+                                  >
+                                    {seg.task.title}
+                                  </span>
+                                  {seg.task.priority === "HIGH" ? (
+                                    <span className="shrink-0 rounded px-1 text-[9px] font-bold uppercase tracking-wide text-red-700 dark:text-red-300">
+                                      Pilne
+                                    </span>
+                                  ) : null}
+                                  {seg.task.assigneeName ? (
+                                    <span
+                                      className={`hidden max-w-[40%] shrink-0 truncate text-[10px] md:inline ${seg.task.isDone ? "text-zinc-500" : "text-zinc-600 dark:text-zinc-400"}`}
+                                    >
+                                      {seg.task.assigneeName}
+                                    </span>
+                                  ) : null}
+                                </button>
+                                {edges.showRight ? (
+                                  <button
+                                    type="button"
+                                    tabIndex={-1}
+                                    aria-label="Zmień koniec zakresu"
+                                    className="z-[2] h-full w-1.5 shrink-0 cursor-ew-resize touch-none border-0 border-l border-black/15 bg-transparent p-0 hover:bg-black/10 dark:border-white/15 dark:hover:bg-white/15"
+                                    onPointerDown={(e) => onResizeEdgePointerDown(e, "end", seg.task, wkIndex)}
+                                    onPointerMove={onResizeEdgePointerMove}
+                                    onPointerUp={onResizeEdgePointerUp}
+                                    onPointerCancel={onResizeEdgePointerCancel}
+                                    onLostPointerCapture={onResizeEdgeLostCapture}
+                                  />
+                                ) : null}
+                              </div>
+                            </div>
+                          );
+                        })}
                       </div>
                       {layout.overflowMulti.length > 0 ? (
                         <details className="group mt-1 border-t border-zinc-100/80 px-2 py-1 text-xs text-zinc-600 dark:border-zinc-800 dark:text-zinc-400">
@@ -494,7 +646,12 @@ export function TaskCalendarView({ monthLabel, weeks, tiles, ym, year, month, as
                             "min-h-[88px] border-l border-zinc-100/80 p-1 first:border-l-0 dark:border-zinc-800/50",
                             todayKey === d.dayKey ? "bg-sky-50/40 dark:bg-sky-950/20" : "",
                             d.inMonth ? "" : "bg-zinc-50/30 opacity-[0.42] dark:bg-zinc-900/20",
-                            hoverDropDayKey === d.dayKey ? "bg-sky-100/50 ring-2 ring-inset ring-sky-400/70 dark:bg-sky-950/35 dark:ring-sky-500/50" : "",
+                            hoverDropDayKey === d.dayKey
+                              ? "bg-sky-100/50 ring-2 ring-inset ring-sky-400/70 dark:bg-sky-950/35 dark:ring-sky-500/50"
+                              : "",
+                            resizeHighlightDayKeys?.includes(d.dayKey)
+                              ? "bg-amber-100/45 ring-2 ring-inset ring-amber-400/75 dark:bg-amber-950/35 dark:ring-amber-500/50"
+                              : "",
                           ].join(" ")}
                         >
                           <div className="flex flex-col gap-1">
