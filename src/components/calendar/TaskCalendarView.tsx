@@ -2,9 +2,9 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { ProjectTaskFormModal } from "@/components/ProjectTaskFormModal";
-import { Badge, Button, Field, Input } from "@/components/ui";
+import { Alert, Badge, Button, Field, Input } from "@/components/ui";
 import { layoutWeek, tileSpanMs } from "@/lib/calendar/calendar-week-layout";
 import {
   calendarTileToProjectTaskRow,
@@ -12,8 +12,14 @@ import {
   type CalendarTaskTile,
   type CalendarWeekBlockJSON,
 } from "@/lib/calendar/load-calendar-data";
+import {
+  isNoOpDatePatch,
+  shiftTaskPlannedDatesToDay,
+  type TaskPlannedDatePatch,
+} from "@/lib/calendar/task-calendar-shift-dates";
 import { addMonths, buildCalendarQuery, dayKeyFromDate, formatYm } from "@/lib/calendar/month-grid";
 import { formatDate } from "@/lib/format";
+import { readApiErrorBody } from "@/lib/api-client";
 import {
   PRIORITY_LABEL,
   TASK_STATUS_LABEL,
@@ -21,6 +27,9 @@ import {
 } from "@/lib/projects/project-task-ui";
 
 const WEEKDAY_LABELS = ["Pon", "Wt", "Śr", "Czw", "Pt", "Sob", "Nie"];
+
+/** Piksele — poniżej tego progu liczymy klik (modal), powyżej drag. */
+const DRAG_THRESHOLD_PX = 6;
 
 type Props = {
   monthLabel: string;
@@ -33,6 +42,8 @@ type Props = {
   hideDone: boolean;
 };
 
+type TileDateOverride = { plannedStartDate: string | null; plannedEndDate: string | null };
+
 function weekJsonToDayHeaders(weeks: CalendarWeekBlockJSON[]): CalendarDayHeader[][] {
   return weeks.map((w) =>
     w.days.map((d) => ({
@@ -41,6 +52,33 @@ function weekJsonToDayHeaders(weeks: CalendarWeekBlockJSON[]): CalendarDayHeader
       date: new Date(d.dateIso),
     })),
   );
+}
+
+function findDropDayKeyFromPoint(
+  clientX: number,
+  clientY: number,
+  week: CalendarDayHeader[],
+  barGridEl: HTMLElement | null,
+): string | null {
+  const fromPoint = document.elementsFromPoint(clientX, clientY);
+  for (const el of fromPoint) {
+    const h = el as HTMLElement;
+    const ds = h.closest("[data-calendar-drop-day]")?.getAttribute("data-calendar-drop-day");
+    if (ds) return ds;
+  }
+  if (barGridEl) {
+    const rect = barGridEl.getBoundingClientRect();
+    if (
+      clientY >= rect.top &&
+      clientY <= rect.bottom &&
+      clientX >= rect.left &&
+      clientX <= rect.right
+    ) {
+      const col = Math.min(6, Math.max(0, Math.floor(((clientX - rect.left) / rect.width) * 7)));
+      return week[col]?.dayKey ?? null;
+    }
+  }
+  return null;
 }
 
 function taskBarClasses(t: CalendarTaskTile): string {
@@ -81,10 +119,168 @@ function buildTaskTitleAttr(t: CalendarTaskTile): string {
   return parts.join(" · ");
 }
 
+function mergePatchIntoTileDates(tile: CalendarTaskTile, patch: TaskPlannedDatePatch): TileDateOverride {
+  return {
+    plannedStartDate:
+      patch.plannedStartDate !== undefined ? patch.plannedStartDate : tile.plannedStartDate,
+    plannedEndDate: patch.plannedEndDate !== undefined ? patch.plannedEndDate : tile.plannedEndDate,
+  };
+}
+
 export function TaskCalendarView({ monthLabel, weeks, tiles, ym, year, month, assignee, hideDone }: Props) {
   const router = useRouter();
   const [editTile, setEditTile] = useState<CalendarTaskTile | null>(null);
+  const [tileOverrides, setTileOverrides] = useState<Record<string, TileDateOverride>>({});
+  const [draggingTaskId, setDraggingTaskId] = useState<string | null>(null);
+  const [hoverDropDayKey, setHoverDropDayKey] = useState<string | null>(null);
+  const [calendarError, setCalendarError] = useState<string | null>(null);
+
   const weekDayBlocks = useMemo(() => weekJsonToDayHeaders(weeks), [weeks]);
+
+  const displayTiles = useMemo(() => {
+    return tiles.map((t) => {
+      const o = tileOverrides[t.id];
+      if (!o) return t;
+      return { ...t, ...o };
+    });
+  }, [tiles, tileOverrides]);
+
+  const displayTilesRef = useRef(displayTiles);
+  displayTilesRef.current = displayTiles;
+
+  const barGridRefs = useRef<(HTMLDivElement | null)[]>([]);
+
+  const dragRef = useRef<{
+    tile: CalendarTaskTile;
+    pointerId: number;
+    startX: number;
+    startY: number;
+    moved: boolean;
+    weekIndex: number;
+  } | null>(null);
+
+  const commitTaskMove = useCallback(
+    async (taskId: string, eventTile: CalendarTaskTile, dropDayKey: string) => {
+      const tile = displayTilesRef.current.find((t) => t.id === taskId) ?? eventTile;
+      const patch = shiftTaskPlannedDatesToDay(tile, dropDayKey);
+      if (!patch || isNoOpDatePatch(patch, tile)) return;
+
+      const nextDates = mergePatchIntoTileDates(tile, patch);
+      setCalendarError(null);
+      setTileOverrides((prev) => ({ ...prev, [taskId]: nextDates }));
+
+      try {
+        const res = await fetch(`/api/projects/${tile.projectId}/tasks/${taskId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(patch),
+        });
+        const j = await res.json();
+        if (!res.ok) {
+          setTileOverrides((prev) => {
+            const { [taskId]: _, ...rest } = prev;
+            return rest;
+          });
+          setCalendarError(readApiErrorBody(j));
+          return;
+        }
+        setTileOverrides((prev) => {
+          const { [taskId]: _, ...rest } = prev;
+          return rest;
+        });
+        router.refresh();
+      } catch {
+        setTileOverrides((prev) => {
+          const { [taskId]: _, ...rest } = prev;
+          return rest;
+        });
+        setCalendarError("Błąd sieci — nie zapisano przesunięcia.");
+      }
+    },
+    [router],
+  );
+
+  const endDragSession = useCallback(
+    (e: React.PointerEvent, el: HTMLElement) => {
+      const d = dragRef.current;
+      if (!d || e.pointerId !== d.pointerId) return;
+      dragRef.current = null;
+      try {
+        el.releasePointerCapture(e.pointerId);
+      } catch {
+        /* ignore */
+      }
+      const week = weekDayBlocks[d.weekIndex];
+      const barEl = barGridRefs.current[d.weekIndex] ?? null;
+      const dropKey = d.moved ? findDropDayKeyFromPoint(e.clientX, e.clientY, week, barEl) : null;
+
+      const wasMove = d.moved;
+      const taskSnapshot = d.tile;
+
+      setDraggingTaskId(null);
+      setHoverDropDayKey(null);
+
+      if (wasMove && dropKey) {
+        void commitTaskMove(taskSnapshot.id, taskSnapshot, dropKey);
+      } else if (!wasMove) {
+        setEditTile(taskSnapshot);
+      }
+    },
+    [commitTaskMove, weekDayBlocks],
+  );
+
+  const onTaskPointerDown = (e: React.PointerEvent, tile: CalendarTaskTile, weekIndex: number) => {
+    if (e.button !== 0) return;
+    setCalendarError(null);
+    dragRef.current = {
+      tile,
+      pointerId: e.pointerId,
+      startX: e.clientX,
+      startY: e.clientY,
+      moved: false,
+      weekIndex,
+    };
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+  };
+
+  const onTaskPointerMove = (e: React.PointerEvent, weekIndex: number) => {
+    const d = dragRef.current;
+    if (!d || e.pointerId !== d.pointerId) return;
+    const dist = Math.hypot(e.clientX - d.startX, e.clientY - d.startY);
+    if (dist > DRAG_THRESHOLD_PX) {
+      if (!d.moved) {
+        d.moved = true;
+        setDraggingTaskId(d.tile.id);
+      }
+      const week = weekDayBlocks[weekIndex];
+      const barEl = barGridRefs.current[weekIndex] ?? null;
+      setHoverDropDayKey(findDropDayKeyFromPoint(e.clientX, e.clientY, week, barEl));
+    }
+  };
+
+  const onTaskPointerUp = (e: React.PointerEvent) => {
+    endDragSession(e, e.currentTarget as HTMLElement);
+  };
+
+  const onTaskPointerCancel = (e: React.PointerEvent) => {
+    const d = dragRef.current;
+    dragRef.current = null;
+    if (d) {
+      try {
+        (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
+      } catch {
+        /* ignore */
+      }
+    }
+    setDraggingTaskId(null);
+    setHoverDropDayKey(null);
+  };
+
+  const onTaskLostPointerCapture = () => {
+    dragRef.current = null;
+    setDraggingTaskId(null);
+    setHoverDropDayKey(null);
+  };
 
   const prev = addMonths(year, month, -1);
   const next = addMonths(year, month, 1);
@@ -124,6 +320,12 @@ export function TaskCalendarView({ monthLabel, weeks, tiles, ym, year, month, as
           </Link>
         </div>
       </div>
+
+      {calendarError ? (
+        <Alert variant="error">
+          {calendarError}
+        </Alert>
+      ) : null}
 
       <form
         method="get"
@@ -180,7 +382,7 @@ export function TaskCalendarView({ monthLabel, weeks, tiles, ym, year, month, as
 
           <div className="divide-y divide-zinc-100 dark:divide-zinc-800/80">
             {weekDayBlocks.map((week, wkIndex) => {
-              const layout = layoutWeek(week, tiles);
+              const layout = layoutWeek(week, displayTiles);
               const maxTrack = layout.multiSegments.reduce((m, s) => Math.max(m, s.track), -1);
               const barRowCount = maxTrack + 1;
               const showBarLane = layout.multiSegments.length > 0 || layout.overflowMulti.length > 0;
@@ -191,10 +393,12 @@ export function TaskCalendarView({ monthLabel, weeks, tiles, ym, year, month, as
                     {week.map((d) => (
                       <div
                         key={d.dayKey}
+                        data-calendar-drop-day={d.dayKey}
                         className={[
                           "py-1.5 text-center text-xs font-semibold tabular-nums",
                           d.inMonth ? "text-zinc-800 dark:text-zinc-100" : "text-zinc-400 opacity-[0.42]",
                           todayKey === d.dayKey ? "bg-sky-50/90 dark:bg-sky-950/45" : "",
+                          hoverDropDayKey === d.dayKey ? "ring-2 ring-inset ring-sky-400/80 dark:ring-sky-500/60" : "",
                         ].join(" ")}
                       >
                         {d.date.getDate()}
@@ -205,6 +409,9 @@ export function TaskCalendarView({ monthLabel, weeks, tiles, ym, year, month, as
                   {showBarLane ? (
                     <div className="border-b border-zinc-100/90 bg-gradient-to-b from-zinc-50/90 to-white py-1 dark:border-zinc-800/60 dark:from-zinc-900/35 dark:to-zinc-950">
                       <div
+                        ref={(el) => {
+                          barGridRefs.current[wkIndex] = el;
+                        }}
                         className="grid gap-y-1 px-0.5"
                         style={{
                           gridTemplateColumns: "repeat(7, minmax(0, 1fr))",
@@ -217,11 +424,16 @@ export function TaskCalendarView({ monthLabel, weeks, tiles, ym, year, month, as
                             key={`${wkIndex}-${seg.task.id}-${seg.startCol}-${seg.endCol}-${seg.track}`}
                             type="button"
                             title={buildTaskTitleAttr(seg.task)}
-                            onClick={() => setEditTile(seg.task)}
+                            onPointerDown={(e) => onTaskPointerDown(e, seg.task, wkIndex)}
+                            onPointerMove={(e) => onTaskPointerMove(e, wkIndex)}
+                            onPointerUp={onTaskPointerUp}
+                            onPointerCancel={onTaskPointerCancel}
+                            onLostPointerCapture={onTaskLostPointerCapture}
                             className={[
                               taskBarClasses(seg.task),
                               seg.task.isDone ? "line-through decoration-zinc-500/80" : "",
-                              "cursor-pointer text-left",
+                              "cursor-grab touch-none text-left active:cursor-grabbing",
+                              draggingTaskId === seg.task.id ? "opacity-55" : "",
                             ].join(" ")}
                             style={{
                               gridColumn: `${seg.startCol + 1} / ${seg.endCol + 2}`,
@@ -277,10 +489,12 @@ export function TaskCalendarView({ monthLabel, weeks, tiles, ym, year, month, as
                       return (
                         <div
                           key={d.dayKey}
+                          data-calendar-drop-day={d.dayKey}
                           className={[
                             "min-h-[88px] border-l border-zinc-100/80 p-1 first:border-l-0 dark:border-zinc-800/50",
                             todayKey === d.dayKey ? "bg-sky-50/40 dark:bg-sky-950/20" : "",
                             d.inMonth ? "" : "bg-zinc-50/30 opacity-[0.42] dark:bg-zinc-900/20",
+                            hoverDropDayKey === d.dayKey ? "bg-sky-100/50 ring-2 ring-inset ring-sky-400/70 dark:bg-sky-950/35 dark:ring-sky-500/50" : "",
                           ].join(" ")}
                         >
                           <div className="flex flex-col gap-1">
@@ -289,8 +503,16 @@ export function TaskCalendarView({ monthLabel, weeks, tiles, ym, year, month, as
                                 key={t.id}
                                 type="button"
                                 title={buildTaskTitleAttr(t)}
-                                onClick={() => setEditTile(t)}
-                                className={singleCardClasses(t)}
+                                onPointerDown={(e) => onTaskPointerDown(e, t, wkIndex)}
+                                onPointerMove={(e) => onTaskPointerMove(e, wkIndex)}
+                                onPointerUp={onTaskPointerUp}
+                                onPointerCancel={onTaskPointerCancel}
+                                onLostPointerCapture={onTaskLostPointerCapture}
+                                className={[
+                                  singleCardClasses(t),
+                                  "cursor-grab touch-none active:cursor-grabbing",
+                                  draggingTaskId === t.id ? "opacity-55" : "",
+                                ].join(" ")}
                               >
                                 <div className={`text-left text-[11px] font-medium leading-snug ${t.isDone ? "text-zinc-500 line-through" : "text-zinc-900 dark:text-zinc-100"}`}>
                                   {t.title}
