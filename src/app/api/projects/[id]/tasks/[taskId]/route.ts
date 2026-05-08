@@ -23,24 +23,18 @@ export async function PATCH(req: Request, ctx: Ctx) {
   try {
     const data = projectTaskUpdateSchema.parse(body);
 
-    let status = existing.status;
-    let isDone = existing.isDone;
-    let doneAt: Date | null = existing.doneAt;
+    const update: Prisma.ProjectTaskUpdateInput = {};
+
     if (data.status !== undefined || data.isDone !== undefined) {
       const lifePatch: { status?: "TODO" | "IN_PROGRESS" | "DONE"; isDone?: boolean } = {};
       if (data.status !== undefined) lifePatch.status = data.status;
       if (data.isDone !== undefined) lifePatch.isDone = data.isDone;
       const life = mergeTaskLifecycle(existing, lifePatch);
-      status = life.status;
-      isDone = life.isDone;
-      doneAt = life.doneAt;
+      update.status = life.status;
+      update.isDone = life.isDone;
+      update.doneAt = life.doneAt;
     }
 
-    const update: Prisma.ProjectTaskUpdateInput = {
-      status,
-      isDone,
-      doneAt,
-    };
     if (data.title !== undefined) update.title = data.title.trim();
     if (data.description !== undefined) update.description = data.description;
     if (data.assigneeName !== undefined) update.assigneeName = data.assigneeName;

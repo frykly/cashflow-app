@@ -1,9 +1,9 @@
 import { jsonData } from "@/lib/api/json-response";
 import {
   filterGlobalTasks,
+  parseGlobalTaskSort,
   parseGlobalTaskView,
-  parseStatusFilter,
-  sortTasksForGlobalView,
+  sortGlobalTaskList,
 } from "@/lib/projects/global-task-filters";
 import { loadGlobalProjectTasks } from "@/lib/projects/load-global-tasks";
 
@@ -12,10 +12,10 @@ export async function GET(req: Request) {
   const url = new URL(req.url);
   const view = parseGlobalTaskView(url.searchParams.get("view") ?? undefined);
   const assignee = url.searchParams.get("assignee") ?? "";
-  const status = parseStatusFilter(url.searchParams.get("status") ?? undefined);
+  const sort = parseGlobalTaskSort(url.searchParams.get("sort") ?? undefined, view);
 
   const all = await loadGlobalProjectTasks();
-  const filtered = filterGlobalTasks(all, view, { assignee, status });
-  const tasks = sortTasksForGlobalView(filtered, view);
+  const filtered = filterGlobalTasks(all, view, { assignee });
+  const tasks = sortGlobalTaskList(filtered, sort);
   return jsonData(tasks);
 }

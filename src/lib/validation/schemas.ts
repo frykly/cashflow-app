@@ -26,6 +26,18 @@ function optionalIsoNullable() {
   );
 }
 
+/** PATCH: brak klucza → nie zmieniaj; "" / null → null. */
+function optionalIsoNullableFieldUpdate() {
+  return z.preprocess(
+    (v: unknown) => {
+      if (v === undefined) return undefined;
+      if (v === "" || v === null) return null;
+      return normalizeDateInput(v);
+    },
+    z.union([isoDateTime, z.null()]).optional(),
+  );
+}
+
 const vatRateField = z.preprocess((v: unknown) => {
   if (v === "" || v === undefined || v === null) return 23;
   const n = Number(v);
@@ -173,6 +185,17 @@ const optionalTrimmed = (max: number) =>
     z.union([z.string().max(max), z.null()]).optional(),
   );
 
+/** PATCH zadania: brak klucza w JSON → nie zmieniaj pola; "" / null → null. */
+const optionalTrimmedFieldUpdate = (max: number) =>
+  z.preprocess(
+    (v) => {
+      if (v === undefined) return undefined;
+      if (v === "" || v === null) return null;
+      return String(v).trim();
+    },
+    z.union([z.string().max(max), z.null()]).optional(),
+  );
+
 /** Wartość `Project.lifecycleStatus` / `settlementStatus` — dowolny krótki string (slug legacy + słownik). */
 const optionalProjectStatusValue = z.preprocess(
   (v) => (v === "" || v === null || v === undefined ? null : String(v).trim()),
@@ -224,6 +247,15 @@ const optionalTaskPriority = z.preprocess(
   z.union([projectTaskPrioritySchema, z.null()]).optional(),
 );
 
+const optionalTaskPriorityUpdate = z.preprocess(
+  (v) => {
+    if (v === undefined) return undefined;
+    if (v === "" || v === null) return null;
+    return v;
+  },
+  z.union([projectTaskPrioritySchema, z.null()]).optional(),
+);
+
 export const projectTaskCreateSchema = z.object({
   title: z.string().min(1).max(500),
   description: optionalTrimmed(5000),
@@ -237,12 +269,12 @@ export const projectTaskCreateSchema = z.object({
 
 export const projectTaskUpdateSchema = z.object({
   title: z.string().min(1).max(500).optional(),
-  description: optionalTrimmed(5000),
-  assigneeName: optionalTrimmed(200),
-  plannedStartDate: optionalIsoNullable(),
-  plannedEndDate: optionalIsoNullable(),
+  description: optionalTrimmedFieldUpdate(5000),
+  assigneeName: optionalTrimmedFieldUpdate(200),
+  plannedStartDate: optionalIsoNullableFieldUpdate(),
+  plannedEndDate: optionalIsoNullableFieldUpdate(),
   status: projectTaskStatusSchema.optional(),
-  priority: optionalTaskPriority,
+  priority: optionalTaskPriorityUpdate,
   isDone: z.boolean().optional(),
 });
 

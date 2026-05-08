@@ -7,7 +7,7 @@ import { Alert, Badge, Button, Field, Input, Modal, Select, Textarea } from "@/c
 import { readApiErrorBody } from "@/lib/api-client";
 import { dateInputToIso, isoToDateInputValue } from "@/lib/date-input";
 import { formatDate } from "@/lib/format";
-import type { GlobalProjectTaskRow, GlobalTaskTabCounts, GlobalTaskView, StatusFilter } from "@/lib/projects/global-task-filters";
+import { type GlobalProjectTaskRow, type GlobalTaskTabCounts, type GlobalTaskView, type GlobalTaskSort, defaultSortForView } from "@/lib/projects/global-task-filters";
 import {
   TASK_STATUS_LABEL,
   PRIORITY_LABEL,
@@ -19,13 +19,18 @@ import {
   type ProjectTaskRow,
 } from "@/lib/projects/project-task-ui";
 
-function tasksHref(view: GlobalTaskView, assignee: string, status: StatusFilter): string {
+function normalizeSortForView(view: GlobalTaskView, sort: GlobalTaskSort): GlobalTaskSort {
+  if (view !== "done" && sort === "done_new") return "deadline";
+  return sort;
+}
+
+function tasksHref(view: GlobalTaskView, assignee: string, sort: GlobalTaskSort): string {
   const p = new URLSearchParams();
   p.set("view", view);
   if (assignee.trim()) p.set("assignee", assignee.trim());
-  if (status) p.set("status", status);
-  const q = p.toString();
-  return `/tasks?${q}`;
+  const s = normalizeSortForView(view, sort);
+  if (s !== defaultSortForView(view)) p.set("sort", s);
+  return `/tasks?${p.toString()}`;
 }
 
 type Props = {
@@ -33,7 +38,19 @@ type Props = {
   view: GlobalTaskView;
   tabCounts: GlobalTaskTabCounts;
   assignee: string;
-  status: StatusFilter;
+  sort: GlobalTaskSort;
+};
+
+const SORT_OPTIONS_BASE: { value: GlobalTaskSort; label: string }[] = [
+  { value: "deadline", label: "Termin najbliżej" },
+  { value: "start", label: "Start najbliżej" },
+  { value: "created_new", label: "Utworzone najnowsze" },
+  { value: "created_old", label: "Utworzone najstarsze" },
+];
+
+const SORT_OPTION_DONE: { value: GlobalTaskSort; label: string } = {
+  value: "done_new",
+  label: "Data wykonania (najnowsze)",
 };
 
 const TABS: { id: GlobalTaskView; label: string; countKey: keyof GlobalTaskTabCounts }[] = [
@@ -44,7 +61,7 @@ const TABS: { id: GlobalTaskView; label: string; countKey: keyof GlobalTaskTabCo
   { id: "done", label: "Wykonane", countKey: "done" },
 ];
 
-export function GlobalTasksClient({ tasks, view, tabCounts, assignee, status }: Props) {
+export function GlobalTasksClient({ tasks, view, tabCounts, assignee, sort }: Props) {
   const router = useRouter();
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -298,7 +315,7 @@ export function GlobalTasksClient({ tasks, view, tabCounts, assignee, status }: 
 
       <div className="flex flex-wrap gap-2 border-b border-zinc-200 pb-3 dark:border-zinc-800">
         {TABS.map((tab) => {
-          const href = tasksHref(tab.id, assignee, status);
+          const href = tasksHref(tab.id, assignee, sort);
           const active = view === tab.id;
           const n = tabCounts[tab.countKey];
           return (
@@ -320,18 +337,19 @@ export function GlobalTasksClient({ tasks, view, tabCounts, assignee, status }: 
 
       <form method="get" action="/tasks" className="flex flex-wrap items-end gap-3 rounded-lg border border-zinc-200 bg-white p-3 dark:border-zinc-800 dark:bg-zinc-950">
         <input type="hidden" name="view" value={view} />
-        <div className="min-w-[200px] flex-1">
+        <div className="min-w-[180px] flex-1">
           <Field label="Odpowiedzialny (zawiera)">
             <Input type="search" name="assignee" defaultValue={assignee} placeholder="np. Jan" />
           </Field>
         </div>
-        <div className="w-full sm:w-44">
-          <Field label="Status">
-            <Select name="status" defaultValue={status}>
-              <option value="">Wszystkie</option>
-              <option value="TODO">{TASK_STATUS_LABEL.TODO}</option>
-              <option value="IN_PROGRESS">{TASK_STATUS_LABEL.IN_PROGRESS}</option>
-              <option value="DONE">{TASK_STATUS_LABEL.DONE}</option>
+        <div className="w-full min-w-[200px] sm:w-56">
+          <Field label="Sortowanie">
+            <Select name="sort" defaultValue={normalizeSortForView(view, sort)}>
+              {(view === "done" ? [...SORT_OPTIONS_BASE, SORT_OPTION_DONE] : SORT_OPTIONS_BASE).map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
             </Select>
           </Field>
         </div>
