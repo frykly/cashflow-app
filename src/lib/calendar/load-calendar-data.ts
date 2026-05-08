@@ -11,22 +11,25 @@ export type CalendarTaskTile = {
   priority: string | null;
   status: string;
   isDone: boolean;
+  plannedStartDate: string | null;
+  plannedEndDate: string | null;
 };
 
-export type CalendarDayCell = {
+export type CalendarDayHeader = {
   dayKey: string;
   inMonth: boolean;
   date: Date;
-  tasks: CalendarTaskTile[];
 };
 
-export type CalendarWeekRow = CalendarDayCell[];
+export type CalendarWeekBlock = {
+  days: CalendarDayHeader[];
+};
 
 export async function loadCalendarMonthData(
   year: number,
   month: number,
   options: { assignee?: string; hideDone: boolean },
-): Promise<{ monthLabel: string; weekRows: CalendarWeekRow[] }> {
+): Promise<{ monthLabel: string; weeks: CalendarWeekBlock[]; tiles: CalendarTaskTile[] }> {
   const { cells, weekRows: cellWeeks } = buildMonthGrid(year, month);
   const gridStart = cells[0]!.date;
   const gridEnd = cells[cells.length - 1]!.date;
@@ -44,8 +47,6 @@ export async function loadCalendarMonthData(
     orderBy: [{ isDone: "asc" }, { plannedEndDate: "asc" }, { plannedStartDate: "asc" }, { title: "asc" }],
   });
 
-  const byId = new Map(raw.map((r) => [r.id, r]));
-
   const tiles: CalendarTaskTile[] = [];
   for (const row of raw) {
     const span = taskCalendarSpanMs(row.plannedStartDate, row.plannedEndDate);
@@ -60,40 +61,22 @@ export async function loadCalendarMonthData(
       priority: row.priority,
       status: row.status,
       isDone: row.isDone,
+      plannedStartDate: row.plannedStartDate ? row.plannedStartDate.toISOString() : null,
+      plannedEndDate: row.plannedEndDate ? row.plannedEndDate.toISOString() : null,
     });
-  }
-
-  const tasksByDayKey = new Map<string, CalendarTaskTile[]>();
-  for (const c of cells) {
-    tasksByDayKey.set(c.dayKey, []);
-  }
-
-  for (const task of tiles) {
-    const row = byId.get(task.id);
-    if (!row) continue;
-    const span = taskCalendarSpanMs(row.plannedStartDate, row.plannedEndDate);
-    if (!span) continue;
-    for (const c of cells) {
-      const d = dayStartMs(c.date);
-      if (d >= span.startMs && d <= span.endMs) {
-        const list = tasksByDayKey.get(c.dayKey)!;
-        if (!list.some((t) => t.id === task.id)) list.push(task);
-      }
-    }
   }
 
   const monthLabel = new Intl.DateTimeFormat("pl-PL", { month: "long", year: "numeric" }).format(
     new Date(year, month - 1, 1),
   );
 
-  const weekRows: CalendarWeekRow[] = cellWeeks.map((week) =>
-    week.map((c) => ({
+  const weeks: CalendarWeekBlock[] = cellWeeks.map((week) => ({
+    days: week.map((c) => ({
       dayKey: c.dayKey,
       inMonth: c.inMonth,
       date: c.date,
-      tasks: tasksByDayKey.get(c.dayKey) ?? [],
     })),
-  );
+  }));
 
-  return { monthLabel, weekRows };
+  return { monthLabel, weeks, tiles };
 }

@@ -13,12 +13,13 @@ export default async function CalendarPage({ searchParams }: PageProps) {
   const hideDone = sp.hideDone === "1";
   const ym = formatYm(year, month);
 
-  const { monthLabel, weekRows } = await loadCalendarMonthData(year, month, { assignee, hideDone });
+  const { monthLabel, weeks, tiles } = await loadCalendarMonthData(year, month, { assignee, hideDone });
 
   return (
     <TaskCalendarView
       monthLabel={monthLabel}
-      weekRows={weekRows}
+      weeks={weeks}
+      tiles={tiles}
       ym={ym}
       year={year}
       month={month}
