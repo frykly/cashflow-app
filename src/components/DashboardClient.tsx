@@ -2,9 +2,10 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
-import { Alert, Button, Spinner } from "@/components/ui";
+import { Alert, Badge, Button, Spinner } from "@/components/ui";
 import { formatDate, formatMoney } from "@/lib/format";
 import { readApiErrorBody } from "@/lib/api-client";
+import { PRIORITY_LABEL, TASK_STATUS_LABEL } from "@/lib/projects/project-task-ui";
 
 type FlowRow = { kind: string; id: string; date: string; label: string; mainAmount: number };
 
@@ -42,6 +43,55 @@ type OverduePlanned = {
 
 type CatRow = { categoryId: string | null; name: string; mainAmount: number };
 
+type OperationalOverdueTask = {
+  id: string;
+  projectId: string;
+  projectName: string;
+  title: string;
+  assigneeName: string | null;
+  priority: string | null;
+  plannedEndDate: string;
+  daysOverdue: number;
+};
+
+type OperationalTodayTask = {
+  id: string;
+  projectId: string;
+  projectName: string;
+  title: string;
+  status: string;
+  assigneeName: string | null;
+};
+
+type OperationalAttentionProject = {
+  id: string;
+  name: string;
+  lifecycleStatus: string | null;
+  settlementStatus: string | null;
+  lifecycleLabel: string;
+  settlementLabel: string;
+  overdueTaskCount: number;
+  activeMissingCount: number;
+};
+
+type OperationalStaleProject = {
+  id: string;
+  name: string;
+  lifecycleStatus: string | null;
+  settlementStatus: string | null;
+  lifecycleLabel: string;
+  settlementLabel: string;
+  lastActivityAt: string;
+};
+
+type Operational = {
+  overdueTasks: OperationalOverdueTask[];
+  overdueTasksTotalCount: number;
+  todayTasks: OperationalTodayTask[];
+  attentionProjects: OperationalAttentionProject[];
+  staleProjects: OperationalStaleProject[];
+};
+
 type Dashboard = {
   balances: { main: number; vat: number; total: number };
   planned30: { plannedInflowTotal: number; plannedOutflowTotal: number };
@@ -61,6 +111,7 @@ type Dashboard = {
     income: CatRow[];
     expense: CatRow[];
   };
+  operational: Operational;
 };
 
 export function DashboardClient() {
@@ -119,7 +170,9 @@ export function DashboardClient() {
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight text-zinc-900 dark:text-zinc-50">Dashboard</h1>
-          <p className="mt-1 text-sm text-zinc-500">Przegląd sald, terminów i planowanych ruchów na koncie głównym.</p>
+          <p className="mt-1 text-sm text-zinc-500">
+            Przegląd sald, terminów i planowanych ruchów — oraz skrót operacyjny: zadania i projekty wymagające reakcji.
+          </p>
         </div>
         <div className="flex flex-wrap gap-2">
           <Button type="button" variant="secondary" onClick={() => load()} disabled={loading}>
@@ -143,6 +196,203 @@ export function DashboardClient() {
           .
         </Alert>
       )}
+
+      {data.operational ? (
+        <section className="space-y-4">
+          <div>
+            <h2 className="text-lg font-semibold text-zinc-900 dark:text-zinc-50">Centrum operacyjne</h2>
+            <p className="mt-1 text-sm text-zinc-500">Co dziś wymaga uwagi — zadania, terminy i projekty.</p>
+          </div>
+          <div className="grid gap-4 lg:grid-cols-2">
+            <div className="flex flex-col rounded-xl border border-red-200/80 bg-gradient-to-b from-red-50/90 to-white p-4 shadow-sm dark:border-red-900/45 dark:from-red-950/35 dark:to-zinc-950">
+              <div className="flex items-start justify-between gap-2">
+                <h3 className="text-sm font-semibold text-red-900 dark:text-red-200">Zaległe zadania</h3>
+                {data.operational.overdueTasksTotalCount > 0 ? (
+                  <Badge variant="danger">{data.operational.overdueTasksTotalCount}</Badge>
+                ) : null}
+              </div>
+              {data.operational.overdueTasks.length === 0 ? (
+                <p className="mt-3 text-sm text-zinc-600 dark:text-zinc-400">Brak zaległych zadań z terminem.</p>
+              ) : (
+                <ul className="mt-3 flex flex-1 flex-col gap-2">
+                  {data.operational.overdueTasks.map((t) => (
+                    <li
+                      key={t.id}
+                      className="rounded-lg border border-red-100/80 bg-white/80 px-3 py-2 dark:border-red-900/30 dark:bg-zinc-900/40"
+                    >
+                      <div className="flex flex-wrap items-center gap-1.5 gap-y-0.5">
+                        <Link
+                          href={`/projects/${t.projectId}`}
+                          className="min-w-0 flex-1 font-medium text-zinc-900 underline decoration-red-900/20 underline-offset-2 dark:text-zinc-100"
+                        >
+                          {t.title}
+                        </Link>
+                        {t.priority ? (
+                          <Badge variant={t.priority === "HIGH" ? "danger" : "default"}>
+                            {PRIORITY_LABEL[t.priority] ?? t.priority}
+                          </Badge>
+                        ) : null}
+                      </div>
+                      <div className="mt-1 text-xs text-zinc-600 dark:text-zinc-400">
+                        <Link href={`/projects/${t.projectId}`} className="font-medium text-red-800 hover:underline dark:text-red-300">
+                          {t.projectName}
+                        </Link>
+                        <span className="text-zinc-400"> · </span>
+                        <span className="font-medium tabular-nums text-red-700 dark:text-red-400">
+                          {t.daysOverdue} {t.daysOverdue === 1 ? "dzień" : "dni"} po terminie
+                        </span>
+                        {t.assigneeName ? (
+                          <>
+                            <span className="text-zinc-400"> · </span>
+                            {t.assigneeName}
+                          </>
+                        ) : null}
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {data.operational.overdueTasksTotalCount > data.operational.overdueTasks.length ? (
+                <Link
+                  href="/tasks?view=overdue"
+                  className="mt-3 text-sm font-medium text-red-800 underline underline-offset-2 hover:text-red-950 dark:text-red-300"
+                >
+                  Zobacz wszystkie zadania ({data.operational.overdueTasksTotalCount})
+                </Link>
+              ) : (
+                <Link
+                  href="/tasks?view=overdue"
+                  className="mt-3 text-sm font-medium text-zinc-600 underline-offset-2 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-200"
+                >
+                  Lista zadań — zaległe
+                </Link>
+              )}
+            </div>
+
+            <div className="flex flex-col rounded-xl border border-amber-200/80 bg-gradient-to-b from-amber-50/80 to-white p-4 shadow-sm dark:border-amber-900/40 dark:from-amber-950/30 dark:to-zinc-950">
+              <div className="flex items-start justify-between gap-2">
+                <h3 className="text-sm font-semibold text-amber-900 dark:text-amber-200">Na dziś</h3>
+                {data.operational.todayTasks.length > 0 ? (
+                  <Badge variant="warning">{data.operational.todayTasks.length}</Badge>
+                ) : null}
+              </div>
+              {data.operational.todayTasks.length === 0 ? (
+                <p className="mt-3 text-sm text-zinc-600 dark:text-zinc-400">Brak otwartych zadań zaplanowanych na dziś.</p>
+              ) : (
+                <ul className="mt-3 flex flex-1 flex-col gap-2">
+                  {data.operational.todayTasks.map((t) => (
+                    <li
+                      key={t.id}
+                      className="rounded-lg border border-amber-100/90 bg-white/80 px-3 py-2 dark:border-amber-900/25 dark:bg-zinc-900/40"
+                    >
+                      <Link
+                        href={`/projects/${t.projectId}`}
+                        className="font-medium text-zinc-900 underline decoration-amber-800/20 underline-offset-2 dark:text-zinc-100"
+                      >
+                        {t.title}
+                      </Link>
+                      <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-zinc-600 dark:text-zinc-400">
+                        <span>{t.projectName}</span>
+                        <Badge variant="muted">
+                          {TASK_STATUS_LABEL[t.status] ?? t.status}
+                        </Badge>
+                        {t.assigneeName ? <span>Odp.: {t.assigneeName}</span> : null}
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              <Link
+                href="/tasks?view=today"
+                className="mt-3 text-sm font-medium text-amber-900/90 underline underline-offset-2 hover:text-amber-950 dark:text-amber-200"
+              >
+                Wszystkie zadania na dziś
+              </Link>
+              <Link
+                href="/calendar"
+                className="mt-1 text-xs font-medium text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-300"
+              >
+                Kalendarz
+              </Link>
+            </div>
+
+            <div className="flex flex-col rounded-xl border border-sky-200/80 bg-gradient-to-b from-sky-50/70 to-white p-4 shadow-sm dark:border-sky-900/40 dark:from-sky-950/25 dark:to-zinc-950">
+              <h3 className="text-sm font-semibold text-sky-900 dark:text-sky-200">Projekty wymagające uwagi</h3>
+              <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
+                Status realizacji (DO_WYJASNIENIA, OCZEKIWANIE*, BLOKADA*), braki lub zaległe zadania.
+              </p>
+              {data.operational.attentionProjects.length === 0 ? (
+                <p className="mt-3 text-sm text-zinc-600 dark:text-zinc-400">Brak projektów spełniających te kryteria.</p>
+              ) : (
+                <ul className="mt-3 flex flex-1 flex-col gap-2">
+                  {data.operational.attentionProjects.map((p) => (
+                    <li
+                      key={p.id}
+                      className="rounded-lg border border-sky-100/80 bg-white/80 px-3 py-2 dark:border-sky-900/25 dark:bg-zinc-900/40"
+                    >
+                      <Link href={`/projects/${p.id}`} className="font-medium text-zinc-900 underline dark:text-zinc-100">
+                        {p.name}
+                      </Link>
+                      <div className="mt-1.5 flex flex-wrap gap-1.5 text-[11px] text-zinc-600 dark:text-zinc-400">
+                        <span className="rounded-md bg-zinc-100 px-1.5 py-0.5 dark:bg-zinc-800">Realizacja: {p.lifecycleLabel}</span>
+                        <span className="rounded-md bg-zinc-100 px-1.5 py-0.5 dark:bg-zinc-800">Rozliczenie: {p.settlementLabel}</span>
+                        {p.overdueTaskCount > 0 ? (
+                          <Badge variant="danger">
+                            Zaległe zadania: {p.overdueTaskCount}
+                          </Badge>
+                        ) : null}
+                        {p.activeMissingCount > 0 ? (
+                          <Badge variant="warning">
+                            Braki: {p.activeMissingCount}
+                          </Badge>
+                        ) : null}
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              <Link
+                href="/projects"
+                className="mt-3 text-sm font-medium text-sky-800 underline underline-offset-2 dark:text-sky-300"
+              >
+                Wszystkie projekty
+              </Link>
+            </div>
+
+            <div className="flex flex-col rounded-xl border border-zinc-200 bg-gradient-to-b from-zinc-50/80 to-white p-4 shadow-sm dark:border-zinc-700 dark:from-zinc-900/40 dark:to-zinc-950">
+              <h3 className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">Cisza operacyjna (14 dni)</h3>
+              <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
+                Aktywne projekty (bez „Zakończony”), bez zapisów: zadania, faktury (w tym alokacje), zdarzenia planowane,
+                inne przychody — oraz aktualizacja karty projektu; ostatnia aktywność starsza niż 14 dni.
+              </p>
+              {data.operational.staleProjects.length === 0 ? (
+                <p className="mt-3 text-sm text-zinc-600 dark:text-zinc-400">Brak takich projektów.</p>
+              ) : (
+                <ul className="mt-3 flex flex-1 flex-col gap-2">
+                  {data.operational.staleProjects.map((p) => (
+                    <li
+                      key={p.id}
+                      className="rounded-lg border border-zinc-200/80 bg-white/90 px-3 py-2 dark:border-zinc-700 dark:bg-zinc-900/50"
+                    >
+                      <Link href={`/projects/${p.id}`} className="font-medium text-zinc-900 underline dark:text-zinc-100">
+                        {p.name}
+                      </Link>
+                      <div className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
+                        Ostatnia aktywność: <span className="tabular-nums text-zinc-700 dark:text-zinc-300">{formatDate(p.lastActivityAt)}</span>
+                      </div>
+                      <div className="mt-1 flex flex-wrap gap-1.5 text-[11px] text-zinc-600 dark:text-zinc-400">
+                        <span>{p.lifecycleLabel}</span>
+                        <span className="text-zinc-300 dark:text-zinc-600">·</span>
+                        <span>{p.settlementLabel}</span>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          </div>
+        </section>
+      ) : null}
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <div className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
