@@ -155,19 +155,38 @@ export function GlobalTasksClient({ tasks, view, tabCounts, assignee, sort }: Pr
               className="mt-[0.35rem] size-4 shrink-0 rounded border-zinc-300"
               checked={t.isDone}
               disabled={busy}
+              onClick={(e) => e.stopPropagation()}
               onChange={(e) => void toggleDone(t, e.target.checked)}
               aria-label={t.isDone ? "Oznacz jako niewykonane" : "Oznacz jako wykonane"}
             />
-            <div className="min-w-0 flex-1">
+            <div
+              role="button"
+              tabIndex={busy ? -1 : 0}
+              className={`group min-w-0 flex-1 rounded-md px-0.5 py-0.5 text-left transition-colors outline-none cursor-pointer hover:bg-black/[0.06] dark:hover:bg-white/[0.07] focus-visible:ring-2 focus-visible:ring-sky-500 ${
+                busy ? "pointer-events-none opacity-60" : ""
+              }`}
+              onClick={() => {
+                if (!busy) openEdit(t);
+              }}
+              onKeyDown={(e) => {
+                if (busy) return;
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  openEdit(t);
+                }
+              }}
+            >
               <div className="flex flex-wrap items-center gap-1.5 gap-y-1">
                 <span
-                  className={`min-w-0 font-medium leading-snug break-words ${t.isDone ? "text-zinc-500 line-through" : "text-zinc-900 dark:text-zinc-100"}`}
+                  className={`min-w-0 font-medium leading-snug break-words group-hover:underline ${t.isDone ? "text-zinc-500 line-through" : "text-zinc-900 dark:text-zinc-100"}`}
                 >
                   {t.title}
                 </span>
                 <Link
                   href={`/projects/${t.projectId}`}
-                  className="shrink-0 rounded-md bg-zinc-200/80 px-1.5 py-0.5 text-xs font-medium text-zinc-800 hover:bg-zinc-300/90 dark:bg-zinc-800 dark:text-zinc-200 dark:hover:bg-zinc-700"
+                  onClick={(e) => e.stopPropagation()}
+                  onKeyDown={(e) => e.stopPropagation()}
+                  className="shrink-0 rounded-md bg-zinc-200/80 px-1.5 py-0.5 text-xs font-medium text-zinc-800 no-underline hover:bg-zinc-300/90 dark:bg-zinc-800 dark:text-zinc-200 dark:hover:bg-zinc-700"
                 >
                   {t.projectName}
                 </Link>
@@ -221,7 +240,16 @@ export function GlobalTasksClient({ tasks, view, tabCounts, assignee, sort }: Pr
             </div>
           </div>
           <div className="flex shrink-0 flex-wrap gap-1 sm:justify-end">
-            <Button type="button" variant="ghost" className="!px-2 !py-1 !text-xs" disabled={busy} onClick={() => openEdit(t)}>
+            <Button
+              type="button"
+              variant="ghost"
+              className="!px-2 !py-1 !text-xs"
+              disabled={busy}
+              onClick={(e) => {
+                e.stopPropagation();
+                openEdit(t);
+              }}
+            >
               Edytuj
             </Button>
             <Button
@@ -229,7 +257,10 @@ export function GlobalTasksClient({ tasks, view, tabCounts, assignee, sort }: Pr
               variant="ghost"
               className="!px-2 !py-1 !text-xs text-red-600 dark:text-red-400"
               disabled={busy}
-              onClick={() => void deleteTask(t)}
+              onClick={(e) => {
+                e.stopPropagation();
+                void deleteTask(t);
+              }}
             >
               Usuń
             </Button>

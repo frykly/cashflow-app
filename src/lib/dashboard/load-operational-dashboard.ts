@@ -1,6 +1,6 @@
 import { prisma } from "@/lib/db";
 import { endOfDay, startOfDay } from "date-fns";
-import { plannedDayStartMs, todayStartMs } from "@/lib/projects/project-task-ui";
+import { plannedDayStartMs, todayStartMs, type ProjectTaskRow } from "@/lib/projects/project-task-ui";
 
 export const OVERDUE_TASK_LIST_LIMIT = 8;
 export const ATTENTION_PROJECTS_LIMIT = 12;
@@ -26,24 +26,11 @@ export function isSettlementAttentionSlug(slug: string | null | undefined): bool
   return false;
 }
 
-export type OperationalOverdueTask = {
-  id: string;
+/** Zadanie na dashboardzie operacyjnym — pełne pola pod modal edycji + kontekst projektu. */
+export type OperationalListTask = ProjectTaskRow & {
   projectId: string;
   projectName: string;
-  title: string;
-  assigneeName: string | null;
-  priority: string | null;
-  plannedEndDate: string;
-  daysOverdue: number;
-};
-
-export type OperationalTodayTask = {
-  id: string;
-  projectId: string;
-  projectName: string;
-  title: string;
-  status: string;
-  assigneeName: string | null;
+  daysOverdue?: number;
 };
 
 export type OperationalAttentionProject = {
@@ -102,10 +89,48 @@ function dictLabel(m: Map<string, string>, slug: string | null | undefined): str
   return m.get(slug) ?? slug;
 }
 
+function prismaTaskToOperationalListTask(
+  t: {
+    id: string;
+    title: string;
+    description: string | null;
+    plannedStartDate: Date | null;
+    plannedEndDate: Date | null;
+    assigneeName: string | null;
+    status: string;
+    isDone: boolean;
+    doneAt: Date | null;
+    priority: string | null;
+    createdAt: Date;
+    updatedAt: Date;
+    projectId: string;
+    project: { name: string };
+  },
+  extra?: { daysOverdue: number },
+): OperationalListTask {
+  return {
+    id: t.id,
+    title: t.title,
+    description: t.description,
+    plannedStartDate: t.plannedStartDate?.toISOString() ?? null,
+    plannedEndDate: t.plannedEndDate?.toISOString() ?? null,
+    assigneeName: t.assigneeName,
+    status: t.status,
+    isDone: t.isDone,
+    doneAt: t.doneAt?.toISOString() ?? null,
+    priority: t.priority,
+    createdAt: t.createdAt.toISOString(),
+    updatedAt: t.updatedAt.toISOString(),
+    projectId: t.projectId,
+    projectName: t.project.name,
+    ...(extra ? { daysOverdue: extra.daysOverdue } : {}),
+  };
+}
+
 export async function loadOperationalDashboardData(): Promise<{
-  overdueTasks: OperationalOverdueTask[];
+  overdueTasks: OperationalListTask[];
   overdueTasksTotalCount: number;
-  todayTasks: OperationalTodayTask[];
+  todayTasks: OperationalListTask[];
   attentionProjects: OperationalAttentionProject[];
   staleProjects: OperationalStaleProject[];
 }> {
@@ -219,32 +244,16 @@ export async function loadOperationalDashboardData(): Promise<{
   const lifeMap = new Map(lifeOpts.map((o) => [o.slug, o.name]));
   const setMap = new Map(setOpts.map((o) => [o.slug, o.name]));
 
-  const overdueTasks: OperationalOverdueTask[] = overdueTasksTop.map((t) => {
+  const overdueTasks: OperationalListTask[] = overdueTasksTop.map((t) => {
     const endMs = t.plannedEndDate ? plannedDayStartMs(t.plannedEndDate.toISOString()) ?? todayMs : todayMs;
     const daysOverdue = Math.max(0, Math.floor((todayMs - endMs) / 86_400_000));
-    return {
-      id: t.id,
-      projectId: t.projectId,
-      projectName: t.project.name,
-      title: t.title,
-      assigneeName: t.assigneeName,
-      priority: t.priority,
-      plannedEndDate: t.plannedEndDate!.toISOString(),
-      daysOverdue,
-    };
+    return prismaTaskToOperationalListTask(t, { daysOverdue });
   });
 
-  const todayTasks: OperationalTodayTask[] = todayTaskCandidates
+  const todayTasks: OperationalListTask[] = todayTaskCandidates
     .filter((t) => isTaskTodayFromDb(t))
     .sort((a, b) => prioritySort(a.priority, b.priority) || a.title.localeCompare(b.title, "pl"))
-    .map((t) => ({
-      id: t.id,
-      projectId: t.projectId,
-      projectName: t.project.name,
-      title: t.title,
-      status: t.status,
-      assigneeName: t.assigneeName,
-    }));
+    .map((t) => prismaTaskToOperationalListTask(t));
 
   const overdueMap = new Map(overdueTaskCounts.map((x) => [x.projectId, x._count._all]));
   const missingMap = new Map(missingCounts.map((x) => [x.projectId, x._count._all]));

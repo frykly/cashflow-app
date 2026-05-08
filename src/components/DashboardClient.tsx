@@ -2,10 +2,17 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
+import { ProjectTaskFormModal } from "@/components/ProjectTaskFormModal";
 import { Alert, Badge, Button, Spinner } from "@/components/ui";
+import type { OperationalListTask } from "@/lib/dashboard/load-operational-dashboard";
 import { formatDate, formatMoney } from "@/lib/format";
 import { readApiErrorBody } from "@/lib/api-client";
-import { PRIORITY_LABEL, TASK_STATUS_LABEL } from "@/lib/projects/project-task-ui";
+import { PRIORITY_LABEL, TASK_STATUS_LABEL, type ProjectTaskRow } from "@/lib/projects/project-task-ui";
+
+function operationalListTaskToProjectTaskRow(t: OperationalListTask): ProjectTaskRow {
+  const { projectId: _pid, projectName: _pn, daysOverdue: _d, ...row } = t;
+  return row;
+}
 
 type FlowRow = { kind: string; id: string; date: string; label: string; mainAmount: number };
 
@@ -43,26 +50,6 @@ type OverduePlanned = {
 
 type CatRow = { categoryId: string | null; name: string; mainAmount: number };
 
-type OperationalOverdueTask = {
-  id: string;
-  projectId: string;
-  projectName: string;
-  title: string;
-  assigneeName: string | null;
-  priority: string | null;
-  plannedEndDate: string;
-  daysOverdue: number;
-};
-
-type OperationalTodayTask = {
-  id: string;
-  projectId: string;
-  projectName: string;
-  title: string;
-  status: string;
-  assigneeName: string | null;
-};
-
 type OperationalAttentionProject = {
   id: string;
   name: string;
@@ -85,9 +72,9 @@ type OperationalStaleProject = {
 };
 
 type Operational = {
-  overdueTasks: OperationalOverdueTask[];
+  overdueTasks: OperationalListTask[];
   overdueTasksTotalCount: number;
-  todayTasks: OperationalTodayTask[];
+  todayTasks: OperationalListTask[];
   attentionProjects: OperationalAttentionProject[];
   staleProjects: OperationalStaleProject[];
 };
@@ -118,6 +105,7 @@ export function DashboardClient() {
   const [data, setData] = useState<Dashboard | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [operationalTaskEdit, setOperationalTaskEdit] = useState<OperationalListTask | null>(null);
 
   const load = useCallback(async () => {
     setErr(null);
@@ -218,35 +206,49 @@ export function DashboardClient() {
                   {data.operational.overdueTasks.map((t) => (
                     <li
                       key={t.id}
-                      className="rounded-lg border border-red-100/80 bg-white/80 px-3 py-2 dark:border-red-900/30 dark:bg-zinc-900/40"
+                      className="rounded-lg border border-red-100/80 bg-white/80 dark:border-red-900/30 dark:bg-zinc-900/40"
                     >
-                      <div className="flex flex-wrap items-center gap-1.5 gap-y-0.5">
-                        <Link
-                          href={`/projects/${t.projectId}`}
-                          className="min-w-0 flex-1 font-medium text-zinc-900 underline decoration-red-900/20 underline-offset-2 dark:text-zinc-100"
-                        >
-                          {t.title}
-                        </Link>
-                        {t.priority ? (
-                          <Badge variant={t.priority === "HIGH" ? "danger" : "default"}>
-                            {PRIORITY_LABEL[t.priority] ?? t.priority}
-                          </Badge>
-                        ) : null}
-                      </div>
-                      <div className="mt-1 text-xs text-zinc-600 dark:text-zinc-400">
-                        <Link href={`/projects/${t.projectId}`} className="font-medium text-red-800 hover:underline dark:text-red-300">
-                          {t.projectName}
-                        </Link>
-                        <span className="text-zinc-400"> · </span>
-                        <span className="font-medium tabular-nums text-red-700 dark:text-red-400">
-                          {t.daysOverdue} {t.daysOverdue === 1 ? "dzień" : "dni"} po terminie
-                        </span>
-                        {t.assigneeName ? (
-                          <>
-                            <span className="text-zinc-400"> · </span>
-                            {t.assigneeName}
-                          </>
-                        ) : null}
+                      <div
+                        role="button"
+                        tabIndex={0}
+                        className="group cursor-pointer rounded-lg px-3 py-2 text-left outline-none transition-colors hover:bg-red-950/[0.06] dark:hover:bg-red-950/25 focus-visible:ring-2 focus-visible:ring-red-400/80"
+                        onClick={() => setOperationalTaskEdit(t)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" || e.key === " ") {
+                            e.preventDefault();
+                            setOperationalTaskEdit(t);
+                          }
+                        }}
+                      >
+                        <div className="flex flex-wrap items-center gap-1.5 gap-y-0.5">
+                          <span className="min-w-0 flex-1 font-medium text-zinc-900 group-hover:underline dark:text-zinc-100">
+                            {t.title}
+                          </span>
+                          {t.priority ? (
+                            <Badge variant={t.priority === "HIGH" ? "danger" : "default"}>
+                              {PRIORITY_LABEL[t.priority] ?? t.priority}
+                            </Badge>
+                          ) : null}
+                        </div>
+                        <div className="mt-1 text-xs text-zinc-600 dark:text-zinc-400">
+                          <Link
+                            href={`/projects/${t.projectId}`}
+                            onClick={(e) => e.stopPropagation()}
+                            className="font-medium text-red-800 hover:underline dark:text-red-300"
+                          >
+                            {t.projectName}
+                          </Link>
+                          <span className="text-zinc-400"> · </span>
+                          <span className="font-medium tabular-nums text-red-700 dark:text-red-400">
+                            {t.daysOverdue ?? 0} {(t.daysOverdue ?? 0) === 1 ? "dzień" : "dni"} po terminie
+                          </span>
+                          {t.assigneeName ? (
+                            <>
+                              <span className="text-zinc-400"> · </span>
+                              {t.assigneeName}
+                            </>
+                          ) : null}
+                        </div>
                       </div>
                     </li>
                   ))}
@@ -283,20 +285,34 @@ export function DashboardClient() {
                   {data.operational.todayTasks.map((t) => (
                     <li
                       key={t.id}
-                      className="rounded-lg border border-amber-100/90 bg-white/80 px-3 py-2 dark:border-amber-900/25 dark:bg-zinc-900/40"
+                      className="rounded-lg border border-amber-100/90 bg-white/80 dark:border-amber-900/25 dark:bg-zinc-900/40"
                     >
-                      <Link
-                        href={`/projects/${t.projectId}`}
-                        className="font-medium text-zinc-900 underline decoration-amber-800/20 underline-offset-2 dark:text-zinc-100"
+                      <div
+                        role="button"
+                        tabIndex={0}
+                        className="group cursor-pointer rounded-lg px-3 py-2 text-left outline-none transition-colors hover:bg-amber-950/[0.07] dark:hover:bg-amber-950/20 focus-visible:ring-2 focus-visible:ring-amber-400/80"
+                        onClick={() => setOperationalTaskEdit(t)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" || e.key === " ") {
+                            e.preventDefault();
+                            setOperationalTaskEdit(t);
+                          }
+                        }}
                       >
-                        {t.title}
-                      </Link>
-                      <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-zinc-600 dark:text-zinc-400">
-                        <span>{t.projectName}</span>
-                        <Badge variant="muted">
-                          {TASK_STATUS_LABEL[t.status] ?? t.status}
-                        </Badge>
-                        {t.assigneeName ? <span>Odp.: {t.assigneeName}</span> : null}
+                        <span className="font-medium text-zinc-900 group-hover:underline dark:text-zinc-100">{t.title}</span>
+                        <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-zinc-600 dark:text-zinc-400">
+                          <Link
+                            href={`/projects/${t.projectId}`}
+                            onClick={(e) => e.stopPropagation()}
+                            className="font-medium text-amber-900 hover:underline dark:text-amber-200"
+                          >
+                            {t.projectName}
+                          </Link>
+                          <Badge variant="muted">
+                            {TASK_STATUS_LABEL[t.status] ?? t.status}
+                          </Badge>
+                          {t.assigneeName ? <span>Odp.: {t.assigneeName}</span> : null}
+                        </div>
                       </div>
                     </li>
                   ))}
@@ -392,6 +408,21 @@ export function DashboardClient() {
             </div>
           </div>
         </section>
+      ) : null}
+
+      {operationalTaskEdit ? (
+        <ProjectTaskFormModal
+          open={!!operationalTaskEdit}
+          projectId={operationalTaskEdit.projectId}
+          projectName={operationalTaskEdit.projectName}
+          task={operationalListTaskToProjectTaskRow(operationalTaskEdit)}
+          onClose={() => setOperationalTaskEdit(null)}
+          onSaved={() => {
+            setOperationalTaskEdit(null);
+            void load();
+          }}
+          showOpenProjectLink
+        />
       ) : null}
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
