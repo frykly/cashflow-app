@@ -1,0 +1,3 @@
+# Lokalne raporty audytu SQLite (generowane przez npm run audit:sqlite)
+sqlite-audit-*.json
+sqlite-audit-*.txt
