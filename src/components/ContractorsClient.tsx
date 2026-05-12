@@ -4,6 +4,10 @@ import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { Alert, Badge, Button, Field, Input, Modal, Spinner } from "@/components/ui";
 import { readApiErrorBody } from "@/lib/api-client";
+import {
+  fetchContractorsSearchCached,
+  invalidateContractorsSearchCache,
+} from "@/lib/contractors/contractors-search-cache";
 
 type AliasRow = {
   id?: string;
@@ -75,12 +79,8 @@ export function ContractorsClient() {
     setLoading(true);
     setLoadError(null);
     try {
-      const sp = new URLSearchParams();
-      if (qDebounced) sp.set("q", qDebounced);
-      const res = await fetch(`/api/contractors${sp.toString() ? `?${sp.toString()}` : ""}`);
-      const j = await res.json();
-      if (!res.ok) throw new Error(readApiErrorBody(j));
-      setRows(Array.isArray(j) ? j : []);
+      const j = await fetchContractorsSearchCached(qDebounced);
+      setRows(j as ContractorRow[]);
     } catch (e) {
       setRows([]);
       setLoadError(e instanceof Error ? e.message : "Nie udało się wczytać kontrahentów");
@@ -152,6 +152,7 @@ export function ContractorsClient() {
         setFormError(readApiErrorBody(j));
         return;
       }
+      invalidateContractorsSearchCache();
       closeModal();
       await load();
     } catch {
@@ -169,6 +170,7 @@ export function ContractorsClient() {
       alert(readApiErrorBody(j));
       return;
     }
+    invalidateContractorsSearchCache();
     await load();
   }
 

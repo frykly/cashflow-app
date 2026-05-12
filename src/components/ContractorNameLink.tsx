@@ -2,6 +2,10 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import {
+  fetchContractorsSearchCached,
+  peekContractorsSearchCache,
+} from "@/lib/contractors/contractors-search-cache";
 import { normalizeContractorName } from "@/lib/contractors/normalize-contractor-name";
 
 type ContractorAlias = {
@@ -43,13 +47,16 @@ export function ContractorNameLink({
       setMatch(null);
       return;
     }
+    const cached = peekContractorsSearchCache(display);
+    if (cached !== undefined) {
+      setMatch(matchContractor(display, cached as ContractorRow[]));
+      return;
+    }
     let cancelled = false;
-    const sp = new URLSearchParams({ q: display });
-    fetch(`/api/contractors?${sp.toString()}`)
-      .then((res) => (res.ok ? res.json() : []))
-      .then((rows: unknown) => {
+    void fetchContractorsSearchCached(display)
+      .then((rows) => {
         if (cancelled) return;
-        setMatch(Array.isArray(rows) ? matchContractor(display, rows as ContractorRow[]) : null);
+        setMatch(matchContractor(display, rows as ContractorRow[]));
       })
       .catch(() => {
         if (!cancelled) setMatch(null);

@@ -3,6 +3,11 @@
 import { useEffect, useMemo, useState } from "react";
 import { Alert, Badge, Button, Field, Input, Modal, Spinner } from "@/components/ui";
 import { readApiErrorBody } from "@/lib/api-client";
+import {
+  fetchContractorsSearchCached,
+  invalidateContractorsSearchCache,
+  peekContractorsSearchCache,
+} from "@/lib/contractors/contractors-search-cache";
 import { normalizeContractorName } from "@/lib/contractors/normalize-contractor-name";
 
 type ContractorAlias = {
@@ -65,15 +70,18 @@ export function ContractorAutocomplete({ value, onChange, disabled, required, pl
   useEffect(() => {
     if (!focused && !quickOpen) return;
     let cancelled = false;
-    const sp = new URLSearchParams();
-    if (debounced) sp.set("q", debounced);
+    const peeked = peekContractorsSearchCache(debounced);
+    if (peeked !== undefined) {
+      setRows(peeked as ContractorSuggestion[]);
+      setLoading(false);
+      setError(null);
+      return;
+    }
     setLoading(true);
     setError(null);
-    fetch(`/api/contractors${sp.toString() ? `?${sp.toString()}` : ""}`)
-      .then(async (res) => {
-        const j = await res.json();
-        if (!res.ok) throw new Error(readApiErrorBody(j));
-        if (!cancelled) setRows(Array.isArray(j) ? j : []);
+    void fetchContractorsSearchCached(debounced)
+      .then((rows) => {
+        if (!cancelled) setRows(rows as ContractorSuggestion[]);
       })
       .catch((e) => {
         if (!cancelled) {
@@ -132,6 +140,7 @@ export function ContractorAutocomplete({ value, onChange, disabled, required, pl
         return;
       }
       const created = j as ContractorSuggestion;
+      invalidateContractorsSearchCache();
       onChange(created.displayName);
       setQuery(created.displayName);
       setRows((prev) => [created, ...prev.filter((r) => r.id !== created.id)]);

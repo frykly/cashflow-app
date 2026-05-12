@@ -83,28 +83,32 @@ function findDropDayKeyFromPoint(
   return null;
 }
 
+/** Wspólny „lift” pod kursorem — bez scale (ryzyko layout shift). */
+const CAL_TASK_HOVER =
+  "transition-[box-shadow,filter,z-index] duration-150 ease-out hover:z-[20] hover:shadow-md hover:shadow-zinc-900/12 hover:ring-2 hover:ring-zinc-900/20 hover:ring-offset-0 hover:ring-offset-transparent dark:hover:shadow-black/50 dark:hover:ring-zinc-100/25 hover:brightness-[1.03]";
+
 function taskBarClasses(t: CalendarTaskTile): string {
   const high = t.priority === "HIGH" ? "ring-1 ring-red-500/70 dark:ring-red-500/50" : "";
   const done = t.isDone || t.status === "DONE";
   if (done) {
-    return `relative z-[1] flex min-h-[22px] items-center gap-1 rounded-full border px-2 py-0.5 text-left text-[11px] leading-tight transition-opacity hover:opacity-90 ${high} border-emerald-200/90 bg-emerald-100/70 text-emerald-950 opacity-80 dark:border-emerald-900/60 dark:bg-emerald-950/35 dark:text-emerald-100`;
+    return `relative z-[1] flex min-h-[22px] items-center gap-1 rounded-full border px-2 py-0.5 text-left text-[11px] leading-tight ${CAL_TASK_HOVER} ${high} border-emerald-200/90 bg-emerald-100/70 text-emerald-950 opacity-80 dark:border-emerald-900/60 dark:bg-emerald-950/35 dark:text-emerald-100`;
   }
   if (t.status === "IN_PROGRESS") {
-    return `relative z-[1] flex min-h-[22px] items-center gap-1 rounded-full border px-2 py-0.5 text-left text-[11px] leading-tight transition-opacity hover:opacity-90 ${high} border-amber-300/90 bg-amber-100/85 text-amber-950 dark:border-amber-900/50 dark:bg-amber-950/40 dark:text-amber-50`;
+    return `relative z-[1] flex min-h-[22px] items-center gap-1 rounded-full border px-2 py-0.5 text-left text-[11px] leading-tight ${CAL_TASK_HOVER} ${high} border-amber-300/90 bg-amber-100/85 text-amber-950 dark:border-amber-900/50 dark:bg-amber-950/40 dark:text-amber-50`;
   }
-  return `relative z-[1] flex min-h-[22px] items-center gap-1 rounded-full border px-2 py-0.5 text-left text-[11px] leading-tight transition-opacity hover:opacity-90 ${high} border-sky-200/90 bg-sky-100/80 text-sky-950 dark:border-sky-900/50 dark:bg-sky-950/40 dark:text-sky-100`;
+  return `relative z-[1] flex min-h-[22px] items-center gap-1 rounded-full border px-2 py-0.5 text-left text-[11px] leading-tight ${CAL_TASK_HOVER} ${high} border-sky-200/90 bg-sky-100/80 text-sky-950 dark:border-sky-900/50 dark:bg-sky-950/40 dark:text-sky-100`;
 }
 
 function singleCardClasses(t: CalendarTaskTile): string {
   const high = t.priority === "HIGH" ? "ring-1 ring-red-500/60" : "";
   const done = t.isDone || t.status === "DONE";
   if (done) {
-    return `block w-full rounded-lg border px-1.5 py-1 text-left transition-colors hover:opacity-90 ${high} border-emerald-200/80 bg-emerald-50/90 opacity-85 dark:border-emerald-900/50 dark:bg-emerald-950/30`;
+    return `relative z-[1] block w-full rounded-lg border px-1.5 py-1 text-left ${CAL_TASK_HOVER} ${high} border-emerald-200/80 bg-emerald-50/90 opacity-85 dark:border-emerald-900/50 dark:bg-emerald-950/30`;
   }
   if (t.status === "IN_PROGRESS") {
-    return `block w-full rounded-lg border px-1.5 py-1 text-left transition-colors hover:opacity-90 ${high} border-amber-200/80 bg-amber-50/90 dark:border-amber-900/45 dark:bg-amber-950/25`;
+    return `relative z-[1] block w-full rounded-lg border px-1.5 py-1 text-left ${CAL_TASK_HOVER} ${high} border-amber-200/80 bg-amber-50/90 dark:border-amber-900/45 dark:bg-amber-950/25`;
   }
-  return `block w-full rounded-lg border px-1.5 py-1 text-left transition-colors hover:opacity-90 ${high} border-sky-200/80 bg-sky-50/90 dark:border-sky-900/45 dark:bg-sky-950/25`;
+  return `relative z-[1] block w-full rounded-lg border px-1.5 py-1 text-left ${CAL_TASK_HOVER} ${high} border-sky-200/80 bg-sky-50/90 dark:border-sky-900/45 dark:bg-sky-950/25`;
 }
 
 function buildTaskTitleAttr(t: CalendarTaskTile): string {
@@ -561,7 +565,7 @@ export function TaskCalendarView({ monthLabel, weeks, tiles, ym, year, month, as
                               key={`${wkIndex}-${seg.task.id}-${seg.startCol}-${seg.endCol}-${seg.track}`}
                               className={[
                                 taskBarClasses(seg.task),
-                                draggingTaskId === seg.task.id ? "opacity-55" : "",
+                                draggingTaskId === seg.task.id ? "!z-[30] opacity-55" : "",
                                 "touch-none !gap-0 !px-0 !py-0",
                               ].join(" ")}
                               style={{
@@ -690,7 +694,7 @@ export function TaskCalendarView({ monthLabel, weeks, tiles, ym, year, month, as
                                 className={[
                                   singleCardClasses(t),
                                   "cursor-grab touch-none active:cursor-grabbing",
-                                  draggingTaskId === t.id ? "opacity-55" : "",
+                                  draggingTaskId === t.id ? "!z-[30] opacity-55" : "",
                                 ].join(" ")}
                               >
                                 <div className={`text-left text-[11px] font-medium leading-snug ${t.isDone ? "text-zinc-500 line-through" : "text-zinc-900 dark:text-zinc-100"}`}>
