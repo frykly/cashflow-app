@@ -14,6 +14,8 @@
     "db:backup": "node scripts/backup-db.mjs",
     "audit:sqlite": "tsx scripts/audit-sqlite-for-postgres.ts",
     "export:sqlite-data": "tsx scripts/export-sqlite-data.ts",
+    "import:sqlite-json-to-postgres": "tsx scripts/import-sqlite-json-to-postgres.ts",
+    "validate:postgres-after-import": "tsx scripts/validate-postgres-after-import.ts",
     "db:repair-migration-checksum": "node scripts/repair-migration-checksum.mjs",
     "test:ipko-title": "tsx src/lib/bank-import/ipko-title-smoke.ts",
     "postinstall": "prisma generate"

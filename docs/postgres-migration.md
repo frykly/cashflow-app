@@ -1,6 +1,9 @@
 # Migracja SQLite → PostgreSQL (Supabase) — dokumentacja
 
-Ten dokument opisuje **Etap A** przygotowania i migracji. Obecny **Krok 0** nie zmienia `schema.prisma`, migracji ani `DATABASE_URL`.
+Ten dokument opisuje **Etap A** przygotowania i migracji.
+
+- **Krok 0** (na `main`): audyt i eksport JSON bez zmiany `schema.prisma`.
+- **Krok 1** (gałąź `postgres-migration`): `provider = "postgresql"`, pojedyncza migracja init, archiwum starych plików SQLite pod `prisma/migrations_sqlite_archive/`, skrypty importu i walidacji Postgres.
 
 ## Dlaczego stare migracje SQLite nie działają na Postgres
 
@@ -10,17 +13,18 @@ Ten dokument opisuje **Etap A** przygotowania i migracji. Obecny **Krok 0** nie 
 
 **Wniosek:** na Postgres potrzebny jest **nowy, pojedynczy init** (lub baseline) wygenerowany z **aktualnego** `schema.prisma` z `provider = "postgresql"`, **bez** odtwarzania historii SQLite 1:1.
 
-## Plan nowej migracji init PostgreSQL (po gałęzi `postgres-migration`)
+## Krok 1 — co jest w repozytorium (gałąź `postgres-migration`)
 
-1. Osobna gałąź git (np. `postgres-migration`).
-2. Zmiana w `schema.prisma`: `provider = "postgresql"`, `url = env("DATABASE_URL")`, opcjonalnie `directUrl = env("DIRECT_URL")`.
-3. Uporządkowanie folderu migracji (decyzja zespołu):
-   - archiwum starych SQL w podfolderze **tylko do historii**, **albo**
-   - jeden nowy katalog `prisma/migrations/<timestamp>_init_postgresql/migration.sql` z pełnym schematem (np. `prisma migrate diff --from-empty --to-schema-datamodel prisma/schema.prisma --script` — wersja CLI zgodna z projektem).
-4. `migration_lock.toml` → `provider = "postgresql"`.
-5. Na pustej bazie Postgres: `npx prisma migrate deploy` (lub procedura `db push` + `migrate resolve` — do ustalenia przy wdrożeniu).
+1. **`prisma/schema.prisma`**: `postgresql` + `url` + **`directUrl`** (`DIRECT_URL` w `.env`).
+2. **`prisma/migrations/<timestamp>_init_postgresql/`**: jeden plik `migration.sql` (generowany z `prisma migrate diff --from-empty --to-schema-datamodel`).
+3. **`prisma/migrations/migration_lock.toml`**: `provider = "postgresql"`.
+4. **`prisma/migrations_sqlite_archive/`**: przeniesiona historia migracji SQLite (referencja; **nie** uruchamiaj ich na Postgres).
+5. **Import**: `npm run import:sqlite-json-to-postgres` — katalog z `npm run export:sqlite-data` (`SQLITE_EXPORT_DIR` lub pierwszy argument CLI).
+6. **Walidacja**: `npm run validate:postgres-after-import` — liczniki, sumy, orphan FK (jak audyt SQLite).
 
-**Nie uruchamiaj** tych komend na produkcji bez wcześniejszej walidacji na klonie bazy.
+Na **pustej** bazie Postgres: `npx prisma migrate deploy`, potem import JSON, potem `validate:postgres-after-import`.
+
+**Nie uruchamiaj** `migrate deploy` / importu na produkcji bez wcześniejszej walidacji na klonie.
 
 ## DATABASE_URL / DIRECT_URL (Supabase)
 
@@ -102,10 +106,12 @@ npm run audit:sqlite
 # Opcjonalnie — eksport JSON (lokalnie)
 npm run export:sqlite-data
 
-# Po przełączeniu na Postgres (na odpowiedniej gałęzi, po akceptacji)
+# Po przełączeniu na Postgres (gałąź postgres-migration, .env z DATABASE_URL + DIRECT_URL)
 # rm -rf .next
 # npx prisma generate
-# npx prisma migrate deploy   # lub uzgodniona procedura baseline
+# npx prisma migrate deploy
+# SQLITE_EXPORT_DIR=exports/sqlite-export-<stamp> npm run import:sqlite-json-to-postgres
+# npm run validate:postgres-after-import
 # npm run build
 # npm run dev
 ```
@@ -114,8 +120,10 @@ npm run export:sqlite-data
 
 | Plik | Opis |
 |------|------|
-| `scripts/audit-sqlite-for-postgres.ts` | Liczności, sumy, zakresy dat, FK orphans, AppSettings/User |
+| `scripts/audit-sqlite-for-postgres.ts` | Liczności, sumy, zakresy dat, FK orphans, AppSettings/User (SQLite) |
 | `scripts/export-sqlite-data.ts` | Eksport tabel SQLite → JSON (read-only, bez zmiany schema) |
+| `scripts/import-sqlite-json-to-postgres.ts` | Import JSON → Postgres (kolejność FK) |
+| `scripts/validate-postgres-after-import.ts` | Raport po imporcie (Postgres) |
 
 ## Auth po migracji
 
