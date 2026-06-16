@@ -69,6 +69,29 @@ export function resolveCostInvoiceAmounts(params: {
     return { ok: false, message: "Podaj kwotę netto większą od 0 albo włącz „Płatność tylko VAT”." };
   }
   const rate = params.vatRate;
+  if (params.vatAmount !== undefined && params.grossAmount !== undefined) {
+    const vatN = Number(normalizeDecimalInput(String(params.vatAmount)));
+    const grossN = Number(normalizeDecimalInput(String(params.grossAmount)));
+    if (!Number.isFinite(vatN) || vatN < 0) {
+      return { ok: false, message: "Kwota VAT nie może być ujemna." };
+    }
+    if (!Number.isFinite(grossN) || grossN <= 0) {
+      return { ok: false, message: "Kwota brutto musi być większa od 0." };
+    }
+    if (Math.abs(netN + vatN - grossN) > GROSS_VAT_EPS) {
+      return { ok: false, message: "Kwota brutto musi równać się netto + VAT." };
+    }
+    return {
+      ok: true,
+      amounts: {
+        net: new Decimal(netN.toString()),
+        vat: new Decimal(vatN.toFixed(2)),
+        gross: new Decimal(grossN.toFixed(2)),
+        storedVatRate: rate,
+      },
+    };
+  }
+
   const vat = vatFromNetAndRate(netN.toString(), rate);
   const gross = grossFromNetAndRate(netN.toString(), rate);
   return {

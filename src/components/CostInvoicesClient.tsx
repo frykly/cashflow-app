@@ -9,8 +9,7 @@ import { Alert, Badge, Button, Field, Input, Modal, Select, Spinner, Textarea } 
 import { CrudToolbar } from "@/components/CrudToolbar";
 import { formatDate, formatMoney, toIsoOrNull } from "@/lib/format";
 import { isoToDateInputValue } from "@/lib/date-input";
-import { amountsFromGrossRate, amountsFromNetRate, inferVatRateFromAmounts, type VatRatePct } from "@/lib/vat-rate";
-import { InvoiceAmountFields, type AmountEntryMode } from "@/components/InvoiceAmountFields";
+import { amountsFromNetRate, inferVatRateFromAmounts, type VatRatePct } from "@/lib/vat-rate";
 import { ContractorAutocomplete } from "@/components/ContractorAutocomplete";
 import { readApiErrorBody } from "@/lib/api-client";
 import { useListQuery } from "@/hooks/useListQuery";
@@ -34,6 +33,16 @@ import {
 import { InvoicePdfDraftSection } from "@/components/InvoicePdfDraftSection";
 import type { InvoicePdfDraftResponse } from "@/lib/invoice-pdf/types";
 import { postCreateReturnFromSearchParams, type PostCreateReturnCapture } from "@/lib/safe-internal-return-path";
+import {
+  allocationAmountsFromGross,
+  allocationAmountsFromNet,
+  allocationTotals,
+  fillAllocationRemainder,
+  formatMoneyString,
+  isManualVatRate,
+  parseMoneyString,
+  type AllocationVatRateCode,
+} from "@/lib/money/allocation-balancing";
 
 type PayPick = Pick<CostInvoicePayment, "amountGross">;
 
@@ -82,6 +91,17 @@ type Row = {
 };
 
 type Draft = Omit<Row, "id"> & { id?: string };
+
+type ProjectAllocRow = {
+  projectId: string;
+  netAmount: string;
+  grossAmount: string;
+  description: string;
+  vatRateCode: AllocationVatRateCode;
+};
+
+type CostAmountEntryMode = "net" | "gross" | "netVat";
+type CostAmountVatRateCode = Exclude<AllocationVatRateCode, "MANUAL">;
 
 function todayYmd(): string {
   return new Date().toISOString().slice(0, 10);
@@ -251,6 +271,91 @@ function costInvoiceMultiProject(editing: Pick<Draft, "projectAllocations" | "pr
   return (editing.projectAllocations?.length ?? 0) > 1;
 }
 
+function defaultCostAllocationVatRateCode(editing: Pick<Draft, "vatRate" | "netAmount" | "vatAmount">): AllocationVatRateCode {
+  if (isStoredVatOnlyCost(editing.netAmount, editing.vatAmount)) return "MANUAL";
+  if (editing.vatRate === 23 || editing.vatRate === 8 || editing.vatRate === 5 || editing.vatRate === 0) {
+    return String(editing.vatRate) as AllocationVatRateCode;
+  }
+  return "23";
+}
+
+function storedVatRateFromCode(code: CostAmountVatRateCode | AllocationVatRateCode): VatRatePct {
+  if (code === "23" || code === "8" || code === "5" || code === "0") return Number(code) as VatRatePct;
+  return 0;
+}
+
+function costAmountRateCodeFromInvoice(editing: Pick<Draft, "vatRate" | "netAmount" | "vatAmount">): CostAmountVatRateCode {
+  if (editing.vatRate === 23 || editing.vatRate === 8 || editing.vatRate === 5 || editing.vatRate === 0) {
+    return String(editing.vatRate) as CostAmountVatRateCode;
+  }
+  return "23";
+}
+
+function costAmountModeFromInvoice(editing: Pick<Draft, "vatRate" | "netAmount" | "vatAmount" | "grossAmount">): CostAmountEntryMode {
+  if (isStoredVatOnlyCost(editing.netAmount, editing.vatAmount)) return "netVat";
+  const rateCode = costAmountRateCodeFromInvoice(editing);
+  const expected = allocationAmountsFromNet(String(editing.netAmount), rateCode);
+  const expectedVat = formatMoneyString(parseMoneyString(expected.grossAmount) - parseMoneyString(String(editing.netAmount)));
+  const actualVat = formatMoneyString(parseMoneyString(String(editing.vatAmount)));
+  const actualGross = formatMoneyString(parseMoneyString(String(editing.grossAmount)));
+  return expectedVat === actualVat && expected.grossAmount === actualGross ? "net" : "netVat";
+}
+
+function costInvoiceAmountsFromNet(net: string, vatRateCode: CostAmountVatRateCode) {
+  const amounts = allocationAmountsFromNet(net, vatRateCode);
+  const vatAmount = formatMoneyString(parseMoneyString(amounts.grossAmount) - parseMoneyString(amounts.netAmount));
+  return { netAmount: net, vatAmount, grossAmount: amounts.grossAmount };
+}
+
+function costInvoiceAmountsFromGross(gross: string, vatRateCode: CostAmountVatRateCode) {
+  const amounts = allocationAmountsFromGross(gross, vatRateCode);
+  const vatAmount = formatMoneyString(parseMoneyString(gross) - parseMoneyString(amounts.netAmount));
+  return { netAmount: amounts.netAmount, vatAmount, grossAmount: gross };
+}
+
+function costInvoiceAmountsFromNetVat(net: string, vat: string) {
+  return {
+    netAmount: net,
+    vatAmount: vat,
+    grossAmount: formatMoneyString(parseMoneyString(net) + parseMoneyString(vat)),
+  };
+}
+
+function costInvoicePrefillFromPlannedEvent(ev: { amount?: unknown; amountVat?: unknown }): {
+  amountEntryMode: CostAmountEntryMode;
+  costAmountVatRateCode: CostAmountVatRateCode;
+  netAmount: string;
+  vatAmount: string;
+  grossAmount: string;
+  vatRate: VatRatePct;
+} {
+  const net = formatMoneyString(parseMoneyString(String(ev.amount ?? "0")));
+  const vat = formatMoneyString(parseMoneyString(String(ev.amountVat ?? "0")));
+  const amounts = costInvoiceAmountsFromNetVat(net, vat);
+  return {
+    amountEntryMode: "netVat",
+    costAmountVatRateCode: "0",
+    ...amounts,
+    vatRate: 0,
+  };
+}
+
+function newCostAllocationRow(params: {
+  projectId?: string | null;
+  netAmount: string;
+  grossAmount: string;
+  description?: string;
+  vatRateCode: AllocationVatRateCode;
+}): ProjectAllocRow {
+  return {
+    projectId: params.projectId ?? "",
+    netAmount: params.netAmount,
+    grossAmount: params.grossAmount,
+    description: params.description ?? "",
+    vatRateCode: params.vatRateCode,
+  };
+}
+
 function prefillPaymentProjectRows(editing: Draft, amountGrossStr: string) {
   const inv = {
     projectAllocations: (editing.projectAllocations ?? []).map((a) => ({
@@ -287,13 +392,21 @@ export function CostInvoicesClient({ initialQueryString = "" }: { initialQuerySt
   const plannedPaymentManualRef = useRef(false);
   const sourcePlannedEventIdRef = useRef<string | null>(null);
   const postCreateReturnRef = useRef<PostCreateReturnCapture>({ returnTo: null, sourceProjectId: null });
-  const [amountEntryMode, setAmountEntryMode] = useState<AmountEntryMode>("net");
+  const [amountEntryMode, setAmountEntryMode] = useState<CostAmountEntryMode>("net");
+  const [costAmountVatRateCode, setCostAmountVatRateCode] = useState<CostAmountVatRateCode>("23");
   /** Netto 0, brutto = VAT — np. płatność samego VAT z konta VAT. */
   const [vatOnlyPayment, setVatOnlyPayment] = useState(false);
   const [projectAllocMode, setProjectAllocMode] = useState<"simple" | "multi">("simple");
-  const [projectAllocRows, setProjectAllocRows] = useState<
-    { projectId: string; netAmount: string; grossAmount: string; description: string }[]
-  >([]);
+  const [projectAllocRows, setProjectAllocRows] = useState<ProjectAllocRow[]>([]);
+  const projectAllocationTotals = useMemo(
+    () =>
+      allocationTotals({
+        documentNet: editing.netAmount,
+        documentGross: editing.grossAmount,
+        rows: projectAllocRows,
+      }),
+    [editing.grossAmount, editing.netAmount, projectAllocRows],
+  );
 
   const [filterDraft, setFilterDraft] = useState({
     q: "",
@@ -507,6 +620,7 @@ export function CostInvoicesClient({ initialQueryString = "" }: { initialQuerySt
     sourcePlannedEventIdRef.current = null;
     postCreateReturnRef.current = { returnTo: null, sourceProjectId: null };
     setAmountEntryMode("net");
+    setCostAmountVatRateCode("23");
     setVatOnlyPayment(false);
     setProjectAllocMode("simple");
     setProjectAllocRows([]);
@@ -535,6 +649,9 @@ export function CostInvoicesClient({ initialQueryString = "" }: { initialQuerySt
       return next;
     });
     if (res.values.netAmount) setAmountEntryMode("net");
+    if (res.values.vatRate != null) {
+      setCostAmountVatRateCode(String(res.values.vatRate) as CostAmountVatRateCode);
+    }
     const parts: string[] = [];
     if (res.filledLabels.length) parts.push(`Uzupełniono z PDF: ${res.filledLabels.join(", ")}.`);
     for (const w of res.warnings) parts.push(w);
@@ -571,7 +688,8 @@ export function CostInvoicesClient({ initialQueryString = "" }: { initialQuerySt
     const pp = isoToDateInputValue(r.plannedPaymentDate);
     const pd = isoToDateInputValue(r.paymentDueDate);
     plannedPaymentManualRef.current = pp !== pd;
-    setAmountEntryMode("net");
+    setAmountEntryMode(costAmountModeFromInvoice(r));
+    setCostAmountVatRateCode(costAmountRateCodeFromInvoice(r));
     setEditing({
       ...r,
       isGeneratedFromRecurring: !!r.isGeneratedFromRecurring,
@@ -590,33 +708,37 @@ export function CostInvoicesClient({ initialQueryString = "" }: { initialQuerySt
     if (pa && pa.length > 0) {
       setProjectAllocMode("multi");
       setProjectAllocRows(
-        pa.map((a) => ({
-          projectId: a.projectId,
-          netAmount: String(a.netAmount),
-          grossAmount: String(a.grossAmount),
-          description: a.description ?? "",
-        })),
+        pa.map((a) =>
+          newCostAllocationRow({
+            projectId: a.projectId,
+            netAmount: String(a.netAmount),
+            grossAmount: String(a.grossAmount),
+            description: a.description ?? "",
+            vatRateCode: "MANUAL",
+          }),
+        ),
       );
     } else if (opts?.preferMultiProjectAllocation) {
       setProjectAllocMode("multi");
       const pid = r.projectId?.trim();
+      const vatRateCode = defaultCostAllocationVatRateCode(r);
       setProjectAllocRows(
         pid
           ? [
-              {
+              newCostAllocationRow({
                 projectId: pid,
                 netAmount: String(r.netAmount),
                 grossAmount: String(r.grossAmount),
-                description: "",
-              },
+                vatRateCode,
+              }),
             ]
           : [
-              {
+              newCostAllocationRow({
                 projectId: "",
                 netAmount: String(r.netAmount),
                 grossAmount: String(r.grossAmount),
-                description: "",
-              },
+                vatRateCode,
+              }),
             ],
       );
     } else {
@@ -687,21 +809,20 @@ export function CostInvoicesClient({ initialQueryString = "" }: { initialQuerySt
           if (pr.ok && pj?.clientName) supplier = String(pj.clientName).trim();
         }
         plannedPaymentManualRef.current = false;
-        setAmountEntryMode("net");
         setVatOnlyPayment(false);
         const pd = isoToDateInputValue(ev.plannedDate);
-        const net = String(ev.amount ?? "0");
-        const rate = 23 as VatRatePct;
-        const a = amountsFromNetRate(net, rate);
+        const plannedAmounts = costInvoicePrefillFromPlannedEvent(ev);
+        setAmountEntryMode(plannedAmounts.amountEntryMode);
+        setCostAmountVatRateCode(plannedAmounts.costAmountVatRateCode);
         const d: Draft = {
           ...emptyDraft(),
           documentNumber: `ZPL-${ev.id.slice(0, 10)}`,
           supplier,
           description: ev.title ? `Z planu: ${ev.title}` : "",
-          netAmount: net,
-          vatAmount: a.vatAmount,
-          grossAmount: a.grossAmount,
-          vatRate: rate,
+          netAmount: plannedAmounts.netAmount,
+          vatAmount: plannedAmounts.vatAmount,
+          grossAmount: plannedAmounts.grossAmount,
+          vatRate: plannedAmounts.vatRate,
           documentDate: pd,
           paymentDueDate: pd,
           plannedPaymentDate: pd,
@@ -730,6 +851,7 @@ export function CostInvoicesClient({ initialQueryString = "" }: { initialQuerySt
         postCreateReturnRef.current = postCreateReturnFromSearchParams(m);
         plannedPaymentManualRef.current = false;
         setAmountEntryMode("net");
+        setCostAmountVatRateCode("23");
         setVatOnlyPayment(false);
         const d = emptyDraft();
         if (prefillPid) d.projectId = prefillPid;
@@ -779,16 +901,36 @@ export function CostInvoicesClient({ initialQueryString = "" }: { initialQuerySt
     });
   }
 
-  function handleAmountModeChange(m: AmountEntryMode) {
+  function handleAmountModeChange(m: CostAmountEntryMode) {
     if (vatOnlyPayment) return;
     setAmountEntryMode(m);
     setEditing((prev) => {
-      if (m === "gross") {
-        const a = amountsFromGrossRate(prev.grossAmount, prev.vatRate as VatRatePct);
-        return { ...prev, netAmount: a.netAmount, vatAmount: a.vatAmount };
+      if (m === "netVat") {
+        return { ...prev, ...costInvoiceAmountsFromNetVat(prev.netAmount, prev.vatAmount) };
       }
-      const a = amountsFromNetRate(prev.netAmount, prev.vatRate as VatRatePct);
-      return { ...prev, vatAmount: a.vatAmount, grossAmount: a.grossAmount };
+      if (m === "gross") {
+        const a = costInvoiceAmountsFromGross(prev.grossAmount, costAmountVatRateCode);
+        return { ...prev, ...a, vatRate: storedVatRateFromCode(costAmountVatRateCode) };
+      }
+      const a = costInvoiceAmountsFromNet(prev.netAmount, costAmountVatRateCode);
+      return { ...prev, ...a, vatRate: storedVatRateFromCode(costAmountVatRateCode) };
+    });
+  }
+
+  function handleCostAmountVatRateChange(vatRateCode: CostAmountVatRateCode) {
+    if (vatOnlyPayment) return;
+    setCostAmountVatRateCode(vatRateCode);
+    setEditing((prev) => {
+      const storedRate = storedVatRateFromCode(vatRateCode);
+      if (amountEntryMode === "netVat") {
+        return { ...prev, vatRate: storedRate };
+      }
+      if (amountEntryMode === "gross") {
+        const a = costInvoiceAmountsFromGross(prev.grossAmount, vatRateCode);
+        return { ...prev, ...a, vatRate: storedRate };
+      }
+      const a = costInvoiceAmountsFromNet(prev.netAmount, vatRateCode);
+      return { ...prev, ...a, vatRate: storedRate };
     });
   }
 
@@ -967,8 +1109,10 @@ export function CostInvoicesClient({ initialQueryString = "" }: { initialQuerySt
           supplier: editing.supplier,
           description: editing.description,
           vatOnly: false,
-          vatRate: editing.vatRate,
+          vatRate: storedVatRateFromCode(costAmountVatRateCode),
           netAmount: normalizeDecimalInput(editing.netAmount),
+          vatAmount: normalizeDecimalInput(editing.vatAmount),
+          grossAmount: normalizeDecimalInput(editing.grossAmount),
           documentDate,
           paymentDueDate,
           plannedPaymentDate,
@@ -1564,17 +1708,25 @@ export function CostInvoicesClient({ initialQueryString = "" }: { initialQuerySt
                     setProjectAllocRows((prev) => {
                       if (prev.length > 0) return prev;
                       const pid = editing.projectId?.trim();
+                      const vatRateCode = defaultCostAllocationVatRateCode(editing);
                       if (pid) {
                         return [
-                          {
+                          newCostAllocationRow({
                             projectId: pid,
                             netAmount: editing.netAmount,
                             grossAmount: editing.grossAmount,
-                            description: "",
-                          },
+                            vatRateCode,
+                          }),
                         ];
                       }
-                      return [{ projectId: "", netAmount: editing.netAmount, grossAmount: editing.grossAmount, description: "" }];
+                      return [
+                        newCostAllocationRow({
+                          projectId: "",
+                          netAmount: editing.netAmount,
+                          grossAmount: editing.grossAmount,
+                          vatRateCode,
+                        }),
+                      ];
                     });
                   } else {
                     setProjectAllocRows([]);
@@ -1585,10 +1737,43 @@ export function CostInvoicesClient({ initialQueryString = "" }: { initialQuerySt
             </label>
             {projectAllocMode === "multi" ? (
               <div className="mt-3 space-y-2">
+                <div
+                  className={`rounded-md border p-2 text-xs ${
+                    projectAllocationTotals.netOver || projectAllocationTotals.grossOver
+                      ? "border-red-300 bg-red-50/80 text-red-900 dark:border-red-900 dark:bg-red-950/40 dark:text-red-100"
+                      : projectAllocationTotals.netOk && projectAllocationTotals.grossOk
+                        ? "border-emerald-200 bg-emerald-50/70 text-emerald-900 dark:border-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-100"
+                        : "border-zinc-200 bg-zinc-50 text-zinc-700 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-200"
+                  }`}
+                >
+                  <div className="grid gap-1 sm:grid-cols-2">
+                    <div>
+                      <span className="font-medium">Netto:</span> Dokument:{" "}
+                      <strong className="tabular-nums">{formatMoney(projectAllocationTotals.documentNet)}</strong> ·
+                      Przydzielono:{" "}
+                      <strong className="tabular-nums">{formatMoney(projectAllocationTotals.allocatedNet)}</strong> ·
+                      Pozostało:{" "}
+                      <strong className="tabular-nums">{formatMoney(projectAllocationTotals.remainingNet)}</strong>
+                    </div>
+                    <div>
+                      <span className="font-medium">Brutto:</span> Dokument:{" "}
+                      <strong className="tabular-nums">{formatMoney(projectAllocationTotals.documentGross)}</strong> ·
+                      Przydzielono:{" "}
+                      <strong className="tabular-nums">{formatMoney(projectAllocationTotals.allocatedGross)}</strong> ·
+                      Pozostało:{" "}
+                      <strong className="tabular-nums">{formatMoney(projectAllocationTotals.remainingGross)}</strong>
+                    </div>
+                  </div>
+                  {projectAllocationTotals.netOver || projectAllocationTotals.grossOver ? (
+                    <p className="mt-1 font-medium">Przekroczono kwotę dokumentu — skoryguj alokacje przed zapisem.</p>
+                  ) : projectAllocationTotals.netOk && projectAllocationTotals.grossOk ? (
+                    <p className="mt-1 font-medium">OK — suma netto i brutto zgadza się z dokumentem.</p>
+                  ) : null}
+                </div>
                 {projectAllocRows.map((row, idx) => (
                   <div
                     key={idx}
-                    className="grid gap-2 rounded-md border border-zinc-100 p-2 dark:border-zinc-800 sm:grid-cols-2 lg:grid-cols-4"
+                    className="grid gap-2 rounded-md border border-zinc-100 p-2 dark:border-zinc-800 sm:grid-cols-2 xl:grid-cols-6"
                   >
                     <Field label="Projekt">
                       <ProjectSearchPicker
@@ -1602,14 +1787,48 @@ export function CostInvoicesClient({ initialQueryString = "" }: { initialQuerySt
                         disabled={saving}
                       />
                     </Field>
+                    <Field label="Stawka VAT">
+                      <Select
+                        value={row.vatRateCode}
+                        onChange={(e) => {
+                          const vatRateCode = e.target.value as AllocationVatRateCode;
+                          setProjectAllocRows((rows) =>
+                            rows.map((x, i) => {
+                              if (i !== idx) return x;
+                              if (isManualVatRate(vatRateCode)) return { ...x, vatRateCode };
+                              const amounts = allocationAmountsFromNet(x.netAmount, vatRateCode);
+                              return { ...x, vatRateCode, grossAmount: amounts.grossAmount };
+                            }),
+                          );
+                        }}
+                        disabled={saving}
+                      >
+                        <option value="23">23%</option>
+                        <option value="8">8%</option>
+                        <option value="5">5%</option>
+                        <option value="0">0%</option>
+                        <option value="ZW">ZW</option>
+                        <option value="NP">NP</option>
+                        <option value="MANUAL">Ręcznie</option>
+                      </Select>
+                    </Field>
                     <Field label="Netto (alokacja)">
                       <Input
                         value={row.netAmount}
                         onChange={(e) => {
                           const v = e.target.value;
-                          setProjectAllocRows((rows) => rows.map((x, i) => (i === idx ? { ...x, netAmount: v } : x)));
+                          setProjectAllocRows((rows) =>
+                            rows.map((x, i) => {
+                              if (i !== idx) return x;
+                              if (isManualVatRate(x.vatRateCode)) return { ...x, netAmount: v };
+                              const amounts = allocationAmountsFromNet(v, x.vatRateCode);
+                              return { ...x, netAmount: v, grossAmount: amounts.grossAmount };
+                            }),
+                          );
                         }}
                         disabled={saving}
+                        inputMode="decimal"
+                        autoComplete="off"
                       />
                     </Field>
                     <Field label="Brutto (alokacja)">
@@ -1617,9 +1836,18 @@ export function CostInvoicesClient({ initialQueryString = "" }: { initialQuerySt
                         value={row.grossAmount}
                         onChange={(e) => {
                           const v = e.target.value;
-                          setProjectAllocRows((rows) => rows.map((x, i) => (i === idx ? { ...x, grossAmount: v } : x)));
+                          setProjectAllocRows((rows) =>
+                            rows.map((x, i) => {
+                              if (i !== idx) return x;
+                              if (isManualVatRate(x.vatRateCode)) return { ...x, grossAmount: v };
+                              const amounts = allocationAmountsFromGross(v, x.vatRateCode);
+                              return { ...x, grossAmount: v, netAmount: amounts.netAmount };
+                            }),
+                          );
                         }}
                         disabled={saving}
+                        inputMode="decimal"
+                        autoComplete="off"
                       />
                     </Field>
                     <Field label="Notatka (opcjonalnie)">
@@ -1632,6 +1860,31 @@ export function CostInvoicesClient({ initialQueryString = "" }: { initialQuerySt
                         disabled={saving}
                       />
                     </Field>
+                    <div className="flex items-end">
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        className="w-full !px-2 !py-2 !text-xs"
+                        disabled={saving}
+                        onClick={() =>
+                          setProjectAllocRows((rows) =>
+                            rows.map((x, i) => {
+                              if (i !== idx) return x;
+                              const filled = fillAllocationRemainder({
+                                documentNet: editing.netAmount,
+                                documentGross: editing.grossAmount,
+                                rows,
+                                rowIndex: idx,
+                                vatRateCode: x.vatRateCode,
+                              });
+                              return { ...x, ...filled };
+                            }),
+                          )
+                        }
+                      >
+                        Uzupełnij pozostałą kwotę
+                      </Button>
+                    </div>
                   </div>
                 ))}
                 <div className="flex flex-wrap gap-2">
@@ -1643,7 +1896,12 @@ export function CostInvoicesClient({ initialQueryString = "" }: { initialQuerySt
                     onClick={() =>
                       setProjectAllocRows((rows) => [
                         ...rows,
-                        { projectId: "", netAmount: editing.netAmount, grossAmount: editing.grossAmount, description: "" },
+                        newCostAllocationRow({
+                          projectId: "",
+                          netAmount: editing.netAmount,
+                          grossAmount: editing.grossAmount,
+                          vatRateCode: defaultCostAllocationVatRateCode(editing),
+                        }),
                       ])
                     }
                   >
@@ -1687,6 +1945,7 @@ export function CostInvoicesClient({ initialQueryString = "" }: { initialQuerySt
                 setVatOnlyPayment(on);
                 if (on) {
                   setAmountEntryMode("net");
+                  setCostAmountVatRateCode("0");
                   setEditing((prev) => {
                     const raw = prev.vatAmount?.trim();
                     const hasVat = raw && Number(normalizeDecimalInput(raw)) > 0;
@@ -1702,14 +1961,14 @@ export function CostInvoicesClient({ initialQueryString = "" }: { initialQuerySt
                   });
                 } else {
                   setAmountEntryMode("net");
+                  setCostAmountVatRateCode("23");
                   setEditing((prev) => {
                     const net =
                       prev.netAmount && Number(normalizeDecimalInput(prev.netAmount)) > 0
                         ? prev.netAmount
                         : "1";
-                    const rate = (prev.vatRate === 0 ? 23 : prev.vatRate) as VatRatePct;
-                    const a = amountsFromNetRate(net, rate);
-                    return { ...prev, netAmount: net, vatRate: rate, vatAmount: a.vatAmount, grossAmount: a.grossAmount };
+                    const a = costInvoiceAmountsFromNet(net, "23");
+                    return { ...prev, ...a, vatRate: 23 };
                   });
                 }
               }}
@@ -1750,37 +2009,115 @@ export function CostInvoicesClient({ initialQueryString = "" }: { initialQuerySt
               </Field>
             </div>
           ) : (
-            <InvoiceAmountFields
-              mode={amountEntryMode}
-              onModeChange={handleAmountModeChange}
-              netAmount={editing.netAmount}
-              vatRate={editing.vatRate}
-              vatAmount={editing.vatAmount}
-              grossAmount={editing.grossAmount}
-              disabled={saving}
-              onNetChange={(net) => {
-                setEditing((prev) => {
-                  const a = amountsFromNetRate(net, prev.vatRate as VatRatePct);
-                  return { ...prev, netAmount: net, ...a };
-                });
-              }}
-              onGrossChange={(gross) => {
-                setEditing((prev) => {
-                  const a = amountsFromGrossRate(gross, prev.vatRate as VatRatePct);
-                  return { ...prev, grossAmount: gross, netAmount: a.netAmount, vatAmount: a.vatAmount };
-                });
-              }}
-              onVatRateChange={(rate) => {
-                setEditing((prev) => {
-                  if (amountEntryMode === "gross") {
-                    const a = amountsFromGrossRate(prev.grossAmount, rate);
-                    return { ...prev, vatRate: rate, netAmount: a.netAmount, vatAmount: a.vatAmount };
-                  }
-                  const a = amountsFromNetRate(prev.netAmount, rate);
-                  return { ...prev, vatRate: rate, ...a };
-                });
-              }}
-            />
+            <div className="space-y-3">
+              <div className="flex flex-wrap gap-x-6 gap-y-2 text-sm text-zinc-700 dark:text-zinc-300">
+                <label className="flex cursor-pointer items-center gap-2">
+                  <input
+                    type="radio"
+                    name="costInvoiceAmountMode"
+                    className="size-4"
+                    checked={amountEntryMode === "net"}
+                    onChange={() => handleAmountModeChange("net")}
+                    disabled={saving}
+                  />
+                  Wpisuję netto
+                </label>
+                <label className="flex cursor-pointer items-center gap-2">
+                  <input
+                    type="radio"
+                    name="costInvoiceAmountMode"
+                    className="size-4"
+                    checked={amountEntryMode === "gross"}
+                    onChange={() => handleAmountModeChange("gross")}
+                    disabled={saving}
+                  />
+                  Wpisuję brutto
+                </label>
+                <label className="flex cursor-pointer items-center gap-2">
+                  <input
+                    type="radio"
+                    name="costInvoiceAmountMode"
+                    className="size-4"
+                    checked={amountEntryMode === "netVat"}
+                    onChange={() => handleAmountModeChange("netVat")}
+                    disabled={saving}
+                  />
+                  Wpisuję netto + VAT ręcznie
+                </label>
+              </div>
+              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                <Field label="Kwota netto">
+                  <Input
+                    value={editing.netAmount}
+                    onChange={(e) => {
+                      const net = e.target.value;
+                      setEditing((prev) => {
+                        if (amountEntryMode === "netVat") return { ...prev, ...costInvoiceAmountsFromNetVat(net, prev.vatAmount) };
+                        const a = costInvoiceAmountsFromNet(net, costAmountVatRateCode);
+                        return { ...prev, ...a, vatRate: storedVatRateFromCode(costAmountVatRateCode) };
+                      });
+                    }}
+                    required
+                    disabled={saving}
+                    readOnly={amountEntryMode === "gross"}
+                    className={amountEntryMode === "gross" ? "bg-zinc-50 dark:bg-zinc-900" : undefined}
+                    inputMode="decimal"
+                    autoComplete="off"
+                  />
+                </Field>
+                <Field label="Stawka VAT">
+                  {amountEntryMode === "netVat" ? (
+                    <Input value="Ręcznie" readOnly disabled className="bg-zinc-50 dark:bg-zinc-900" />
+                  ) : (
+                    <Select
+                      value={costAmountVatRateCode}
+                      onChange={(e) => handleCostAmountVatRateChange(e.target.value as CostAmountVatRateCode)}
+                      disabled={saving}
+                    >
+                      <option value="23">23%</option>
+                      <option value="8">8%</option>
+                      <option value="5">5%</option>
+                      <option value="0">0%</option>
+                      <option value="ZW">ZW</option>
+                      <option value="NP">NP</option>
+                    </Select>
+                  )}
+                </Field>
+                <Field label="Kwota VAT">
+                  <Input
+                    value={editing.vatAmount}
+                    onChange={(e) => {
+                      const vat = e.target.value;
+                      setEditing((prev) => ({ ...prev, ...costInvoiceAmountsFromNetVat(prev.netAmount, vat) }));
+                    }}
+                    required
+                    disabled={saving}
+                    readOnly={amountEntryMode !== "netVat"}
+                    className={amountEntryMode !== "netVat" ? "bg-zinc-50 dark:bg-zinc-900" : undefined}
+                    inputMode="decimal"
+                    autoComplete="off"
+                  />
+                </Field>
+                <Field label="Brutto">
+                  <Input
+                    value={editing.grossAmount}
+                    onChange={(e) => {
+                      const gross = e.target.value;
+                      setEditing((prev) => {
+                        const a = costInvoiceAmountsFromGross(gross, costAmountVatRateCode);
+                        return { ...prev, ...a, vatRate: storedVatRateFromCode(costAmountVatRateCode) };
+                      });
+                    }}
+                    required
+                    disabled={saving}
+                    readOnly={amountEntryMode !== "gross"}
+                    className={amountEntryMode !== "gross" ? "bg-zinc-50 dark:bg-zinc-900" : undefined}
+                    inputMode="decimal"
+                    autoComplete="off"
+                  />
+                </Field>
+              </div>
+            </div>
           )}
           <div className="grid gap-3 sm:grid-cols-3">
             <Field label="Data dokumentu">

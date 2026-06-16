@@ -10,6 +10,7 @@ import {
 } from "@/lib/projects/project-balance";
 import { projectLifecycleDisplay, projectSettlementDisplay } from "@/lib/project-status-labels";
 import { sortProjectTasksForList } from "@/lib/projects/project-task-sort";
+import { isStoredVatOnlyCost } from "@/lib/validation/is-vat-only-cost";
 
 const LIST_TAKE = 250;
 
@@ -27,6 +28,12 @@ export type CostInvoiceRowExtra = {
   netSlice: number;
   netPaid: number;
   netRemaining: number;
+  isVatOnly: boolean;
+  hasVat: boolean;
+  vatSlice: number;
+  grossSlice: number;
+  vatPaid: number;
+  vatRemaining: number;
 };
 
 export type PlannedEventRowExtra = {
@@ -170,12 +177,14 @@ export async function getProjectDetails(projectId: string): Promise<ProjectDetai
 
   const costInvoices = costInvoicesAll.slice(0, LIST_TAKE).map((inv) => {
     const netSlice = costNetSliceForRow(inv, projectId);
+    const vatAmounts = costVatAmountsForRow(inv, projectId);
     return {
       ...inv,
       row: {
         netSlice,
         netPaid: costNetPaidForProject(inv as never, projectId),
         netRemaining: costNetRemainingForProject(inv as never, projectId),
+        ...vatAmounts,
       },
     };
   });
@@ -228,6 +237,52 @@ function costNetSliceForRow(
   }
   if (inv.projectId === projectId) return decToNumber(inv.netAmount as never);
   return 0;
+}
+
+function costVatAmountsForRow(
+  inv: {
+    projectId: string | null;
+    netAmount: unknown;
+    vatAmount: unknown;
+    grossAmount: unknown;
+    projectAllocations: { projectId: string; netAmount: unknown; grossAmount: unknown }[];
+    payments: { amountGross: unknown }[];
+  },
+  projectId: string,
+): Pick<CostInvoiceRowExtra, "isVatOnly" | "hasVat" | "vatSlice" | "grossSlice" | "vatPaid" | "vatRemaining"> {
+  const invoiceVat = decToNumber(inv.vatAmount as never);
+  const invoiceGross = decToNumber(inv.grossAmount as never);
+  const isVatOnly = isStoredVatOnlyCost(inv.netAmount, inv.vatAmount);
+  if (invoiceVat <= 0) {
+    return { isVatOnly, hasVat: false, vatSlice: 0, grossSlice: 0, vatPaid: 0, vatRemaining: 0 };
+  }
+  let grossSlice = 0;
+  let vatSlice = 0;
+  if (inv.projectAllocations.length > 0) {
+    for (const a of inv.projectAllocations) {
+      if (a.projectId !== projectId) continue;
+      const allocGross = decToNumber(a.grossAmount as never);
+      const allocNet = decToNumber(a.netAmount as never);
+      grossSlice += allocGross;
+      vatSlice += Math.max(0, allocGross - allocNet);
+    }
+  } else if (inv.projectId === projectId) {
+    grossSlice = invoiceGross;
+    vatSlice = invoiceVat;
+  }
+  grossSlice = round2n(grossSlice);
+  vatSlice = round2n(vatSlice);
+  const paidGross = inv.payments.reduce((sum, p) => sum + decToNumber(p.amountGross as never), 0);
+  const paidRatio = invoiceGross > 0 ? Math.min(1, Math.max(0, paidGross / invoiceGross)) : 0;
+  const vatPaid = round2n(vatSlice * paidRatio);
+  return {
+    isVatOnly,
+    hasVat: vatSlice > 0,
+    vatSlice,
+    grossSlice,
+    vatPaid,
+    vatRemaining: round2n(Math.max(0, vatSlice - vatPaid)),
+  };
 }
 
 function plannedEventAmountsForRow(

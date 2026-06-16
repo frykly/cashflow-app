@@ -2,12 +2,12 @@
 
 import { normalizeDecimalInput } from "./decimal-input";
 
-export type VatRatePct = 0 | 8 | 23;
+export type VatRatePct = 0 | 5 | 8 | 23;
 
 export function inferVatRateFromAmounts(net: number, vat: number): VatRatePct {
   if (!Number.isFinite(net) || net <= 0 || !Number.isFinite(vat)) return 23;
   const ratio = Math.round((vat / net) * 100);
-  const candidates: VatRatePct[] = [0, 8, 23];
+  const candidates: VatRatePct[] = [0, 5, 8, 23];
   let best: VatRatePct = 23;
   let bestDiff = Infinity;
   for (const c of candidates) {

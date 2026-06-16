@@ -41,9 +41,9 @@ function optionalIsoNullableFieldUpdate() {
 const vatRateField = z.preprocess((v: unknown) => {
   if (v === "" || v === undefined || v === null) return 23;
   const n = Number(v);
-  if (n === 0 || n === 8 || n === 23) return n;
+  if (n === 0 || n === 5 || n === 8 || n === 23) return n;
   return 23;
-}, z.union([z.literal(0), z.literal(8), z.literal(23)]));
+}, z.union([z.literal(0), z.literal(5), z.literal(8), z.literal(23)]));
 
 const decimalLike = z
   .union([z.number(), z.string()])
@@ -198,7 +198,11 @@ const optionalTrimmedFieldUpdate = (max: number) =>
 
 /** Wartość `Project.lifecycleStatus` / `settlementStatus` — dowolny krótki string (slug legacy + słownik). */
 const optionalProjectStatusValue = z.preprocess(
-  (v) => (v === "" || v === null || v === undefined ? null : String(v).trim()),
+  (v) => {
+    if (v === undefined) return undefined;
+    if (v === "" || v === null) return null;
+    return String(v).trim();
+  },
   z.union([z.string().max(120), z.null()]).optional(),
 );
 

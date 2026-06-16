@@ -50,6 +50,8 @@ function serializeProjectTasks(tasks: ProjectDetailsResult["tasks"]): ProjectTas
 export function ProjectDetailView({ data }: { data: ProjectDetailsResult }) {
   const { project, statusDisplay, missingItems, tasks, counts, balance, incomeInvoices, costInvoices, plannedEvents } =
     data;
+  const activePlannedEvents = plannedEvents.filter((r) => r.status !== "CONVERTED");
+  const convertedPlannedEvents = plannedEvents.filter((r) => r.status === "CONVERTED");
 
   return (
     <div className="space-y-8">
@@ -312,26 +314,51 @@ export function ProjectDetailView({ data }: { data: ProjectDetailsResult }) {
                   </td>
                 </tr>
               ) : (
-                costInvoices.map((r) => (
-                  <tr key={r.id} className="bg-white dark:bg-zinc-950">
-                    <td className="px-3 py-2 font-mono text-xs">{r.documentNumber}</td>
-                    <td className="max-w-[160px] truncate px-3 py-2">
-                      <ContractorNameLink name={r.supplier} />
-                    </td>
-                    <td className="px-3 py-2 tabular-nums">{formatMoney(r.row?.netSlice ?? 0)}</td>
-                    <td className="px-3 py-2 tabular-nums">{formatMoney(r.row?.netPaid ?? 0)}</td>
-                    <td className="px-3 py-2 tabular-nums">{formatMoney(r.row?.netRemaining ?? 0)}</td>
-                    <td className="px-3 py-2 text-xs">{r.status}</td>
-                    <td className="px-3 py-2 text-right">
-                      <Link
-                        href={`/cost-invoices?editCost=${r.id}`}
-                        className="text-xs font-medium text-zinc-700 underline dark:text-zinc-300"
-                      >
-                        Otwórz
-                      </Link>
-                    </td>
-                  </tr>
-                ))
+                costInvoices.map((r) => {
+                  const hasVat = !!r.row?.hasVat;
+                  return (
+                    <tr key={r.id} className="bg-white dark:bg-zinc-950">
+                      <td className="px-3 py-2 font-mono text-xs">{r.documentNumber}</td>
+                      <td className="max-w-[160px] truncate px-3 py-2">
+                        <ContractorNameLink name={r.supplier} />
+                      </td>
+                      <td className="px-3 py-2 tabular-nums">
+                        <div>{formatMoney(r.row?.netSlice ?? 0)}</div>
+                        {hasVat ? (
+                          <div className="mt-1 space-y-0.5 text-[11px] leading-tight text-zinc-500 dark:text-zinc-400">
+                            <div>VAT: {formatMoney(r.row?.vatSlice ?? 0)}</div>
+                            <div>Brutto: {formatMoney(r.row?.grossSlice ?? 0)}</div>
+                          </div>
+                        ) : null}
+                      </td>
+                      <td className="px-3 py-2 tabular-nums">
+                        <div>{formatMoney(r.row?.netPaid ?? 0)}</div>
+                        {hasVat ? (
+                          <div className="mt-1 text-[11px] leading-tight text-zinc-500 dark:text-zinc-400">
+                            Zapłacono VAT: {formatMoney(r.row?.vatPaid ?? 0)}
+                          </div>
+                        ) : null}
+                      </td>
+                      <td className="px-3 py-2 tabular-nums">
+                        <div>{formatMoney(r.row?.netRemaining ?? 0)}</div>
+                        {hasVat ? (
+                          <div className="mt-1 text-[11px] font-medium leading-tight text-red-700 dark:text-red-300">
+                            VAT do zapłaty: {formatMoney(r.row?.vatRemaining ?? 0)}
+                          </div>
+                        ) : null}
+                      </td>
+                      <td className="px-3 py-2 text-xs">{r.status}</td>
+                      <td className="px-3 py-2 text-right">
+                        <Link
+                          href={`/cost-invoices?editCost=${r.id}`}
+                          className="text-xs font-medium text-zinc-700 underline dark:text-zinc-300"
+                        >
+                          Otwórz
+                        </Link>
+                      </td>
+                    </tr>
+                  );
+                })
               )}
             </tbody>
           </table>
@@ -356,14 +383,14 @@ export function ProjectDetailView({ data }: { data: ProjectDetailsResult }) {
               </tr>
             </thead>
             <tbody className="divide-y divide-zinc-200 dark:divide-zinc-800">
-              {plannedEvents.length === 0 ? (
+              {activePlannedEvents.length === 0 ? (
                 <tr>
                   <td colSpan={9} className="px-3 py-8 text-center text-zinc-500">
                     Brak powiązań
                   </td>
                 </tr>
               ) : (
-                plannedEvents.map((r) => (
+                activePlannedEvents.map((r) => (
                   <tr key={r.id} className="bg-white dark:bg-zinc-950">
                     <td className="max-w-[200px] truncate px-3 py-2 font-medium">{r.title}</td>
                     <td className="px-3 py-2 text-xs">{r.type}</td>
@@ -406,6 +433,61 @@ export function ProjectDetailView({ data }: { data: ProjectDetailsResult }) {
           </table>
         </div>
       </section>
+
+      {convertedPlannedEvents.length > 0 ? (
+        <section id="converted-planned">
+          <h2 className="mb-2 text-sm font-semibold text-zinc-800 dark:text-zinc-200">Skonwertowane zdarzenia</h2>
+          <div className="overflow-x-auto rounded-xl border border-zinc-200 dark:border-zinc-800">
+            <table className="w-full min-w-[720px] text-left text-sm">
+              <thead className="bg-zinc-50 dark:bg-zinc-900">
+                <tr>
+                  <th className="px-3 py-2 font-medium">Tytuł</th>
+                  <th className="px-3 py-2 font-medium">Typ</th>
+                  <th className="px-3 py-2 font-medium">Data planu</th>
+                  <th className="px-3 py-2 font-medium">Faktura</th>
+                  <th className="px-3 py-2 text-right font-medium"> </th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-zinc-200 dark:divide-zinc-800">
+                {convertedPlannedEvents.map((r) => (
+                  <tr key={r.id} className="bg-white dark:bg-zinc-950">
+                    <td className="max-w-[260px] truncate px-3 py-2 font-medium">{r.title}</td>
+                    <td className="px-3 py-2 text-xs">{r.type}</td>
+                    <td className="whitespace-nowrap px-3 py-2">{formatDate(r.plannedDate)}</td>
+                    <td className="max-w-[180px] px-3 py-2 text-xs">
+                      {r.convertedToIncomeInvoice ? (
+                        <Link
+                          href={`/income-invoices?editIncome=${r.convertedToIncomeInvoice.id}`}
+                          className="font-medium text-emerald-800 underline dark:text-emerald-300"
+                        >
+                          FV {r.convertedToIncomeInvoice.invoiceNumber}
+                        </Link>
+                      ) : r.convertedToCostInvoice ? (
+                        <Link
+                          href={`/cost-invoices?editCost=${r.convertedToCostInvoice.id}`}
+                          className="font-medium text-red-800 underline dark:text-red-300"
+                        >
+                          {r.convertedToCostInvoice.documentNumber}
+                        </Link>
+                      ) : (
+                        "—"
+                      )}
+                    </td>
+                    <td className="px-3 py-2 text-right">
+                      <Link
+                        href={`/planned-events?editPlanned=${r.id}`}
+                        className="text-xs font-medium text-zinc-700 underline dark:text-zinc-300"
+                      >
+                        Szczegóły
+                      </Link>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      ) : null}
     </div>
   );
 }
