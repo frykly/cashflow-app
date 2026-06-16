@@ -80,6 +80,16 @@ export type ProjectDetailsResult = {
     projectAllocations: { amount: unknown; amountVat: unknown; projectId: string }[];
     row?: PlannedEventRowExtra;
   })[];
+  projectContractors: {
+    id: string;
+    projectId: string;
+    contractorId: string;
+    role: string | null;
+    notes: string | null;
+    createdAt: Date;
+    updatedAt: Date;
+    contractor: { id: string; displayName: string; taxId: string | null; type: string | null };
+  }[];
 };
 
 export async function getProjectDetails(projectId: string): Promise<ProjectDetailsResult | null> {
@@ -115,6 +125,7 @@ export async function getProjectDetails(projectId: string): Promise<ProjectDetai
     incomeInvoicesAll,
     costInvoicesAll,
     plannedEventsAll,
+    projectContractors,
   ] = await Promise.all([
     prisma.incomeInvoice.count({ where: whereLinked }),
     prisma.costInvoice.count({ where: whereLinked }),
@@ -151,6 +162,11 @@ export async function getProjectDetails(projectId: string): Promise<ProjectDetai
         convertedToCostInvoice: { select: { id: true, documentNumber: true } },
         projectAllocations: { select: { projectId: true, amount: true, amountVat: true } },
       },
+    }),
+    prisma.projectContractor.findMany({
+      where: { projectId },
+      include: { contractor: { select: { id: true, displayName: true, taxId: true, type: true } } },
+      orderBy: [{ createdAt: "asc" }],
     }),
   ]);
 
@@ -204,6 +220,7 @@ export async function getProjectDetails(projectId: string): Promise<ProjectDetai
     incomeInvoices,
     costInvoices,
     plannedEvents,
+    projectContractors,
   };
 }
 

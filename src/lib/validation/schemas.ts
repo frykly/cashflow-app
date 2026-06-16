@@ -253,6 +253,17 @@ export const projectUpdateSchema = z.object({
   endDate: optionalIsoNullableFieldUpdate(),
 });
 
+export const projectContractorCreateSchema = z.object({
+  contractorId: z.string().min(1),
+  role: optionalTrimmed(200),
+  notes: optionalTrimmed(1000),
+});
+
+export const projectContractorUpdateSchema = z.object({
+  role: optionalTrimmedFieldUpdate(200),
+  notes: optionalTrimmedFieldUpdate(1000),
+});
+
 const projectTaskStatusSchema = z.enum(["TODO", "IN_PROGRESS", "DONE"]);
 const projectTaskPrioritySchema = z.enum(["LOW", "NORMAL", "HIGH"]);
 

@@ -54,6 +54,7 @@ export async function getContractorDetails(id: string) {
     costInvoices,
     projects,
     bankTransactions,
+    projectContractorLinks,
     incomeSummaryRows,
     costSummaryRows,
     projectSummaryRows,
@@ -121,6 +122,24 @@ export async function getContractorDetails(id: string) {
         status: true,
       },
     }),
+    prisma.projectContractor.findMany({
+      where: { contractorId: id },
+      include: {
+        project: {
+          select: {
+            id: true,
+            name: true,
+            code: true,
+            clientName: true,
+            isActive: true,
+            updatedAt: true,
+            lifecycleStatus: true,
+            settlementStatus: true,
+          },
+        },
+      },
+      orderBy: [{ createdAt: "asc" }],
+    }),
     prisma.incomeInvoice.findMany({
       where: incomeWhere,
       select: {
@@ -157,6 +176,24 @@ export async function getContractorDetails(id: string) {
   const costRemaining = round2(costSummaryRows.reduce((sum, r) => sum + remainingGross(r.grossAmount, r.payments), 0));
   const bankIncome = round2(bankSummaryRows.reduce((sum, r) => sum + (r.amount > 0 ? r.amount / 100 : 0), 0));
   const bankExpenses = round2(bankSummaryRows.reduce((sum, r) => sum + (r.amount < 0 ? Math.abs(r.amount) / 100 : 0), 0));
+  const contractorProjects = projectContractorLinks
+    .map((r) => ({
+      ...r,
+      createdAt: r.createdAt.toISOString(),
+      updatedAt: r.updatedAt.toISOString(),
+      project: {
+        ...r.project,
+        updatedAt: r.project.updatedAt.toISOString(),
+        lifecycleDisplay: projectLifecycleDisplay(r.project.lifecycleStatus, lifeMap),
+        settlementDisplay: projectSettlementDisplay(r.project.settlementStatus, setMap),
+      },
+    }))
+    .sort((a, b) => {
+      const aActive = a.project.isActive && a.project.lifecycleStatus !== "COMPLETED";
+      const bActive = b.project.isActive && b.project.lifecycleStatus !== "COMPLETED";
+      if (aActive !== bActive) return aActive ? -1 : 1;
+      return a.project.name.localeCompare(b.project.name, "pl");
+    });
 
   return {
     contractor: {
@@ -194,6 +231,7 @@ export async function getContractorDetails(id: string) {
         ...r,
         bookingDate: r.bookingDate.toISOString(),
       })),
+      contractorProjects,
     },
     summary: {
       income: {

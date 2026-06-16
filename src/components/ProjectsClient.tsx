@@ -80,6 +80,34 @@ type Row = {
   }>;
 };
 
+type ViewMode = "projects" | "contractors";
+
+type ContractorGroup = {
+  contractor: {
+    id: string;
+    displayName: string;
+    taxId: string | null;
+    type: string | null;
+  };
+  projectCount: number;
+  hasActiveProject: boolean;
+  projects: {
+    linkId: string;
+    role: string | null;
+    notes: string | null;
+    project: {
+      id: string;
+      name: string;
+      code: string | null;
+      clientName: string | null;
+      isActive: boolean;
+      lifecycleStatus: string | null;
+      settlementStatus: string | null;
+      updatedAt: string;
+    };
+  }[];
+};
+
 type Draft = {
   id?: string;
   name: string;
@@ -130,6 +158,22 @@ const SORT_OPTIONS: { value: SortKey; label: string }[] = [
   { value: "actualResult", label: "Wynik rzeczywisty" },
 ];
 
+function initialActiveFilter(query: URLSearchParams): "" | "1" | "0" {
+  const raw = query.get("active")?.trim() ?? "";
+  if (raw === "1" || raw === "true") return "1";
+  if (raw === "0" || raw === "false") return "0";
+  return "";
+}
+
+function initialViewMode(query: URLSearchParams): ViewMode {
+  return query.get("view") === "contractors" ? "contractors" : "projects";
+}
+
+function initialSortKey(query: URLSearchParams): SortKey {
+  const raw = query.get("sort")?.trim() ?? "";
+  return SORT_OPTIONS.some((o) => o.value === raw) ? (raw as SortKey) : "name";
+}
+
 /** Plan / zapłacone pod nazwą — nie zajmują osobnych szerokich kolumn. */
 function ProjectPlanSubline({ r }: { r: Row }) {
   const planP = moneyCell(r.plannedRevenueNet);
@@ -156,18 +200,29 @@ function ProjectPlanSubline({ r }: { r: Row }) {
   );
 }
 
-export function ProjectsClient({ initialEditId = null }: { initialEditId?: string | null }) {
+export function ProjectsClient({
+  initialEditId = null,
+  initialQueryString = "",
+}: {
+  initialEditId?: string | null;
+  initialQueryString?: string;
+}) {
   const router = useRouter();
   const pathname = usePathname();
+  const initialQueryRef = useRef(new URLSearchParams(initialQueryString));
   const [rows, setRows] = useState<Row[]>([]);
+  const [contractorGroups, setContractorGroups] = useState<ContractorGroup[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [searchInput, setSearchInput] = useState("");
-  const [qDebounced, setQDebounced] = useState("");
-  const [activeFilter, setActiveFilter] = useState<"" | "1" | "0">("");
-  const [includeSettled, setIncludeSettled] = useState(false);
-  const [sortKey, setSortKey] = useState<SortKey>("name");
-  const [sortOrder, setSortOrder] = useState<"asc" | "desc">("asc");
+  const [searchInput, setSearchInput] = useState(() => initialQueryRef.current.get("q") ?? "");
+  const [qDebounced, setQDebounced] = useState(() => initialQueryRef.current.get("q") ?? "");
+  const [activeFilter, setActiveFilter] = useState<"" | "1" | "0">(() => initialActiveFilter(initialQueryRef.current));
+  const [includeSettled, setIncludeSettled] = useState(() => initialQueryRef.current.get("includeSettled") === "1");
+  const [sortKey, setSortKey] = useState<SortKey>(() => initialSortKey(initialQueryRef.current));
+  const [sortOrder, setSortOrder] = useState<"asc" | "desc">(() =>
+    initialQueryRef.current.get("order") === "desc" ? "desc" : "asc",
+  );
+  const [viewMode, setViewMode] = useState<ViewMode>(() => initialViewMode(initialQueryRef.current));
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<Draft>(emptyDraft());
   const [formError, setFormError] = useState<string | null>(null);
@@ -180,6 +235,7 @@ export function ProjectsClient({ initialEditId = null }: { initialEditId?: strin
   const [statusPatchSavingKey, setStatusPatchSavingKey] = useState<string | null>(null);
   const [statusPatchError, setStatusPatchError] = useState<string | null>(null);
   const statusPatchInFlightRef = useRef(false);
+  const didInitUrlSyncRef = useRef(false);
 
   const lifeMap = useMemo(() => new Map(lifeOpts.map((o) => [o.slug, o.name])), [lifeOpts]);
   const settlementMap = useMemo(() => new Map(settlementOpts.map((o) => [o.slug, o.name])), [settlementOpts]);
@@ -207,6 +263,24 @@ export function ProjectsClient({ initialEditId = null }: { initialEditId?: strin
     return () => window.clearTimeout(t);
   }, [searchInput]);
 
+  useEffect(() => {
+    if (!didInitUrlSyncRef.current) {
+      didInitUrlSyncRef.current = true;
+      return;
+    }
+    const sp = new URLSearchParams();
+    if (qDebounced) sp.set("q", qDebounced);
+    sp.set("active", activeFilter === "1" ? "1" : activeFilter === "0" ? "0" : "all");
+    sp.set("view", viewMode);
+    if (includeSettled) sp.set("includeSettled", "1");
+    if (viewMode === "projects") {
+      sp.set("sort", sortKey);
+      sp.set("order", sortOrder);
+    }
+    const qs = sp.toString();
+    router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
+  }, [activeFilter, includeSettled, pathname, qDebounced, router, sortKey, sortOrder, viewMode]);
+
   const load = useCallback(async () => {
     setLoading(true);
     setLoadError(null);
@@ -216,21 +290,31 @@ export function ProjectsClient({ initialEditId = null }: { initialEditId?: strin
       if (activeFilter === "1") sp.set("active", "true");
       if (activeFilter === "0") sp.set("active", "false");
       if (includeSettled) sp.set("includeSettled", "1");
-      sp.set("sort", sortKey);
-      sp.set("order", sortOrder);
+      sp.set("view", viewMode);
+      if (viewMode === "projects") {
+        sp.set("sort", sortKey);
+        sp.set("order", sortOrder);
+      }
       const qs = sp.toString();
       const r = await fetch(`/api/projects${qs ? `?${qs}` : ""}`);
       const j = await r.json();
       if (!r.ok) throw new Error(readApiErrorBody(j));
-      setRows(Array.isArray(j) ? j : []);
+      if (viewMode === "contractors") {
+        setContractorGroups(Array.isArray(j) ? j : []);
+        setRows([]);
+      } else {
+        setRows(Array.isArray(j) ? j : []);
+        setContractorGroups([]);
+      }
       setStatusPatchError(null);
     } catch (e) {
       setRows([]);
+      setContractorGroups([]);
       setLoadError(e instanceof Error ? e.message : "Nie udało się wczytać projektów");
     } finally {
       setLoading(false);
     }
-  }, [qDebounced, activeFilter, includeSettled, sortKey, sortOrder]);
+  }, [qDebounced, activeFilter, includeSettled, sortKey, sortOrder, viewMode]);
 
   useEffect(() => {
     load();
@@ -442,7 +526,7 @@ export function ProjectsClient({ initialEditId = null }: { initialEditId?: strin
       </div>
 
       <div className="rounded-xl border border-zinc-200 bg-zinc-50/80 p-4 dark:border-zinc-800 dark:bg-zinc-900/40">
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
           <Field label="Szukaj (nazwa, kod, klient)">
             <Input
               value={searchInput}
@@ -457,6 +541,32 @@ export function ProjectsClient({ initialEditId = null }: { initialEditId?: strin
               <option value="1">Aktywne</option>
               <option value="0">Nieaktywne</option>
             </Select>
+          </Field>
+          <Field label="Widok">
+            <div className="flex rounded-lg border border-zinc-300 bg-white p-1 dark:border-zinc-600 dark:bg-zinc-950">
+              <button
+                type="button"
+                onClick={() => setViewMode("projects")}
+                className={`flex-1 rounded-md px-2 py-1.5 text-xs font-medium transition ${
+                  viewMode === "projects"
+                    ? "bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900"
+                    : "text-zinc-600 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800"
+                }`}
+              >
+                Lista projektów
+              </button>
+              <button
+                type="button"
+                onClick={() => setViewMode("contractors")}
+                className={`flex-1 rounded-md px-2 py-1.5 text-xs font-medium transition ${
+                  viewMode === "contractors"
+                    ? "bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900"
+                    : "text-zinc-600 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800"
+                }`}
+              >
+                Według wykonawcy
+              </button>
+            </div>
           </Field>
           <Field label="Lista">
             <label className="flex cursor-pointer items-center gap-2 text-sm text-zinc-700 dark:text-zinc-300">
@@ -475,36 +585,115 @@ export function ProjectsClient({ initialEditId = null }: { initialEditId?: strin
             </Button>
           </div>
         </div>
-        <div className="mt-3 grid gap-3 border-t border-zinc-200 pt-3 sm:grid-cols-2 dark:border-zinc-700">
-          <Field label="Sortuj według">
-            <Select
-              value={sortKey}
-              onChange={(e) => setSortKey(e.target.value as SortKey)}
-              disabled={loading}
-            >
-              {SORT_OPTIONS.map((o) => (
-                <option key={o.value} value={o.value}>
-                  {o.label}
-                </option>
-              ))}
-            </Select>
-          </Field>
-          <Field label="Kolejność">
-            <Select
-              value={sortOrder}
-              onChange={(e) => setSortOrder(e.target.value as "asc" | "desc")}
-              disabled={loading}
-            >
-              <option value="asc">Rosnąco</option>
-              <option value="desc">Malejąco</option>
-            </Select>
-          </Field>
-        </div>
+        {viewMode === "projects" ? (
+          <div className="mt-3 grid gap-3 border-t border-zinc-200 pt-3 sm:grid-cols-2 dark:border-zinc-700">
+            <Field label="Sortuj według">
+              <Select
+                value={sortKey}
+                onChange={(e) => setSortKey(e.target.value as SortKey)}
+                disabled={loading}
+              >
+                {SORT_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {o.label}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+            <Field label="Kolejność">
+              <Select
+                value={sortOrder}
+                onChange={(e) => setSortOrder(e.target.value as "asc" | "desc")}
+                disabled={loading}
+              >
+                <option value="asc">Rosnąco</option>
+                <option value="desc">Malejąco</option>
+              </Select>
+            </Field>
+          </div>
+        ) : null}
       </div>
 
       {loadError && <Alert variant="error">{loadError}</Alert>}
       {statusPatchError ? <Alert variant="error">{statusPatchError}</Alert> : null}
 
+      {viewMode === "contractors" ? (
+        <div className="space-y-4">
+          {loading && contractorGroups.length === 0 ? (
+            <div className="rounded-xl border border-zinc-200 bg-white px-3 py-12 text-center text-zinc-500 dark:border-zinc-800 dark:bg-zinc-950">
+              <Spinner className="mr-2 inline !size-5" />
+              Ładowanie…
+            </div>
+          ) : contractorGroups.length === 0 ? (
+            <div className="rounded-xl border border-zinc-200 bg-white px-3 py-10 text-center text-zinc-500 dark:border-zinc-800 dark:bg-zinc-950">
+              Brak projektów przypisanych do wykonawców dla wybranych filtrów.
+            </div>
+          ) : (
+            contractorGroups.map((group) => (
+              <section key={group.contractor.id} className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-950">
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                  <div className="min-w-0">
+                    <Link
+                      href={`/contractors/${group.contractor.id}`}
+                      className="text-lg font-semibold text-zinc-900 underline decoration-zinc-300 underline-offset-2 hover:decoration-zinc-600 dark:text-zinc-50 dark:decoration-zinc-600"
+                    >
+                      {group.contractor.displayName}
+                    </Link>
+                    <p className="mt-1 text-xs text-zinc-500">
+                      {[group.contractor.type, group.contractor.taxId ? `NIP ${group.contractor.taxId}` : null]
+                        .filter(Boolean)
+                        .join(" · ") || "—"}
+                    </p>
+                  </div>
+                  <Badge variant={group.hasActiveProject ? "success" : "muted"}>
+                    {group.projectCount} {group.projectCount === 1 ? "projekt" : "projektów"}
+                  </Badge>
+                </div>
+                <div className="mt-4 divide-y divide-zinc-200 rounded-lg border border-zinc-200 dark:divide-zinc-800 dark:border-zinc-800">
+                  {group.projects.map((item) => {
+                    const lifeLabel = projectLifecycleDisplay(item.project.lifecycleStatus, lifeMap);
+                    const setLabel = projectSettlementDisplay(item.project.settlementStatus, settlementMap);
+                    return (
+                      <div key={item.linkId} className="p-3">
+                        <div className="flex flex-col gap-2 lg:flex-row lg:items-start lg:justify-between">
+                          <div className="min-w-0">
+                            <Link
+                              href={`/projects/${item.project.id}`}
+                              className="font-medium text-zinc-900 underline decoration-zinc-300 underline-offset-2 hover:decoration-zinc-600 dark:text-zinc-100 dark:decoration-zinc-600"
+                            >
+                              {item.project.name}
+                            </Link>
+                            <p className="mt-1 text-xs text-zinc-500">
+                              {[item.project.code, item.project.clientName].filter(Boolean).join(" · ") || "—"}
+                            </p>
+                          </div>
+                          <div className="flex flex-wrap gap-1">
+                            {item.project.isActive ? <Badge variant="success">Aktywny</Badge> : <Badge variant="muted">Nieaktywny</Badge>}
+                            <Badge variant={lifecycleBadgeVariant(item.project.lifecycleStatus)}>Realizacja: {lifeLabel}</Badge>
+                            <Badge variant={settlementBadgeVariant(item.project.settlementStatus)}>Rozliczenie: {setLabel}</Badge>
+                          </div>
+                        </div>
+                        <div className="mt-2 grid gap-2 text-xs text-zinc-600 dark:text-zinc-400 sm:grid-cols-2">
+                          <p>
+                            <span className="font-medium text-zinc-700 dark:text-zinc-300">Rola: </span>
+                            {item.role?.trim() ? item.role : "—"}
+                          </p>
+                          <p className="whitespace-pre-wrap">
+                            <span className="font-medium text-zinc-700 dark:text-zinc-300">Notatka: </span>
+                            {item.notes?.trim() ? item.notes : "—"}
+                          </p>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </section>
+            ))
+          )}
+        </div>
+      ) : null}
+
+      {viewMode === "projects" ? (
       <div className="w-full max-w-full rounded-xl border border-zinc-200 shadow-sm dark:border-zinc-800">
         <table className="w-full table-fixed text-left text-sm">
           <thead className="border-b border-zinc-200 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900">
@@ -640,6 +829,7 @@ export function ProjectsClient({ initialEditId = null }: { initialEditId?: strin
           </tbody>
         </table>
       </div>
+      ) : null}
 
       <Modal open={open} title={editing.id ? "Edycja projektu" : "Nowy projekt"} onClose={closeModal} size="lg">
         <form onSubmit={save} className="space-y-3">

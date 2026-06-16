@@ -32,33 +32,34 @@ model DailyCashReconciliation {
 }
 
 model Project {
-  id                 String                   @id @default(cuid())
-  name               String
-  code               String?
-  clientName         String?
-  description        String?
-  isActive           Boolean                  @default(true)
+  id                              String                                  @id @default(cuid())
+  name                            String
+  code                            String?
+  clientName                      String?
+  description                     String?
+  isActive                        Boolean                                 @default(true)
   /// NEW | IN_PROGRESS | FOR_HANDOFF | COMPLETED
-  lifecycleStatus    String?
+  lifecycleStatus                 String?
   /// NONE | TO_SETTLE | WAITING_FOR_SETTLEMENT | DPW_TODO | SETTLED | SETTLED_WITH_GAPS | SETTLED_BLOCKED
-  settlementStatus   String?
-  plannedRevenueNet  Decimal?
-  plannedCostNet     Decimal?
-  startDate          DateTime?
-  endDate            DateTime?
-  createdAt          DateTime                 @default(now())
-  updatedAt          DateTime                 @updatedAt
-  costInvoices       CostInvoice[]
-  incomeInvoices     IncomeInvoice[]
-  plannedEvents      PlannedFinancialEvent[]
-  costAllocations    CostInvoiceProjectAllocation[]
-  incomeAllocations  IncomeInvoiceProjectAllocation[]
-  plannedAllocations PlannedEventProjectAllocation[]
+  settlementStatus                String?
+  plannedRevenueNet               Decimal?
+  plannedCostNet                  Decimal?
+  startDate                       DateTime?
+  endDate                         DateTime?
+  createdAt                       DateTime                                @default(now())
+  updatedAt                       DateTime                                @updatedAt
+  costInvoices                    CostInvoice[]
+  incomeInvoices                  IncomeInvoice[]
+  plannedEvents                   PlannedFinancialEvent[]
+  costAllocations                 CostInvoiceProjectAllocation[]
+  incomeAllocations               IncomeInvoiceProjectAllocation[]
+  plannedAllocations              PlannedEventProjectAllocation[]
   costPaymentProjectAllocations   CostInvoicePaymentProjectAllocation[]
   incomePaymentProjectAllocations IncomeInvoicePaymentProjectAllocation[]
-  otherIncomes       OtherIncome[]
-  missingItems       ProjectMissingItem[]
-  tasks              ProjectTask[]
+  otherIncomes                    OtherIncome[]
+  missingItems                    ProjectMissingItem[]
+  tasks                           ProjectTask[]
+  contractors                     ProjectContractor[]
 }
 
 /// Zadania operacyjne projektu (bez powiązania z cashflow / zdarzeniami planowanymi).
@@ -81,6 +82,23 @@ model ProjectTask {
   updatedAt        DateTime  @updatedAt
 
   @@index([projectId])
+}
+
+/// Trwałe przypisanie kontrahenta jako wykonawcy/podwykonawcy projektu.
+model ProjectContractor {
+  id           String     @id @default(cuid())
+  projectId    String
+  project      Project    @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  contractorId String
+  contractor   Contractor @relation(fields: [contractorId], references: [id], onDelete: Restrict)
+  role         String?
+  notes        String?
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  @@unique([projectId, contractorId])
+  @@index([projectId])
+  @@index([contractorId])
 }
 
 /// Słownik statusu realizacji projektu — `Project.lifecycleStatus` przechowuje `slug`.
@@ -193,19 +211,19 @@ model IncomeCategory {
 
 /// Przychód poza fakturą (np. zwrot podatku, wpłata własna). Rozdział MAIN/VAT przez vatAmount (bez netto w MVP).
 model OtherIncome {
-  id                String          @id @default(cuid())
+  id                String           @id @default(cuid())
   amountGross       Decimal
-  vatAmount         Decimal         @default(0)
+  vatAmount         Decimal          @default(0)
   date              DateTime
   description       String
   projectId         String?
-  project           Project?        @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  project           Project?         @relation(fields: [projectId], references: [id], onDelete: SetNull)
   categoryId        String?
-  category          IncomeCategory? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  category          IncomeCategory?  @relation(fields: [categoryId], references: [id], onDelete: SetNull)
   source            String
-  bankTransactionId String?         @unique
+  bankTransactionId String?          @unique
   bankTransaction   BankTransaction? @relation(fields: [bankTransactionId], references: [id], onDelete: Cascade)
-  createdAt         DateTime        @default(now())
+  createdAt         DateTime         @default(now())
 
   @@index([date])
   @@index([projectId])
@@ -223,15 +241,16 @@ model ExpenseCategory {
 }
 
 model Contractor {
-  id             String            @id @default(cuid())
+  id             String              @id @default(cuid())
   displayName    String
   normalizedName String
   taxId          String?
   type           String?
   notes          String?
   aliases        ContractorAlias[]
-  createdAt      DateTime          @default(now())
-  updatedAt      DateTime          @updatedAt
+  projectLinks   ProjectContractor[]
+  createdAt      DateTime            @default(now())
+  updatedAt      DateTime            @updatedAt
 
   @@index([normalizedName])
   @@index([taxId])
@@ -252,39 +271,39 @@ model ContractorAlias {
 }
 
 model IncomeInvoice {
-  id                 String   @id @default(cuid())
-  invoiceNumber      String
-  contractor         String
-  description        String   @default("")
-  vatRate            Int      @default(23) // 0 | 8 | 23
-  netAmount          Decimal
-  vatAmount          Decimal
-  grossAmount        Decimal
-  issueDate          DateTime
-  paymentDueDate     DateTime
-  plannedIncomeDate  DateTime
-  status             String // PLANOWANA | WYSTAWIONA | PARTIALLY_RECEIVED | OPLACONA
-  vatDestination     String // MAIN | VAT
-  confirmedIncome    Boolean  @default(false)
-  actualIncomeDate   DateTime?
-  notes              String   @default("")
-  projectName        String?
-  projectId          String?
-  project            Project? @relation(fields: [projectId], references: [id], onDelete: SetNull)
-  incomeCategoryId   String?
-  incomeCategory     IncomeCategory? @relation(fields: [incomeCategoryId], references: [id], onDelete: SetNull)
-  payments           IncomeInvoicePayment[]
+  id                        String                           @id @default(cuid())
+  invoiceNumber             String
+  contractor                String
+  description               String                           @default("")
+  vatRate                   Int                              @default(23) // 0 | 8 | 23
+  netAmount                 Decimal
+  vatAmount                 Decimal
+  grossAmount               Decimal
+  issueDate                 DateTime
+  paymentDueDate            DateTime
+  plannedIncomeDate         DateTime
+  status                    String // PLANOWANA | WYSTAWIONA | PARTIALLY_RECEIVED | OPLACONA
+  vatDestination            String // MAIN | VAT
+  confirmedIncome           Boolean                          @default(false)
+  actualIncomeDate          DateTime?
+  notes                     String                           @default("")
+  projectName               String?
+  projectId                 String?
+  project                   Project?                         @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  incomeCategoryId          String?
+  incomeCategory            IncomeCategory?                  @relation(fields: [incomeCategoryId], references: [id], onDelete: SetNull)
+  payments                  IncomeInvoicePayment[]
   sourceRecurringTemplateId String?
   generatedOccurrenceDate   DateTime?
-  isGeneratedFromRecurring  Boolean  @default(false)
-  isRecurringDetached       Boolean  @default(false)
-  sourceRecurringTemplate   RecurringTemplate? @relation("RecurringGeneratedIncome", fields: [sourceRecurringTemplateId], references: [id], onDelete: SetNull)
-  linkedFromPlannedEvent    PlannedFinancialEvent? @relation("PlannedConvertedToIncome")
-  projectAllocations IncomeInvoiceProjectAllocation[]
+  isGeneratedFromRecurring  Boolean                          @default(false)
+  isRecurringDetached       Boolean                          @default(false)
+  sourceRecurringTemplate   RecurringTemplate?               @relation("RecurringGeneratedIncome", fields: [sourceRecurringTemplateId], references: [id], onDelete: SetNull)
+  linkedFromPlannedEvent    PlannedFinancialEvent?           @relation("PlannedConvertedToIncome")
+  projectAllocations        IncomeInvoiceProjectAllocation[]
   /// Harmonogram planowanych wpłat (MAIN/VAT) — nie są to rzeczywiste wpłaty (`payments`).
-  plannedPayments    IncomeInvoicePlannedPayment[]
-  createdAt          DateTime @default(now())
-  updatedAt          DateTime @updatedAt
+  plannedPayments           IncomeInvoicePlannedPayment[]
+  createdAt                 DateTime                         @default(now())
+  updatedAt                 DateTime                         @updatedAt
 
   @@index([sourceRecurringTemplateId])
   @@index([generatedOccurrenceDate])
@@ -293,37 +312,37 @@ model IncomeInvoice {
 
 /// Plan wpłat na fakturze (termin + podział MAIN/VAT) — informacyjnie, bez powiązania z realnymi wpłatami.
 model IncomeInvoicePlannedPayment {
-  id                  String        @id @default(cuid())
-  incomeInvoiceId     String
-  incomeInvoice       IncomeInvoice @relation(fields: [incomeInvoiceId], references: [id], onDelete: Cascade)
-  dueDate             DateTime
-  plannedMainAmount   Decimal
-  plannedVatAmount    Decimal
-  note                String        @default("")
-  sortOrder           Int           @default(0)
+  id                String        @id @default(cuid())
+  incomeInvoiceId   String
+  incomeInvoice     IncomeInvoice @relation(fields: [incomeInvoiceId], references: [id], onDelete: Cascade)
+  dueDate           DateTime
+  plannedMainAmount Decimal
+  plannedVatAmount  Decimal
+  note              String        @default("")
+  sortOrder         Int           @default(0)
   /// PLANNED | DONE | CANCELLED
-  status              String        @default("PLANNED")
-  createdAt           DateTime      @default(now())
-  updatedAt           DateTime      @updatedAt
+  status            String        @default("PLANNED")
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
 
   @@index([incomeInvoiceId])
 }
 
 model IncomeInvoicePayment {
-  id                 String           @id @default(cuid())
-  incomeInvoiceId    String
-  incomeInvoice      IncomeInvoice    @relation(fields: [incomeInvoiceId], references: [id], onDelete: Cascade)
-  amountGross        Decimal
+  id                  String                                  @id @default(cuid())
+  incomeInvoiceId     String
+  incomeInvoice       IncomeInvoice                           @relation(fields: [incomeInvoiceId], references: [id], onDelete: Cascade)
+  amountGross         Decimal
   /// Ręczny podział kwoty brutto wpłaty na cashflow MAIN (netto) — tylko razem z allocatedVatAmount; null = proporcje z faktury.
   allocatedMainAmount Decimal?
   /// Ręczny podział na konto VAT; null = proporcje z faktury.
   allocatedVatAmount  Decimal?
-  paymentDate        DateTime
-  notes              String           @default("")
+  paymentDate         DateTime
+  notes               String                                  @default("")
   /// Powiązanie z wierszem importu bankowego (wiele wpłat może dzielić jedną linię — suma ≤ kwota transakcji)
-  bankTransactionId  String?
-  createdAt          DateTime         @default(now())
-  projectAllocations IncomeInvoicePaymentProjectAllocation[]
+  bankTransactionId   String?
+  createdAt           DateTime                                @default(now())
+  projectAllocations  IncomeInvoicePaymentProjectAllocation[]
 
   @@index([bankTransactionId])
 }
@@ -345,37 +364,37 @@ model IncomeInvoicePaymentProjectAllocation {
 }
 
 model CostInvoice {
-  id                 String   @id @default(cuid())
-  documentNumber     String
-  supplier           String
-  description        String   @default("")
-  vatRate            Int      @default(23) // 0 | 8 | 23
-  netAmount          Decimal
-  vatAmount          Decimal
-  grossAmount        Decimal
-  documentDate       DateTime
-  paymentDueDate     DateTime
-  plannedPaymentDate DateTime
-  status             String // PLANOWANA | DO_ZAPLATY | PARTIALLY_PAID | ZAPLACONA
-  paid               Boolean  @default(false)
-  actualPaymentDate  DateTime?
-  paymentSource      String // MAIN | VAT | VAT_THEN_MAIN
-  notes              String   @default("")
-  projectName        String?
-  projectId          String?
-  project            Project? @relation(fields: [projectId], references: [id], onDelete: SetNull)
-  expenseCategoryId  String?
-  expenseCategory    ExpenseCategory? @relation(fields: [expenseCategoryId], references: [id], onDelete: SetNull)
-  payments           CostInvoicePayment[]
+  id                        String                         @id @default(cuid())
+  documentNumber            String
+  supplier                  String
+  description               String                         @default("")
+  vatRate                   Int                            @default(23) // 0 | 8 | 23
+  netAmount                 Decimal
+  vatAmount                 Decimal
+  grossAmount               Decimal
+  documentDate              DateTime
+  paymentDueDate            DateTime
+  plannedPaymentDate        DateTime
+  status                    String // PLANOWANA | DO_ZAPLATY | PARTIALLY_PAID | ZAPLACONA
+  paid                      Boolean                        @default(false)
+  actualPaymentDate         DateTime?
+  paymentSource             String // MAIN | VAT | VAT_THEN_MAIN
+  notes                     String                         @default("")
+  projectName               String?
+  projectId                 String?
+  project                   Project?                       @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  expenseCategoryId         String?
+  expenseCategory           ExpenseCategory?               @relation(fields: [expenseCategoryId], references: [id], onDelete: SetNull)
+  payments                  CostInvoicePayment[]
   sourceRecurringTemplateId String?
   generatedOccurrenceDate   DateTime?
-  isGeneratedFromRecurring  Boolean  @default(false)
-  isRecurringDetached       Boolean  @default(false)
-  sourceRecurringTemplate   RecurringTemplate? @relation("RecurringGeneratedCost", fields: [sourceRecurringTemplateId], references: [id], onDelete: SetNull)
-  linkedFromPlannedEvent    PlannedFinancialEvent? @relation("PlannedConvertedToCost")
-  projectAllocations CostInvoiceProjectAllocation[]
-  createdAt          DateTime @default(now())
-  updatedAt          DateTime @updatedAt
+  isGeneratedFromRecurring  Boolean                        @default(false)
+  isRecurringDetached       Boolean                        @default(false)
+  sourceRecurringTemplate   RecurringTemplate?             @relation("RecurringGeneratedCost", fields: [sourceRecurringTemplateId], references: [id], onDelete: SetNull)
+  linkedFromPlannedEvent    PlannedFinancialEvent?         @relation("PlannedConvertedToCost")
+  projectAllocations        CostInvoiceProjectAllocation[]
+  createdAt                 DateTime                       @default(now())
+  updatedAt                 DateTime                       @updatedAt
 
   @@index([sourceRecurringTemplateId])
   @@index([generatedOccurrenceDate])
@@ -383,15 +402,15 @@ model CostInvoice {
 }
 
 model CostInvoicePayment {
-  id                 String      @id @default(cuid())
+  id                 String                                @id @default(cuid())
   costInvoiceId      String
-  costInvoice        CostInvoice @relation(fields: [costInvoiceId], references: [id], onDelete: Cascade)
+  costInvoice        CostInvoice                           @relation(fields: [costInvoiceId], references: [id], onDelete: Cascade)
   amountGross        Decimal
   paymentDate        DateTime
-  notes              String      @default("")
+  notes              String                                @default("")
   /// Wiele płatności może dzielić jedną linię banku — suma ≤ kwota transakcji
   bankTransactionId  String?
-  createdAt          DateTime    @default(now())
+  createdAt          DateTime                              @default(now())
   projectAllocations CostInvoicePaymentProjectAllocation[]
 
   @@index([bankTransactionId])
@@ -414,58 +433,58 @@ model CostInvoicePaymentProjectAllocation {
 }
 
 model RecurringTemplate {
-  id                String   @id @default(cuid())
-  title             String
-  type              String // INCOME | EXPENSE
+  id                      String           @id @default(cuid())
+  title                   String
+  type                    String // INCOME | EXPENSE
   // accountMode: MAIN | VAT | SPLIT
-  accountMode       String   @default("MAIN")
-  amount            Decimal
+  accountMode             String           @default("MAIN")
+  amount                  Decimal
   // amountVat: tylko SPLIT (VAT-only używa pola amount)
-  amountVat         Decimal?
-  incomeCategoryId  String?
-  expenseCategoryId String?
-  incomeCategory    IncomeCategory? @relation("RecurringIncomeCategory", fields: [incomeCategoryId], references: [id], onDelete: SetNull)
-  expenseCategory   ExpenseCategory? @relation("RecurringExpenseCategory", fields: [expenseCategoryId], references: [id], onDelete: SetNull)
-  frequency         String // WEEKLY | MONTHLY | QUARTERLY | YEARLY
-  startDate         DateTime
-  endDate           DateTime?
-  dayOfMonth        Int?
-  weekday           Int?
-  notes             String   @default("")
-  isActive          Boolean  @default(true)
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
-  generatedCostInvoices   CostInvoice[]           @relation("RecurringGeneratedCost")
-  generatedIncomeInvoices IncomeInvoice[]         @relation("RecurringGeneratedIncome")
+  amountVat               Decimal?
+  incomeCategoryId        String?
+  expenseCategoryId       String?
+  incomeCategory          IncomeCategory?  @relation("RecurringIncomeCategory", fields: [incomeCategoryId], references: [id], onDelete: SetNull)
+  expenseCategory         ExpenseCategory? @relation("RecurringExpenseCategory", fields: [expenseCategoryId], references: [id], onDelete: SetNull)
+  frequency               String // WEEKLY | MONTHLY | QUARTERLY | YEARLY
+  startDate               DateTime
+  endDate                 DateTime?
+  dayOfMonth              Int?
+  weekday                 Int?
+  notes                   String           @default("")
+  isActive                Boolean          @default(true)
+  createdAt               DateTime         @default(now())
+  updatedAt               DateTime         @updatedAt
+  generatedCostInvoices   CostInvoice[]    @relation("RecurringGeneratedCost")
+  generatedIncomeInvoices IncomeInvoice[]  @relation("RecurringGeneratedIncome")
 }
 
 model PlannedFinancialEvent {
-  id                  String             @id @default(cuid())
-  type                String // INCOME | EXPENSE
-  title               String
-  description         String             @default("")
-  amount              Decimal
+  id                         String                          @id @default(cuid())
+  type                       String // INCOME | EXPENSE
+  title                      String
+  description                String                          @default("")
+  amount                     Decimal
   // amountVat: część VAT (0 = legacy)
-  amountVat           Decimal            @default(0)
-  plannedDate         DateTime
+  amountVat                  Decimal                         @default(0)
+  plannedDate                DateTime
   /// PLANNED | DONE | CANCELLED | CONVERTED (CONVERTED ustawiane przy konwersji na fakturę)
-  status              String
-  notes               String             @default("")
-  projectName         String?
-  projectId           String?
-  project             Project?           @relation(fields: [projectId], references: [id], onDelete: SetNull)
-  incomeCategoryId    String?
-  expenseCategoryId   String?
-  incomeCategory      IncomeCategory?    @relation("PlannedIncomeCategory", fields: [incomeCategoryId], references: [id], onDelete: SetNull)
-  expenseCategory     ExpenseCategory?   @relation("PlannedExpenseCategory", fields: [expenseCategoryId], references: [id], onDelete: SetNull)
-  convertedToIncomeInvoiceId String?    @unique
-  convertedToCostInvoiceId   String?    @unique
-  convertedAt         DateTime?
-  convertedToIncomeInvoice IncomeInvoice? @relation("PlannedConvertedToIncome", fields: [convertedToIncomeInvoiceId], references: [id], onDelete: SetNull)
-  convertedToCostInvoice   CostInvoice?   @relation("PlannedConvertedToCost", fields: [convertedToCostInvoiceId], references: [id], onDelete: SetNull)
-  projectAllocations  PlannedEventProjectAllocation[]
-  createdAt           DateTime           @default(now())
-  updatedAt           DateTime           @updatedAt
+  status                     String
+  notes                      String                          @default("")
+  projectName                String?
+  projectId                  String?
+  project                    Project?                        @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  incomeCategoryId           String?
+  expenseCategoryId          String?
+  incomeCategory             IncomeCategory?                 @relation("PlannedIncomeCategory", fields: [incomeCategoryId], references: [id], onDelete: SetNull)
+  expenseCategory            ExpenseCategory?                @relation("PlannedExpenseCategory", fields: [expenseCategoryId], references: [id], onDelete: SetNull)
+  convertedToIncomeInvoiceId String?                         @unique
+  convertedToCostInvoiceId   String?                         @unique
+  convertedAt                DateTime?
+  convertedToIncomeInvoice   IncomeInvoice?                  @relation("PlannedConvertedToIncome", fields: [convertedToIncomeInvoiceId], references: [id], onDelete: SetNull)
+  convertedToCostInvoice     CostInvoice?                    @relation("PlannedConvertedToCost", fields: [convertedToCostInvoiceId], references: [id], onDelete: SetNull)
+  projectAllocations         PlannedEventProjectAllocation[]
+  createdAt                  DateTime                        @default(now())
+  updatedAt                  DateTime                        @updatedAt
 
   @@index([projectId])
 }
@@ -481,9 +500,9 @@ model BankImport {
 }
 
 model BankTransaction {
-  id                  String     @id @default(cuid())
+  id                  String       @id @default(cuid())
   importId            String
-  import              BankImport @relation(fields: [importId], references: [id], onDelete: Cascade)
+  import              BankImport   @relation(fields: [importId], references: [id], onDelete: Cascade)
   bookingDate         DateTime
   valueDate           DateTime?
   amount              Int // grosze
@@ -494,12 +513,12 @@ model BankTransaction {
   accountType         String // MAIN | VAT
   /// NEW | MATCHED | LINKED_COST | LINKED_INCOME | LINKED_OTHER_INCOME | TRANSFER | VAT_TOPUP | IGNORED | DUPLICATE | BROKEN_LINK | CREATED (legacy)
   status              String
-  createdAt           DateTime   @default(now())
+  createdAt           DateTime     @default(now())
   matchedInvoiceId    String?
   linkedCostInvoiceId String?
   createdCostId       String?
   /// Unikalny fingerprint wiersza — deduplikacja przy imporcie (null = legacy)
-  dedupeKey           String?    @unique
+  dedupeKey           String?      @unique
   /// Surowy materiał wejściowy do fingerprintu (np. pełne „Dane operacji” iPKO) — diagnostyka; tylko nowe importy
   dedupeInputText     String?
   otherIncome         OtherIncome?
@@ -510,40 +529,40 @@ model BankTransaction {
 
 /// Staging dokumentów KSeF (etap 1 — bez powiązań z fakturami domenowymi).
 model KsefSyncSession {
-  id          String    @id @default(cuid())
+  id          String         @id @default(cuid())
   status      String // RUNNING | SUCCEEDED | FAILED
-  environment String    @default("test")
-  startedAt   DateTime  @default(now())
+  environment String         @default("test")
+  startedAt   DateTime       @default(now())
   finishedAt  DateTime?
   message     String?
   documents   KsefDocument[]
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
 }
 
 model KsefDocument {
-  id                         String    @id @default(cuid())
-  ksefId                     String    @unique
+  id                         String           @id @default(cuid())
+  ksefId                     String           @unique
   source                     String // MOCK | KSEF
   status                     String
   documentType               String
   issueDate                  DateTime
   saleDate                   DateTime?
   sellerName                 String
-  sellerTaxId                String    @default("")
+  sellerTaxId                String           @default("")
   buyerName                  String
-  buyerTaxId                 String    @default("")
+  buyerTaxId                 String           @default("")
   netAmount                  Decimal
   vatAmount                  Decimal
   grossAmount                Decimal
-  currency                   String    @default("PLN")
+  currency                   String           @default("PLN")
   rawPayload                 String
   importedAsCostInvoiceId    String?
   importedAsRevenueInvoiceId String?
   syncSessionId              String?
   syncSession                KsefSyncSession? @relation(fields: [syncSessionId], references: [id], onDelete: SetNull)
-  createdAt                  DateTime  @default(now())
-  updatedAt                  DateTime  @updatedAt
+  createdAt                  DateTime         @default(now())
+  updatedAt                  DateTime         @updatedAt
 
   @@index([syncSessionId])
   @@index([issueDate])

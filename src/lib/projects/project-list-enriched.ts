@@ -31,6 +31,26 @@ export type ProjectListRow = Project & {
   }>;
 };
 
+export type ProjectContractorGroup = {
+  contractor: {
+    id: string;
+    displayName: string;
+    taxId: string | null;
+    type: string | null;
+  };
+  projectCount: number;
+  hasActiveProject: boolean;
+  projects: {
+    linkId: string;
+    role: string | null;
+    notes: string | null;
+    project: Pick<
+      Project,
+      "id" | "name" | "code" | "clientName" | "isActive" | "lifecycleStatus" | "settlementStatus" | "updatedAt"
+    >;
+  }[];
+};
+
 function nullsLastCompare(a: number | null, b: number | null, order: "asc" | "desc"): number {
   const na = a == null ? (order === "asc" ? Number.POSITIVE_INFINITY : Number.NEGATIVE_INFINITY) : a;
   const nb = b == null ? (order === "asc" ? Number.POSITIVE_INFINITY : Number.NEGATIVE_INFINITY) : b;
@@ -271,4 +291,114 @@ export async function listProjectsEnriched(options: {
 
   enriched.sort(cmp);
   return enriched;
+}
+
+function projectFilters(options: {
+  q?: string;
+  active?: string | null;
+  includeSettled: boolean;
+}): Prisma.ProjectWhereInput[] {
+  const filters: Prisma.ProjectWhereInput[] = [];
+  if (!options.includeSettled) {
+    filters.push({
+      NOT: {
+        AND: [{ lifecycleStatus: "COMPLETED" }, { settlementStatus: "SETTLED" }],
+      },
+    });
+  }
+  if (options.active === "1" || options.active === "true") filters.push({ isActive: true });
+  if (options.active === "0" || options.active === "false") filters.push({ isActive: false });
+  return filters;
+}
+
+function isActiveProjectForContractorSort(project: Pick<Project, "isActive" | "lifecycleStatus">): boolean {
+  return project.isActive && project.lifecycleStatus !== "COMPLETED";
+}
+
+function contractorProjectCompare(
+  a: ProjectContractorGroup["projects"][number],
+  b: ProjectContractorGroup["projects"][number],
+): number {
+  const aa = isActiveProjectForContractorSort(a.project);
+  const ba = isActiveProjectForContractorSort(b.project);
+  if (aa !== ba) return aa ? -1 : 1;
+  const status = strNullsLast(a.project.lifecycleStatus, b.project.lifecycleStatus, "asc");
+  if (status !== 0) return status;
+  return b.project.updatedAt.getTime() - a.project.updatedAt.getTime();
+}
+
+export async function listProjectContractorGroups(options: {
+  q?: string;
+  active?: string | null;
+  includeSettled: boolean;
+}): Promise<ProjectContractorGroup[]> {
+  const filters = projectFilters(options);
+  const q = options.q?.trim();
+  const where: Prisma.ProjectContractorWhereInput = {
+    ...(filters.length ? { project: { AND: filters } } : {}),
+    ...(q
+      ? {
+          OR: [
+            { contractor: { displayName: { contains: q } } },
+            { contractor: { taxId: { contains: q } } },
+            { contractor: { type: { contains: q } } },
+            { role: { contains: q } },
+            { notes: { contains: q } },
+            { project: { name: { contains: q } } },
+            { project: { code: { contains: q } } },
+            { project: { clientName: { contains: q } } },
+          ],
+        }
+      : {}),
+  };
+
+  const links = await prisma.projectContractor.findMany({
+    where,
+    include: {
+      contractor: { select: { id: true, displayName: true, taxId: true, type: true } },
+      project: {
+        select: {
+          id: true,
+          name: true,
+          code: true,
+          clientName: true,
+          isActive: true,
+          lifecycleStatus: true,
+          settlementStatus: true,
+          updatedAt: true,
+        },
+      },
+    },
+  });
+
+  const groups = new Map<string, ProjectContractorGroup>();
+  for (const link of links) {
+    const group =
+      groups.get(link.contractorId) ??
+      ({
+        contractor: link.contractor,
+        projectCount: 0,
+        hasActiveProject: false,
+        projects: [],
+      } satisfies ProjectContractorGroup);
+    group.projects.push({
+      linkId: link.id,
+      role: link.role,
+      notes: link.notes,
+      project: link.project,
+    });
+    group.projectCount = group.projects.length;
+    group.hasActiveProject = group.projects.some((p) => isActiveProjectForContractorSort(p.project));
+    groups.set(link.contractorId, group);
+  }
+
+  const result = [...groups.values()];
+  for (const group of result) {
+    group.projects.sort(contractorProjectCompare);
+  }
+  result.sort((a, b) => {
+    if (a.hasActiveProject !== b.hasActiveProject) return a.hasActiveProject ? -1 : 1;
+    return a.contractor.displayName.localeCompare(b.contractor.displayName, "pl");
+  });
+  return result;
 }

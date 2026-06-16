@@ -5,6 +5,7 @@ import { projectCreateSchema } from "@/lib/validation/schemas";
 import { ZodError } from "zod";
 import type { Prisma } from "@prisma/client";
 import {
+  listProjectContractorGroups,
   listProjectsEnriched,
   type ProjectListSortKey,
 } from "@/lib/projects/project-list-enriched";
@@ -68,6 +69,16 @@ export async function GET(req: Request) {
   const q = searchParams.get("q")?.trim() ?? "";
   const active = searchParams.get("active")?.trim() ?? "";
   const includeSettled = searchParams.get("includeSettled") === "1";
+  const view = searchParams.get("view")?.trim() ?? "projects";
+  if (view === "contractors") {
+    const groups = await listProjectContractorGroups({
+      q: q || undefined,
+      active: active || undefined,
+      includeSettled,
+    });
+    return jsonData(groups);
+  }
+
   const sortParam = searchParams.get("sort")?.trim() ?? "name";
   const order = searchParams.get("order") === "desc" ? "desc" : "asc";
   const SORT_KEYS: ProjectListSortKey[] = [

@@ -16,6 +16,7 @@ import { ContractorNameLink } from "@/components/ContractorNameLink";
 import { ProjectIncomeInvoiceModalButton } from "@/components/ProjectIncomeInvoiceModalButton";
 import { ProjectTasksSection } from "@/components/ProjectTasksSection";
 import type { ProjectTaskRow } from "@/lib/projects/project-task-ui";
+import { ProjectContractorsSection, type ProjectContractorRow } from "@/components/ProjectContractorsSection";
 
 function moneyFromDecimal(v: Decimal | null | undefined): string {
   if (v == null) return "—";
@@ -47,8 +48,16 @@ function serializeProjectTasks(tasks: ProjectDetailsResult["tasks"]): ProjectTas
   }));
 }
 
+function serializeProjectContractors(rows: ProjectDetailsResult["projectContractors"]): ProjectContractorRow[] {
+  return rows.map((r) => ({
+    ...r,
+    createdAt: r.createdAt.toISOString(),
+    updatedAt: r.updatedAt.toISOString(),
+  }));
+}
+
 export function ProjectDetailView({ data }: { data: ProjectDetailsResult }) {
-  const { project, statusDisplay, missingItems, tasks, counts, balance, incomeInvoices, costInvoices, plannedEvents } =
+  const { project, statusDisplay, missingItems, tasks, counts, balance, incomeInvoices, costInvoices, plannedEvents, projectContractors } =
     data;
   const activePlannedEvents = plannedEvents.filter((r) => r.status !== "CONVERTED");
   const convertedPlannedEvents = plannedEvents.filter((r) => r.status === "CONVERTED");
@@ -98,6 +107,8 @@ export function ProjectDetailView({ data }: { data: ProjectDetailsResult }) {
       </div>
 
       <ProjectTasksSection projectId={project.id} initialTasks={serializeProjectTasks(tasks)} />
+
+      <ProjectContractorsSection projectId={project.id} initialLinks={serializeProjectContractors(projectContractors)} />
 
       <section className="rounded-xl border border-zinc-200 bg-zinc-50/80 p-4 dark:border-zinc-800 dark:bg-zinc-900/40">
         <h2 className="text-base font-semibold text-zinc-900 dark:text-zinc-50">Bilans projektu</h2>

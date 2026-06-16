@@ -1,4 +1,5 @@
 import { ProjectsClient } from "@/components/ProjectsClient";
+import { serializeSearchParamsRecord } from "@/lib/serialize-search-params";
 
 function firstParam(v: string | string[] | undefined): string | null {
   if (v === undefined) return null;
@@ -12,5 +13,5 @@ export default async function ProjectsPage({
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const sp = await searchParams;
-  return <ProjectsClient initialEditId={firstParam(sp.edit)} />;
+  return <ProjectsClient initialEditId={firstParam(sp.edit)} initialQueryString={serializeSearchParamsRecord(sp)} />;
 }

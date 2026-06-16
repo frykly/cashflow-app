@@ -214,6 +214,57 @@ export function ContractorDetailClient({ data }: { data: ContractorDetailsResult
         <Textarea className="mt-3" rows={5} value={notes} onChange={(e) => setNotes(e.target.value)} disabled={saving} />
       </section>
 
+      <section className="rounded-xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-950">
+        <h2 className="text-base font-semibold text-zinc-900 dark:text-zinc-50">Projekty jako wykonawca</h2>
+        <p className="mt-1 text-sm text-zinc-500">
+          Trwałe powiązania wykonawcze dodane z poziomu projektu. To nie jest dopasowanie po nazwie klienta.
+        </p>
+        {related.contractorProjects.length === 0 ? (
+          <p className="mt-4 text-sm text-zinc-500">Brak przypisanych projektów.</p>
+        ) : (
+          <div className="mt-4 overflow-x-auto rounded-xl border border-zinc-200 dark:border-zinc-800">
+            <table className="w-full min-w-[760px] text-left text-sm">
+              <thead className="bg-zinc-50 dark:bg-zinc-900">
+                <tr>
+                  <th className="px-3 py-2 font-medium">Projekt</th>
+                  <th className="px-3 py-2 font-medium">Statusy</th>
+                  <th className="px-3 py-2 font-medium">Rola / zakres</th>
+                  <th className="px-3 py-2 font-medium">Notatka</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-zinc-200 dark:divide-zinc-800">
+                {related.contractorProjects.map((r) => (
+                  <tr key={r.id}>
+                    <td className="px-3 py-2 align-top">
+                      <Link
+                        href={`/projects/${r.project.id}`}
+                        className="font-medium text-zinc-900 underline decoration-zinc-300 underline-offset-2 hover:decoration-zinc-600 dark:text-zinc-100 dark:decoration-zinc-600"
+                      >
+                        {r.project.name}
+                      </Link>
+                      <p className="mt-1 text-xs text-zinc-500">
+                        {[r.project.code, r.project.clientName].filter(Boolean).join(" · ") || "—"}
+                      </p>
+                    </td>
+                    <td className="px-3 py-2 align-top">
+                      <div className="flex flex-wrap gap-1">
+                        {projectStatusBadge(r.project.isActive)}
+                        <Badge variant={lifecycleBadgeVariant(r.project.lifecycleStatus)}>{r.project.lifecycleDisplay}</Badge>
+                        <Badge variant={settlementBadgeVariant(r.project.settlementStatus)}>{r.project.settlementDisplay}</Badge>
+                      </div>
+                    </td>
+                    <td className="px-3 py-2 align-top text-zinc-700 dark:text-zinc-300">{r.role?.trim() ? r.role : "—"}</td>
+                    <td className="px-3 py-2 align-top text-zinc-600 dark:text-zinc-400">
+                      <span className="whitespace-pre-wrap">{r.notes?.trim() ? r.notes : "—"}</span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+
       <section className="space-y-8">
         <div>
           <h2 className="text-lg font-semibold text-zinc-900 dark:text-zinc-50">Dokumenty i aktywność</h2>
