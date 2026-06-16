@@ -525,13 +525,20 @@ export function ProjectsClient({
         </Button>
       </div>
 
-      <div className="rounded-xl border border-zinc-200 bg-zinc-50/80 p-4 dark:border-zinc-800 dark:bg-zinc-900/40">
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
-          <Field label="Szukaj (nazwa, kod, klient)">
+      <section className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-950">
+        <div className="mb-4 flex flex-col gap-1 border-b border-zinc-100 pb-3 dark:border-zinc-800 sm:flex-row sm:items-end sm:justify-between">
+          <div>
+            <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-50">Filtry i widok</h2>
+            <p className="mt-1 text-xs text-zinc-500">Wybierz zakres projektów i sposób prezentacji listy.</p>
+          </div>
+        </div>
+
+        <div className="grid gap-4 lg:grid-cols-[minmax(18rem,1.5fr)_minmax(10rem,0.7fr)_minmax(18rem,1fr)_auto] lg:items-end">
+          <Field label="Szukaj">
             <Input
               value={searchInput}
               onChange={(e) => setSearchInput(e.target.value)}
-              placeholder="np. budowa"
+              placeholder="Nazwa, numer zlecenia lub klient"
               autoComplete="off"
             />
           </Field>
@@ -543,14 +550,14 @@ export function ProjectsClient({
             </Select>
           </Field>
           <Field label="Widok">
-            <div className="flex rounded-lg border border-zinc-300 bg-white p-1 dark:border-zinc-600 dark:bg-zinc-950">
+            <div className="grid grid-cols-2 rounded-xl border border-zinc-200 bg-zinc-100/70 p-1 shadow-inner dark:border-zinc-700 dark:bg-zinc-900">
               <button
                 type="button"
                 onClick={() => setViewMode("projects")}
-                className={`flex-1 rounded-md px-2 py-1.5 text-xs font-medium transition ${
+                className={`rounded-lg px-3 py-2 text-xs font-semibold transition ${
                   viewMode === "projects"
-                    ? "bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900"
-                    : "text-zinc-600 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800"
+                    ? "bg-white text-zinc-950 shadow-sm ring-1 ring-zinc-200 dark:bg-zinc-100 dark:text-zinc-950 dark:ring-zinc-300"
+                    : "text-zinc-600 hover:bg-white/60 hover:text-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-800 dark:hover:text-zinc-50"
                 }`}
               >
                 Lista projektów
@@ -558,61 +565,64 @@ export function ProjectsClient({
               <button
                 type="button"
                 onClick={() => setViewMode("contractors")}
-                className={`flex-1 rounded-md px-2 py-1.5 text-xs font-medium transition ${
+                className={`rounded-lg px-3 py-2 text-xs font-semibold transition ${
                   viewMode === "contractors"
-                    ? "bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900"
-                    : "text-zinc-600 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800"
+                    ? "bg-white text-zinc-950 shadow-sm ring-1 ring-zinc-200 dark:bg-zinc-100 dark:text-zinc-950 dark:ring-zinc-300"
+                    : "text-zinc-600 hover:bg-white/60 hover:text-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-800 dark:hover:text-zinc-50"
                 }`}
               >
                 Według wykonawcy
               </button>
             </div>
           </Field>
-          <Field label="Lista">
-            <label className="flex cursor-pointer items-center gap-2 text-sm text-zinc-700 dark:text-zinc-300">
-              <input
-                type="checkbox"
-                className="size-4 rounded border-zinc-300"
-                checked={includeSettled}
-                onChange={(e) => setIncludeSettled(e.target.checked)}
-              />
-              Pokaż zakończone i rozliczone
-            </label>
-          </Field>
-          <div className="flex items-end gap-2">
-            <Button type="button" className="w-full sm:w-auto" onClick={() => load()} disabled={loading}>
-              Odśwież
-            </Button>
-          </div>
+          <Button type="button" className="h-[38px] w-full lg:w-auto" onClick={() => load()} disabled={loading}>
+            Odśwież
+          </Button>
         </div>
-        {viewMode === "projects" ? (
-          <div className="mt-3 grid gap-3 border-t border-zinc-200 pt-3 sm:grid-cols-2 dark:border-zinc-700">
-            <Field label="Sortuj według">
-              <Select
-                value={sortKey}
-                onChange={(e) => setSortKey(e.target.value as SortKey)}
-                disabled={loading}
-              >
-                {SORT_OPTIONS.map((o) => (
-                  <option key={o.value} value={o.value}>
-                    {o.label}
-                  </option>
-                ))}
-              </Select>
-            </Field>
-            <Field label="Kolejność">
-              <Select
-                value={sortOrder}
-                onChange={(e) => setSortOrder(e.target.value as "asc" | "desc")}
-                disabled={loading}
-              >
-                <option value="asc">Rosnąco</option>
-                <option value="desc">Malejąco</option>
-              </Select>
-            </Field>
-          </div>
-        ) : null}
-      </div>
+
+        <div className="mt-4 grid gap-4 border-t border-zinc-100 pt-4 dark:border-zinc-800 lg:grid-cols-[minmax(12rem,1fr)_minmax(10rem,0.7fr)_minmax(16rem,1.2fr)] lg:items-end">
+          {viewMode === "projects" ? (
+            <>
+              <Field label="Sortuj według">
+                <Select
+                  value={sortKey}
+                  onChange={(e) => setSortKey(e.target.value as SortKey)}
+                  disabled={loading}
+                >
+                  {SORT_OPTIONS.map((o) => (
+                    <option key={o.value} value={o.value}>
+                      {o.label}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+              <Field label="Kolejność">
+                <Select
+                  value={sortOrder}
+                  onChange={(e) => setSortOrder(e.target.value as "asc" | "desc")}
+                  disabled={loading}
+                >
+                  <option value="asc">Rosnąco</option>
+                  <option value="desc">Malejąco</option>
+                </Select>
+              </Field>
+            </>
+          ) : (
+            <div className="rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-2 text-xs text-zinc-500 dark:border-zinc-800 dark:bg-zinc-900/60">
+              Sortowanie w tym widoku: aktywne projekty wyżej, potem status realizacji i ostatnia aktualizacja.
+            </div>
+          )}
+          <label className="flex min-h-[38px] cursor-pointer items-center gap-2 rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm text-zinc-700 dark:border-zinc-800 dark:bg-zinc-900/60 dark:text-zinc-300">
+            <input
+              type="checkbox"
+              className="size-4 rounded border-zinc-300"
+              checked={includeSettled}
+              onChange={(e) => setIncludeSettled(e.target.checked)}
+            />
+            <span>Pokaż zakończone i rozliczone</span>
+          </label>
+        </div>
+      </section>
 
       {loadError && <Alert variant="error">{loadError}</Alert>}
       {statusPatchError ? <Alert variant="error">{statusPatchError}</Alert> : null}
