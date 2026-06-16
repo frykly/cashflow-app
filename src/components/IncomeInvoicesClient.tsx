@@ -5,7 +5,6 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ContractorNameLink } from "@/components/ContractorNameLink";
 import { Alert, Badge, Button, Field, Input, Select, Spinner } from "@/components/ui";
-import { CrudToolbar } from "@/components/CrudToolbar";
 import { formatDate, formatMoney, toIsoOrNull } from "@/lib/format";
 import { isoToDateInputValue } from "@/lib/date-input";
 import { amountsFromGrossRate, amountsFromNetRate, inferVatRateFromAmounts, type VatRatePct } from "@/lib/vat-rate";
@@ -320,8 +319,13 @@ export function IncomeInvoicesClient({ initialQueryString = "" }: { initialQuery
     { projectId: string; netAmount: string; grossAmount: string; description: string }[]
   >([]);
 
+  const isEditingSearchRef = useRef(false);
+
+  const [searchDraft, setSearchDraft] = useState(() => {
+    const m = new URLSearchParams(initialQueryString);
+    return m.get("q") ?? "";
+  });
   const [filterDraft, setFilterDraft] = useState({
-    q: "",
     status: "",
     categoryId: "",
     recurringSource: "",
@@ -335,7 +339,6 @@ export function IncomeInvoicesClient({ initialQueryString = "" }: { initialQuery
   useEffect(() => {
     const m = new URLSearchParams(queryString);
     setFilterDraft({
-      q: m.get("q") ?? "",
       status: m.get("status") ?? "",
       categoryId: m.get("categoryId") ?? "",
       recurringSource: m.get("recurringSource") ?? "",
@@ -345,6 +348,9 @@ export function IncomeInvoicesClient({ initialQueryString = "" }: { initialQuery
       dateField: m.get("dateField") || "plannedIncomeDate",
       overdueOnly: m.get("overdue") === "1",
     });
+    if (!isEditingSearchRef.current) {
+      setSearchDraft(m.get("q") ?? "");
+    }
   }, [queryString]);
 
   useEffect(() => {
@@ -383,7 +389,7 @@ export function IncomeInvoicesClient({ initialQueryString = "" }: { initialQuery
 
   function applyFilters() {
     setParams({
-      q: filterDraft.q.trim() || null,
+      q: searchDraft.trim() || null,
       status: filterDraft.status || null,
       categoryId: filterDraft.categoryId || null,
       recurringSource: filterDraft.recurringSource || null,
@@ -395,7 +401,18 @@ export function IncomeInvoicesClient({ initialQueryString = "" }: { initialQuery
     });
   }
 
+  useEffect(() => {
+    const currentQ = new URLSearchParams(queryString).get("q") ?? "";
+    if (searchDraft.trim() === currentQ) return;
+    const t = window.setTimeout(() => {
+      setParam("q", searchDraft.trim() || null);
+    }, 500);
+    return () => window.clearTimeout(t);
+  }, [searchDraft, queryString, setParam]);
+
   function clearFilters() {
+    isEditingSearchRef.current = false;
+    setSearchDraft("");
     setParams({
       q: null,
       status: null,
@@ -1018,7 +1035,7 @@ export function IncomeInvoicesClient({ initialQueryString = "" }: { initialQuery
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+      <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
         <div>
           <h1 className="text-2xl font-semibold text-zinc-900 dark:text-zinc-50">Faktury przychodowe</h1>
           <p className="mt-1 text-sm text-zinc-500">
@@ -1033,37 +1050,69 @@ export function IncomeInvoicesClient({ initialQueryString = "" }: { initialQuery
             ) : null}
           </p>
         </div>
-        <CrudToolbar
-          sortOptions={SORT_OPTIONS}
-          sort={sort}
-          order={order}
-          onSortChange={(v) => setParam("sort", v)}
-          onOrderChange={(v) => setParam("order", v)}
-          onRefresh={load}
-          onAdd={openNew}
-          loading={listLoading}
-        />
+        <div className="grid gap-3 sm:grid-cols-[minmax(12rem,1fr)_8rem_auto_auto] xl:min-w-[34rem] xl:items-end">
+          <Field label="Sortuj według">
+            <Select value={sort} onChange={(e) => setParam("sort", e.target.value)} disabled={listLoading}>
+              {SORT_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
+            </Select>
+          </Field>
+          <Field label="Kolejność">
+            <Select
+              value={order}
+              onChange={(e) => setParam("order", e.target.value as "asc" | "desc")}
+              disabled={listLoading}
+            >
+              <option value="asc">Rosnąco</option>
+              <option value="desc">Malejąco</option>
+            </Select>
+          </Field>
+          <Button type="button" variant="secondary" className="h-[38px]" onClick={load} disabled={listLoading}>
+            Odśwież
+          </Button>
+          <Button type="button" className="h-[38px]" onClick={openNew} disabled={listLoading}>
+            Dodaj
+          </Button>
+        </div>
       </div>
 
-      <div className="rounded-xl border border-zinc-200 bg-zinc-50/80 p-4 dark:border-zinc-800 dark:bg-zinc-900/40">
-        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-          <span className="text-sm font-medium text-zinc-700 dark:text-zinc-300">Filtry i wyszukiwanie</span>
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          applyFilters();
+        }}
+        className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-950"
+      >
+        <div className="mb-4 flex flex-col gap-3 border-b border-zinc-100 pb-3 dark:border-zinc-800 sm:flex-row sm:items-end sm:justify-between">
+          <div>
+            <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-50">Filtry i wyszukiwanie</h2>
+            <p className="mt-1 text-xs text-zinc-500">Szukaj po numerze, kontrahencie, opisie i projekcie.</p>
+          </div>
           <div className="flex flex-wrap gap-2">
             <Button type="button" variant="secondary" className="!py-1.5 !text-xs" onClick={clearFilters} disabled={listLoading}>
               Wyczyść filtry
             </Button>
-            <Button type="button" className="!py-1.5 !text-xs" onClick={applyFilters} disabled={listLoading}>
+            <Button type="submit" className="!py-1.5 !text-xs" disabled={listLoading}>
               Zastosuj
             </Button>
           </div>
         </div>
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-6">
+
+        <div className="grid gap-4 lg:grid-cols-[minmax(16rem,1.3fr)_minmax(12rem,1fr)_minmax(10rem,0.8fr)_minmax(10rem,0.8fr)_minmax(10rem,0.8fr)]">
           <Field label="Szukaj (nr, kontrahent, opis, projekt)">
             <Input
-              value={filterDraft.q}
-              onChange={(e) => setFilterDraft((d) => ({ ...d, q: e.target.value }))}
+              value={searchDraft}
+              onFocus={() => {
+                isEditingSearchRef.current = true;
+              }}
+              onBlur={() => {
+                isEditingSearchRef.current = false;
+              }}
+              onChange={(e) => setSearchDraft(e.target.value)}
               placeholder="np. FV/1, kontrahent lub projekt"
-              disabled={listLoading}
             />
           </Field>
           <Field label="Projekt">
@@ -1122,6 +1171,9 @@ export function IncomeInvoicesClient({ initialQueryString = "" }: { initialQuery
               <option value="generated">Z cyklicznych</option>
             </Select>
           </Field>
+        </div>
+
+        <div className="mt-4 grid gap-4 border-t border-zinc-100 pt-4 dark:border-zinc-800 lg:grid-cols-[minmax(12rem,1fr)_minmax(10rem,0.7fr)_minmax(10rem,0.7fr)_minmax(16rem,1.1fr)] lg:items-end">
           <Field label="Pole daty (zakres)">
             <Select
               value={filterDraft.dateField}
@@ -1151,24 +1203,24 @@ export function IncomeInvoicesClient({ initialQueryString = "" }: { initialQuery
               disabled={listLoading}
             />
           </Field>
+          <label className="flex min-h-[38px] cursor-pointer items-center gap-2 rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm text-zinc-700 dark:border-zinc-800 dark:bg-zinc-900/60 dark:text-zinc-300">
+            <input
+              type="checkbox"
+              className="size-4 rounded border-zinc-300"
+              checked={filterDraft.overdueOnly}
+              onChange={(e) => setFilterDraft((d) => ({ ...d, overdueOnly: e.target.checked }))}
+              disabled={listLoading}
+            />
+            <span>Tylko po terminie</span>
+          </label>
         </div>
-        <label className="mt-3 flex cursor-pointer items-center gap-2 text-sm text-zinc-700 dark:text-zinc-300">
-          <input
-            type="checkbox"
-            className="size-4 rounded border-zinc-300"
-            checked={filterDraft.overdueOnly}
-            onChange={(e) => setFilterDraft((d) => ({ ...d, overdueOnly: e.target.checked }))}
-            disabled={listLoading}
-          />
-          Tylko po terminie (nieopłacone, data &lt; dziś)
-        </label>
-        <p className="mt-2 text-xs text-zinc-500">
-          <Link href="/income-invoices?overdue=1" className="font-medium text-zinc-700 underline dark:text-zinc-300">
+
+        <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-2 rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-2 text-xs dark:border-zinc-800 dark:bg-zinc-900/60">
+          <Link href="/income-invoices?overdue=1" className="font-medium text-zinc-700 underline underline-offset-2 dark:text-zinc-300">
             Szybki link: tylko przeterminowane
           </Link>
-        </p>
-        <div className="mt-3 flex flex-wrap items-center gap-3 border-t border-zinc-200 pt-3 text-xs dark:border-zinc-700">
-          <span className="font-medium text-zinc-600 dark:text-zinc-400">Eksport (z filtrami):</span>
+          <span className="hidden text-zinc-300 dark:text-zinc-700 sm:inline">|</span>
+          <span className="font-medium text-zinc-600 dark:text-zinc-400">Eksport:</span>
           <a
             className="text-zinc-800 underline dark:text-zinc-200"
             href={`/api/income-invoices/export?format=csv&${queryString}`}
@@ -1187,7 +1239,7 @@ export function IncomeInvoicesClient({ initialQueryString = "" }: { initialQuery
           </label>
         </div>
         {importMsg ? <p className="mt-2 text-xs text-zinc-600 dark:text-zinc-400">{importMsg}</p> : null}
-      </div>
+      </form>
 
       {loadError && <Alert variant="error">{loadError}</Alert>}
 

@@ -9,6 +9,7 @@ import { syncIncomeInvoiceStatus } from "@/lib/invoice-status-sync";
 import { finalizePlannedToIncomeConversion } from "@/lib/planned-event-conversion";
 import { replaceIncomeInvoiceAllocations, resolveLegacyProjectFieldsFromAllocations } from "@/lib/project-allocations/persist";
 import { validateCostOrIncomeAllocationSums } from "@/lib/project-allocations/validate";
+import { sortByInvoiceNumber } from "@/lib/invoice-number-sort";
 import { ZodError } from "zod";
 
 const sortable = new Set([
@@ -43,7 +44,7 @@ export async function GET(req: Request) {
 
   const rows = await prisma.incomeInvoice.findMany({
     where,
-    orderBy: { [sort]: order },
+    ...(sort === "invoiceNumber" ? {} : { orderBy: { [sort]: order } }),
     include: {
       incomeCategory: true,
       project: true,
@@ -55,7 +56,9 @@ export async function GET(req: Request) {
       plannedPayments: { orderBy: { sortOrder: "asc" } },
     },
   });
-  return jsonData(rows);
+
+  const sorted = sort === "invoiceNumber" ? sortByInvoiceNumber(rows, order) : rows;
+  return jsonData(sorted);
 }
 
 export async function POST(req: Request) {
