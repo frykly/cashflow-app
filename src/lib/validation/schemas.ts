@@ -213,6 +213,16 @@ const optionalPlannedDecimal = z.preprocess(
   z.union([decimalLike, z.null()]).optional(),
 );
 
+/** PATCH: brak klucza → nie zmieniaj; "" / null → null. */
+const optionalPlannedDecimalUpdate = z.preprocess(
+  (v) => {
+    if (v === undefined) return undefined;
+    if (v === "" || v === null) return null;
+    return v;
+  },
+  z.union([decimalLike, z.null()]).optional(),
+);
+
 export const projectCreateSchema = z.object({
   name: z.string().min(1).max(500),
   code: optionalTrimmed(100),
@@ -230,17 +240,17 @@ export const projectCreateSchema = z.object({
 
 export const projectUpdateSchema = z.object({
   name: z.string().min(1).max(500).optional(),
-  code: optionalTrimmed(100),
-  clientName: optionalTrimmed(500),
-  description: optionalTrimmed(5000),
+  code: optionalTrimmedFieldUpdate(100),
+  clientName: optionalTrimmedFieldUpdate(500),
+  description: optionalTrimmedFieldUpdate(5000),
   isActive: z.boolean().optional(),
   lifecycleStatus: optionalProjectStatusValue,
   settlementStatus: optionalProjectStatusValue,
   missingTypeIds: optionalMissingTypeIds,
-  plannedRevenueNet: optionalPlannedDecimal,
-  plannedCostNet: optionalPlannedDecimal,
-  startDate: optionalIsoNullable(),
-  endDate: optionalIsoNullable(),
+  plannedRevenueNet: optionalPlannedDecimalUpdate,
+  plannedCostNet: optionalPlannedDecimalUpdate,
+  startDate: optionalIsoNullableFieldUpdate(),
+  endDate: optionalIsoNullableFieldUpdate(),
 });
 
 const projectTaskStatusSchema = z.enum(["TODO", "IN_PROGRESS", "DONE"]);
