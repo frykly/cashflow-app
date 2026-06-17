@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { Alert, Badge, Button, Field, Input, Select, Spinner } from "@/components/ui";
 import { readApiResponse } from "@/lib/api-client";
+import { incomeInvoiceListEditHref } from "@/lib/navigation/invoice-deep-links";
 import type { KsefStatusResponse } from "@/lib/ksef/diagnostics";
 import type { KsefDocumentDirection, KsefWorkflowStatus } from "@/lib/ksef/types";
 
@@ -29,6 +30,7 @@ type Row = {
   duplicateOfCostInvoiceId: string | null;
   duplicateMatchSummary: string | null;
   importedAsCostInvoiceId: string | null;
+  importedAsRevenueInvoiceId: string | null;
   rejectedAt: string | null;
   importedAt: string | null;
 };
@@ -181,7 +183,10 @@ export function KsefInboxClient() {
     });
   }
 
-  async function runAction(id: string, action: "import-cost" | "mark-duplicate" | "reject" | "restore") {
+  async function runAction(
+    id: string,
+    action: "import-cost" | "import-revenue" | "mark-duplicate" | "reject" | "restore",
+  ) {
     setActingId(id);
     setMsg(null);
     try {
@@ -211,9 +216,13 @@ export function KsefInboxClient() {
     selected &&
     dir === "PURCHASE" &&
     ws === "NEW";
+  const canImportRevenue =
+    selected &&
+    dir === "SALE" &&
+    ws === "NEW";
   const importBlockedReason =
-    selected && ws !== "IMPORTED" && ws !== "REJECTED" && dir !== "PURCHASE"
-      ? "Import kosztu dostępny tylko dla dokumentów zakupowych. Ustaw KSEF_COMPANY_TAX_ID w .env albo poczekaj na poprawną klasyfikację po kolejnym sync."
+    selected && ws !== "IMPORTED" && ws !== "REJECTED" && dir === "UNKNOWN"
+      ? "Import dostępny po poprawnej klasyfikacji (zakup lub sprzedaż). Ustaw KSEF_COMPANY_TAX_ID i zsynchronizuj ponownie."
       : null;
 
   return (
@@ -221,7 +230,7 @@ export function KsefInboxClient() {
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="text-xl font-semibold">KSeF</h1>
-          <p className="text-sm text-zinc-500">Skrzynka dokumentów — workflow kosztów z KSeF.</p>
+          <p className="text-sm text-zinc-500">Skrzynka dokumentów KSeF — import kosztów i przychodów.</p>
         </div>
         <div className="flex flex-wrap items-end gap-3">
           {needsInitialSyncFrom ? (
@@ -465,8 +474,21 @@ export function KsefInboxClient() {
                 ) : null}
                 {selected.workflowStatus === "IMPORTED" && selected.importedAsCostInvoiceId ? (
                   <p>
-                    <Link href="/cost-invoices" className="text-blue-600 underline dark:text-blue-400">
-                      Faktura kosztowa utworzona (ID: {selected.importedAsCostInvoiceId.slice(0, 8)}…)
+                    <Link
+                      href={`/cost-invoices?editCost=${encodeURIComponent(selected.importedAsCostInvoiceId)}`}
+                      className="text-blue-600 underline dark:text-blue-400"
+                    >
+                      Otwórz fakturę kosztową
+                    </Link>
+                  </p>
+                ) : null}
+                {selected.workflowStatus === "IMPORTED" && selected.importedAsRevenueInvoiceId ? (
+                  <p>
+                    <Link
+                      href={incomeInvoiceListEditHref(selected.importedAsRevenueInvoiceId)}
+                      className="text-blue-600 underline dark:text-blue-400"
+                    >
+                      Otwórz fakturę przychodową
                     </Link>
                   </p>
                 ) : null}
@@ -493,9 +515,25 @@ export function KsefInboxClient() {
                     <p className="text-xs text-zinc-500">{importBlockedReason}</p>
                   ) : null}
 
+                  {canImportRevenue ? (
+                    <Button
+                      type="button"
+                      disabled={actingId === selected.id}
+                      onClick={() => void runAction(selected.id, "import-revenue")}
+                    >
+                      Importuj jako przychód
+                    </Button>
+                  ) : null}
+
                   {ws === "PROBABLE_DUPLICATE" && dir === "PURCHASE" ? (
                     <Button type="button" variant="secondary" disabled>
                       Duplikat — import zablokowany
+                    </Button>
+                  ) : null}
+
+                  {ws === "PROBABLE_DUPLICATE" && dir === "SALE" ? (
+                    <Button type="button" variant="secondary" disabled>
+                      Oznaczony jako duplikat — import zablokowany
                     </Button>
                   ) : null}
 
@@ -530,10 +568,6 @@ export function KsefInboxClient() {
                     >
                       Przywróć do nowych
                     </Button>
-                  ) : null}
-
-                  {dir === "SALE" ? (
-                    <p className="text-xs text-zinc-500">Faktury sprzedażowe — tylko podgląd w MVP.</p>
                   ) : null}
                 </div>
               </div>
