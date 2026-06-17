@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { AlertCircle, FileCheck, FileText, RefreshCw } from "lucide-react";
 import { Alert, Badge, Button, Field, Input, Select, Spinner } from "@/components/ui";
 import { KsefDocumentDetailPanel } from "@/components/KsefDocumentDetailPanel";
 import { readApiResponse } from "@/lib/api-client";
@@ -34,6 +35,9 @@ type Row = {
   importedAsRevenueInvoiceId: string | null;
   rejectedAt: string | null;
   importedAt: string | null;
+  xmlFetchStatus: string | null;
+  xmlFetchedAt: string | null;
+  xmlFetchError: string | null;
 };
 
 type DocDetail = {
@@ -84,6 +88,61 @@ function workflowBadge(status: KsefWorkflowStatus) {
   return <Badge variant="muted">Odrzucony</Badge>;
 }
 
+function XmlStatusIcon({
+  row,
+  loading,
+}: {
+  row: Row;
+  loading?: boolean;
+}) {
+  if (row.source !== "KSEF") {
+    return (
+      <span className="inline-flex text-zinc-300" title="Tylko metadane (bez XML)">
+        —
+      </span>
+    );
+  }
+  if (loading) {
+    return (
+      <span className="inline-flex items-center gap-1 text-xs text-zinc-500" title="Pobieranie XML…">
+        <RefreshCw className="h-3.5 w-3.5 animate-spin" aria-hidden />
+      </span>
+    );
+  }
+  if (row.xmlFetchStatus === "OK") {
+    return (
+      <span title="XML pobrany" className="inline-flex">
+        <FileCheck
+          className="h-4 w-4 text-green-600 dark:text-green-500"
+          aria-label="XML pobrany"
+        />
+      </span>
+    );
+  }
+  if (row.xmlFetchStatus === "FAILED") {
+    return (
+      <span title={row.xmlFetchError ?? "Błąd pobrania XML"} className="inline-flex">
+        <AlertCircle
+          className="h-4 w-4 text-red-600 dark:text-red-400"
+          aria-label="Błąd pobrania XML"
+        />
+      </span>
+    );
+  }
+  return (
+    <span title="XML niepobrany — pobierze się po otwarciu szczegółów" className="inline-flex">
+      <FileText className="h-4 w-4 text-zinc-400" aria-label="XML niepobrany" />
+    </span>
+  );
+}
+
+async function fetchDocumentDetail(id: string): Promise<DocDetail | null> {
+  const res = await fetch(`/api/ksef/documents/${id}`);
+  const parsed = await readApiResponse(res);
+  if (!parsed.ok || !parsed.data || typeof parsed.data !== "object") return null;
+  return parsed.data as DocDetail;
+}
+
 type SyncResponse = {
   status?: string;
   upserted?: number;
@@ -119,6 +178,7 @@ export function KsefInboxClient() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [detail, setDetail] = useState<DocDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
+  const [xmlFetching, setXmlFetching] = useState(false);
   const [msg, setMsg] = useState<{ type: "ok" | "err"; text: string } | null>(null);
   const [directionTab, setDirectionTab] = useState<DirectionTab>("PURCHASE");
   const [workflowFilter, setWorkflowFilter] = useState<WorkflowFilter>("");
@@ -164,30 +224,65 @@ export function KsefInboxClient() {
   useEffect(() => {
     if (!selectedId) {
       setDetail(null);
+      setXmlFetching(false);
       return;
     }
+
     let cancelled = false;
-    setDetailLoading(true);
-    fetch(`/api/ksef/documents/${selectedId}`)
-      .then((res) => readApiResponse(res))
-      .then((parsed) => {
+    const documentId = selectedId;
+
+    async function openDocumentDetail() {
+      setDetailLoading(true);
+      setXmlFetching(false);
+      try {
+        const initial = await fetchDocumentDetail(documentId);
         if (cancelled) return;
-        if (parsed.ok && parsed.data && typeof parsed.data === "object") {
-          setDetail(parsed.data as DocDetail);
-        } else {
+        if (!initial) {
           setDetail(null);
+          return;
         }
-      })
-      .catch(() => {
-        if (!cancelled) setDetail(null);
-      })
-      .finally(() => {
-        if (!cancelled) setDetailLoading(false);
-      });
+        setDetail(initial);
+        setDetailLoading(false);
+
+        const shouldAutoFetchXml =
+          initial.document.source === "KSEF" &&
+          status?.willUseRealApiNextSync &&
+          status?.ksefEnabled &&
+          initial.document.xmlFetchStatus !== "OK";
+
+        if (!shouldAutoFetchXml) return;
+
+        setXmlFetching(true);
+        const fetchRes = await fetch(`/api/ksef/documents/${documentId}/fetch-xml`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: "{}",
+        });
+        await readApiResponse(fetchRes);
+        if (cancelled) return;
+
+        const refreshed = await fetchDocumentDetail(documentId);
+        if (!cancelled && refreshed) setDetail(refreshed);
+        if (!cancelled) await load();
+      } catch {
+        if (!cancelled) {
+          const refreshed = await fetchDocumentDetail(documentId);
+          if (refreshed) setDetail(refreshed);
+          await load();
+        }
+      } finally {
+        if (!cancelled) {
+          setDetailLoading(false);
+          setXmlFetching(false);
+        }
+      }
+    }
+
+    void openDocumentDetail();
     return () => {
       cancelled = true;
     };
-  }, [selectedId]);
+  }, [selectedId, status?.willUseRealApiNextSync, status?.ksefEnabled, load]);
 
   async function postSync(body: Record<string, unknown>) {
     setMsg(null);
@@ -255,32 +350,26 @@ export function KsefInboxClient() {
         setMsg({ type: "err", text: parsed.errorText });
         await load();
         if (selectedId === id) {
-          const detailRes = await fetch(`/api/ksef/documents/${id}`);
-          const detailParsed = await readApiResponse(detailRes);
-          if (detailParsed.ok && detailParsed.data) {
-            setDetail(detailParsed.data as DocDetail);
-          }
+          const refreshed = await fetchDocumentDetail(id);
+          if (refreshed) setDetail(refreshed);
         }
         return;
       }
       const okText =
         action === "fetch-xml"
-          ? (parsed.data as { fetchResult?: { cached?: boolean } })?.fetchResult?.cached
-            ? "Pełna faktura XML jest już w cache."
-            : "Pobrano pełną fakturę XML."
+          ? "Odświeżono XML faktury."
           : action === "undo-import"
             ? "Import cofnięty."
             : action === "mark-duplicate"
               ? "Oznaczono jako już w systemie."
               : "Akcja wykonana.";
-      setMsg({ type: "ok", text: okText });
+      if (action !== "fetch-xml" || opts?.forceXml) {
+        setMsg({ type: "ok", text: okText });
+      }
       await load();
       if (selectedId === id) {
-        const detailRes = await fetch(`/api/ksef/documents/${id}`);
-        const detailParsed = await readApiResponse(detailRes);
-        if (detailParsed.ok && detailParsed.data) {
-          setDetail(detailParsed.data as DocDetail);
-        }
+        const refreshed = await fetchDocumentDetail(id);
+        if (refreshed) setDetail(refreshed);
       }
     } catch (e) {
       const detail = e instanceof Error ? e.message : "";
@@ -306,8 +395,11 @@ export function KsefInboxClient() {
     selected && ws !== "IMPORTED" && ws !== "REJECTED" && dir === "UNKNOWN"
       ? "Import dostępny po poprawnej klasyfikacji (zakup lub sprzedaż). Ustaw KSEF_COMPANY_TAX_ID i zsynchronizuj ponownie."
       : null;
-  const canFetchXml = Boolean(
-    selected?.source === "KSEF" && status?.willUseRealApiNextSync && status?.ksefEnabled,
+  const canRefreshXml = Boolean(
+    selected?.source === "KSEF" &&
+      status?.willUseRealApiNextSync &&
+      status?.ksefEnabled &&
+      detail?.document.xmlFetchStatus === "OK",
   );
 
   return (
@@ -498,6 +590,9 @@ export function KsefInboxClient() {
                   <th className="p-2">Numer</th>
                   <th className="p-2">Sprzedawca</th>
                   <th className="p-2 text-right">Brutto</th>
+                  <th className="p-2 w-10 text-center" title="Status XML">
+                    XML
+                  </th>
                   <th className="p-2">Status</th>
                 </tr>
               </thead>
@@ -518,6 +613,9 @@ export function KsefInboxClient() {
                       {r.sellerName}
                     </td>
                     <td className="p-2 text-right font-mono">{r.grossAmount}</td>
+                    <td className="p-2 text-center">
+                      <XmlStatusIcon row={r} loading={selectedId === r.id && xmlFetching} />
+                    </td>
                     <td className="p-2">{workflowBadge(r.workflowStatus)}</td>
                   </tr>
                 ))}
@@ -546,7 +644,8 @@ export function KsefInboxClient() {
                 xmlFetchStatus={detail.document.xmlFetchStatus}
                 xmlFetchedAt={detail.document.xmlFetchedAt}
                 xmlFetchError={detail.document.xmlFetchError}
-                canFetchXml={canFetchXml}
+                xmlFetching={xmlFetching}
+                canRefreshXml={canRefreshXml}
                 duplicateCost={detail.duplicateCost}
                 duplicateIncome={detail.duplicateIncome}
                 acting={actingId === selected.id}
@@ -554,7 +653,7 @@ export function KsefInboxClient() {
                 canImportRevenue={Boolean(canImportRevenue)}
                 canUndoImport={Boolean(canUndoImport)}
                 importBlockedReason={importBlockedReason}
-                onAction={(action) => void runAction(selected.id, action)}
+                onAction={(action, opts) => void runAction(selected.id, action, opts)}
               />
             ) : (
               <p className="text-sm text-zinc-500">Nie udało się wczytać podglądu faktury.</p>

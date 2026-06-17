@@ -45,7 +45,8 @@ export type KsefDocumentDetailPanelProps = {
   xmlFetchStatus: string | null;
   xmlFetchedAt: string | null;
   xmlFetchError: string | null;
-  canFetchXml: boolean;
+  xmlFetching: boolean;
+  canRefreshXml: boolean;
   duplicateCost: DuplicateCost;
   duplicateIncome: DuplicateIncome;
   acting: boolean;
@@ -209,7 +210,8 @@ export function KsefDocumentDetailPanel({
   xmlFetchStatus,
   xmlFetchedAt,
   xmlFetchError,
-  canFetchXml,
+  xmlFetching,
+  canRefreshXml,
   duplicateCost,
   duplicateIncome,
   acting,
@@ -242,6 +244,8 @@ export function KsefDocumentDetailPanel({
           </span>
           {preview.previewSource === "xml" ? (
             <Badge variant="success">Pełna faktura XML</Badge>
+          ) : xmlFetching ? (
+            <Badge variant="default">Pobieranie XML…</Badge>
           ) : null}
         </div>
         <dl className="space-y-1 rounded border border-zinc-100 bg-zinc-50/80 p-2 dark:border-zinc-800 dark:bg-zinc-900/40">
@@ -268,40 +272,46 @@ export function KsefDocumentDetailPanel({
           <LinesTable lines={preview.lines} />
         ) : preview.previewSource === "xml" ? (
           <p className="text-xs text-zinc-500">Brak pozycji w strukturze XML tej faktury.</p>
+        ) : xmlFetching ? (
+          <p className="rounded border border-dashed border-zinc-200 bg-zinc-50/60 px-2 py-2 text-xs leading-relaxed text-zinc-600 dark:border-zinc-700 dark:bg-zinc-900/30 dark:text-zinc-400">
+            Pobieranie pełnej faktury z KSeF…
+          </p>
         ) : (
           <p className="rounded border border-dashed border-zinc-200 bg-zinc-50/60 px-2 py-2 text-xs leading-relaxed text-zinc-600 dark:border-zinc-700 dark:bg-zinc-900/30 dark:text-zinc-400">
-            Pozycje faktury nie są dostępne w metadanych KSeF. Kliknij „Pobierz pełną fakturę”, aby
-            wczytać dane z XML.
+            Pozycje faktury będą widoczne po pobraniu XML z KSeF.
           </p>
         )}
       </section>
 
       <section className="space-y-2 border-t border-zinc-200 pt-3 dark:border-zinc-700">
         <SectionTitle>Pełna faktura</SectionTitle>
+        {xmlFetching ? (
+          <p className="text-xs text-zinc-500">Pobieranie pełnej faktury z KSeF w tle…</p>
+        ) : null}
         {xmlFetchStatus === "OK" && xmlFetchedAt ? (
           <p className="text-xs text-zinc-500">
-            XML pobrany {xmlFetchedAt.slice(0, 16).replace("T", " ")}
-            {source === "MOCK" ? " (źródło testowe)" : ""}.
+            XML w cache · {xmlFetchedAt.slice(0, 16).replace("T", " ")}
           </p>
         ) : null}
-        {xmlFetchError ? (
+        {xmlFetchError && !xmlFetching ? (
           <p className="rounded border border-red-200 bg-red-50 px-2 py-1.5 text-xs text-red-800 dark:border-red-900 dark:bg-red-950/40 dark:text-red-200">
             {xmlFetchError}
           </p>
         ) : null}
-        {canFetchXml ? (
+        {canRefreshXml ? (
           <Button
             type="button"
             variant="secondary"
             className="w-full"
-            disabled={acting}
-            onClick={() => onAction("fetch-xml", { forceXml: xmlFetchStatus === "OK" })}
+            disabled={acting || xmlFetching}
+            onClick={() => onAction("fetch-xml", { forceXml: true })}
           >
-            {xmlFetchStatus === "OK" ? "Odśwież pełną fakturę" : "Pobierz pełną fakturę"}
+            Odśwież XML
           </Button>
-        ) : source === "MOCK" ? (
+        ) : null}
+        {source === "MOCK" ? (
           <p className="text-xs text-zinc-500">
-            Pobieranie XML dostępne tylko dla dokumentów zsynchronizowanych z produkcyjnego API KSeF.
+            Pełny XML dostępny tylko dla dokumentów z produkcyjnego API KSeF.
           </p>
         ) : null}
       </section>
