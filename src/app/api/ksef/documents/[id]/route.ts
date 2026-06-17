@@ -1,8 +1,16 @@
 import { prisma } from "@/lib/db";
 import { jsonData } from "@/lib/api/json-response";
 import { jsonError } from "@/lib/api/errors";
-import { findProbableCostDuplicate } from "@/lib/ksef/duplicate-match";
+import {
+  findProbableCostDuplicate,
+  findProbableIncomeDuplicate,
+} from "@/lib/ksef/duplicate-match";
 import { ksefDocumentToPublicRow } from "@/lib/ksef/document-public-row";
+import {
+  extractVatBreakdownFromRawPayload,
+  parseRawPayloadJson,
+} from "@/lib/ksef/raw-payload-display";
+import { buildKsefInvoicePreview } from "@/lib/ksef/invoice-preview";
 
 export const runtime = "nodejs";
 
@@ -45,8 +53,49 @@ export async function GET(_req: Request, ctx: Ctx) {
     }
   }
 
+  let duplicateIncome: {
+    id: string;
+    invoiceNumber: string;
+    contractor: string;
+    grossAmount: string;
+  } | null = null;
+  if (doc.duplicateOfIncomeInvoiceId) {
+    const inv = await prisma.incomeInvoice.findUnique({
+      where: { id: doc.duplicateOfIncomeInvoiceId },
+      select: { id: true, invoiceNumber: true, contractor: true, grossAmount: true },
+    });
+    if (inv) {
+      duplicateIncome = {
+        id: inv.id,
+        invoiceNumber: inv.invoiceNumber,
+        contractor: inv.contractor,
+        grossAmount: inv.grossAmount.toString(),
+      };
+    }
+  } else if (doc.documentDirection === "SALE" && doc.workflowStatus !== "IMPORTED") {
+    const match = await findProbableIncomeDuplicate({
+      invoiceNumber: doc.invoiceNumber,
+      buyerTaxId: doc.buyerTaxId,
+      buyerName: doc.buyerName,
+      grossAmount: doc.grossAmount,
+      issueDate: doc.issueDate,
+    });
+    if (match) {
+      duplicateIncome = {
+        id: match.id,
+        invoiceNumber: match.invoiceNumber,
+        contractor: match.contractor,
+        grossAmount: match.grossAmount,
+      };
+    }
+  }
+
   return jsonData({
     document: ksefDocumentToPublicRow(doc),
+    preview: buildKsefInvoicePreview(doc),
+    rawPayload: parseRawPayloadJson(doc.rawPayload),
+    vatBreakdown: extractVatBreakdownFromRawPayload(doc.rawPayload),
     duplicateCost,
+    duplicateIncome,
   });
 }

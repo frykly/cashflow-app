@@ -22,6 +22,7 @@ export async function POST(_req: Request, ctx: Ctx) {
       data: {
         workflowStatus: "NEW",
         duplicateOfCostInvoiceId: null,
+        duplicateOfIncomeInvoiceId: null,
         duplicateMatchSummary: null,
         rejectedAt: null,
         processedAt: new Date(),

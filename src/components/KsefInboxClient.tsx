@@ -1,10 +1,10 @@
 "use client";
 
-import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { Alert, Badge, Button, Field, Input, Select, Spinner } from "@/components/ui";
+import { KsefDocumentDetailPanel } from "@/components/KsefDocumentDetailPanel";
 import { readApiResponse } from "@/lib/api-client";
-import { incomeInvoiceListEditHref } from "@/lib/navigation/invoice-deep-links";
+import type { KsefInvoicePreview } from "@/lib/ksef/invoice-preview";
 import type { KsefStatusResponse } from "@/lib/ksef/diagnostics";
 import type { KsefDocumentDirection, KsefWorkflowStatus } from "@/lib/ksef/types";
 
@@ -28,6 +28,7 @@ type Row = {
   grossAmount: string;
   currency: string;
   duplicateOfCostInvoiceId: string | null;
+  duplicateOfIncomeInvoiceId: string | null;
   duplicateMatchSummary: string | null;
   importedAsCostInvoiceId: string | null;
   importedAsRevenueInvoiceId: string | null;
@@ -35,8 +36,33 @@ type Row = {
   importedAt: string | null;
 };
 
+type DocDetail = {
+  document: Row;
+  preview: KsefInvoicePreview;
+  rawPayload: unknown;
+  duplicateCost: {
+    id: string;
+    documentNumber: string;
+    supplier: string;
+    grossAmount: string;
+  } | null;
+  duplicateIncome: {
+    id: string;
+    invoiceNumber: string;
+    contractor: string;
+    grossAmount: string;
+  } | null;
+};
+
 type DirectionTab = "PURCHASE" | "SALE" | "UNKNOWN";
 type WorkflowFilter = "" | KsefWorkflowStatus;
+type DocAction =
+  | "import-cost"
+  | "import-revenue"
+  | "mark-duplicate"
+  | "reject"
+  | "restore"
+  | "undo-import";
 
 const DIRECTION_TABS: { id: DirectionTab; label: string }[] = [
   { id: "PURCHASE", label: "Kosztowe" },
@@ -46,15 +72,9 @@ const DIRECTION_TABS: { id: DirectionTab; label: string }[] = [
 
 function workflowBadge(status: KsefWorkflowStatus) {
   if (status === "NEW") return <Badge variant="default">Nowy</Badge>;
-  if (status === "PROBABLE_DUPLICATE") return <Badge variant="warning">Duplikat</Badge>;
+  if (status === "PROBABLE_DUPLICATE") return <Badge variant="warning">Już w systemie</Badge>;
   if (status === "IMPORTED") return <Badge variant="success">Zaimportowany</Badge>;
   return <Badge variant="muted">Odrzucony</Badge>;
-}
-
-function directionLabel(dir: KsefDocumentDirection) {
-  if (dir === "PURCHASE") return "Zakup";
-  if (dir === "SALE") return "Sprzedaż";
-  return "Nieznane";
 }
 
 type SyncResponse = {
@@ -90,6 +110,8 @@ export function KsefInboxClient() {
   const [syncing, setSyncing] = useState(false);
   const [actingId, setActingId] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [detail, setDetail] = useState<DocDetail | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
   const [msg, setMsg] = useState<{ type: "ok" | "err"; text: string } | null>(null);
   const [directionTab, setDirectionTab] = useState<DirectionTab>("PURCHASE");
   const [workflowFilter, setWorkflowFilter] = useState<WorkflowFilter>("");
@@ -131,6 +153,34 @@ export function KsefInboxClient() {
     setLoading(true);
     load().finally(() => setLoading(false));
   }, [load]);
+
+  useEffect(() => {
+    if (!selectedId) {
+      setDetail(null);
+      return;
+    }
+    let cancelled = false;
+    setDetailLoading(true);
+    fetch(`/api/ksef/documents/${selectedId}`)
+      .then((res) => readApiResponse(res))
+      .then((parsed) => {
+        if (cancelled) return;
+        if (parsed.ok && parsed.data && typeof parsed.data === "object") {
+          setDetail(parsed.data as DocDetail);
+        } else {
+          setDetail(null);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setDetail(null);
+      })
+      .finally(() => {
+        if (!cancelled) setDetailLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedId]);
 
   async function postSync(body: Record<string, unknown>) {
     setMsg(null);
@@ -183,10 +233,7 @@ export function KsefInboxClient() {
     });
   }
 
-  async function runAction(
-    id: string,
-    action: "import-cost" | "import-revenue" | "mark-duplicate" | "reject" | "restore",
-  ) {
+  async function runAction(id: string, action: DocAction) {
     setActingId(id);
     setMsg(null);
     try {
@@ -194,10 +241,31 @@ export function KsefInboxClient() {
       const parsed = await readApiResponse(res);
       if (!parsed.ok) {
         setMsg({ type: "err", text: parsed.errorText });
+        await load();
+        if (selectedId === id) {
+          const detailRes = await fetch(`/api/ksef/documents/${id}`);
+          const detailParsed = await readApiResponse(detailRes);
+          if (detailParsed.ok && detailParsed.data) {
+            setDetail(detailParsed.data as DocDetail);
+          }
+        }
         return;
       }
-      setMsg({ type: "ok", text: "Akcja wykonana." });
+      const okText =
+        action === "undo-import"
+          ? "Import cofnięty."
+          : action === "mark-duplicate"
+            ? "Oznaczono jako już w systemie."
+            : "Akcja wykonana.";
+      setMsg({ type: "ok", text: okText });
       await load();
+      if (selectedId === id) {
+        const detailRes = await fetch(`/api/ksef/documents/${id}`);
+        const detailParsed = await readApiResponse(detailRes);
+        if (detailParsed.ok && detailParsed.data) {
+          setDetail(detailParsed.data as DocDetail);
+        }
+      }
     } catch (e) {
       const detail = e instanceof Error ? e.message : "";
       setMsg({
@@ -212,14 +280,12 @@ export function KsefInboxClient() {
   const selected = rows.find((r) => r.id === selectedId) ?? null;
   const ws = selected?.workflowStatus;
   const dir = selected?.documentDirection;
-  const canImportCost =
+  const canImportCost = selected && dir === "PURCHASE" && ws === "NEW";
+  const canImportRevenue = selected && dir === "SALE" && ws === "NEW";
+  const canUndoImport =
     selected &&
-    dir === "PURCHASE" &&
-    ws === "NEW";
-  const canImportRevenue =
-    selected &&
-    dir === "SALE" &&
-    ws === "NEW";
+    ws === "IMPORTED" &&
+    (selected.importedAsCostInvoiceId || selected.importedAsRevenueInvoiceId);
   const importBlockedReason =
     selected && ws !== "IMPORTED" && ws !== "REJECTED" && dir === "UNKNOWN"
       ? "Import dostępny po poprawnej klasyfikacji (zakup lub sprzedaż). Ustaw KSEF_COMPANY_TAX_ID i zsynchronizuj ponownie."
@@ -304,8 +370,8 @@ export function KsefInboxClient() {
 
       {status && !status.companyTaxIdConfigured ? (
         <Alert variant="info">
-          Brak KSEF_COMPANY_TAX_ID — dokumenty mogą trafiać do zakładki „Nieznane”. Możesz je
-          nadal przeglądać, odrzucać i oznaczać jako duplikat.
+          Brak KSEF_COMPANY_TAX_ID — dokumenty mogą trafiać do zakładki „Nieznane”. Możesz je nadal
+          przeglądać, odrzucać i oznaczać jako już w systemie.
         </Alert>
       ) : null}
 
@@ -394,7 +460,7 @@ export function KsefInboxClient() {
           >
             <option value="">Wszystkie statusy</option>
             <option value="NEW">Nowe</option>
-            <option value="PROBABLE_DUPLICATE">Prawdop. duplikaty</option>
+            <option value="PROBABLE_DUPLICATE">Już w systemie</option>
             <option value="IMPORTED">Zaimportowane</option>
             <option value="REJECTED">Odrzucone</option>
           </Select>
@@ -404,7 +470,7 @@ export function KsefInboxClient() {
       {loading ? (
         <Spinner />
       ) : (
-        <div className="grid gap-4 lg:grid-cols-[1fr_320px]">
+        <div className="grid gap-4 lg:grid-cols-[1fr_420px]">
           <div className="overflow-x-auto rounded border border-neutral-200 dark:border-neutral-700">
             <table className="w-full min-w-[720px] border-collapse text-sm">
               <thead>
@@ -443,134 +509,30 @@ export function KsefInboxClient() {
             ) : null}
           </div>
 
-          <aside className="rounded border border-neutral-200 p-3 dark:border-neutral-700">
+          <aside className="max-h-[calc(100vh-8rem)] overflow-y-auto rounded border border-neutral-200 p-3 dark:border-neutral-700">
             {!selected ? (
               <p className="text-sm text-zinc-500">Wybierz dokument z listy.</p>
+            ) : detailLoading && !detail ? (
+              <Spinner />
+            ) : detail?.preview ? (
+              <KsefDocumentDetailPanel
+                workflowStatus={selected.workflowStatus}
+                importedAsCostInvoiceId={selected.importedAsCostInvoiceId}
+                importedAsRevenueInvoiceId={selected.importedAsRevenueInvoiceId}
+                duplicateMatchSummary={selected.duplicateMatchSummary}
+                preview={detail.preview}
+                rawPayload={detail.rawPayload}
+                duplicateCost={detail.duplicateCost}
+                duplicateIncome={detail.duplicateIncome}
+                acting={actingId === selected.id}
+                canImportCost={Boolean(canImportCost)}
+                canImportRevenue={Boolean(canImportRevenue)}
+                canUndoImport={Boolean(canUndoImport)}
+                importBlockedReason={importBlockedReason}
+                onAction={(action) => void runAction(selected.id, action)}
+              />
             ) : (
-              <div className="space-y-3 text-sm">
-                <div>
-                  <p className="font-semibold">{selected.invoiceNumber || selected.ksefId}</p>
-                  <p className="text-xs text-zinc-500">{selected.ksefId}</p>
-                </div>
-                <p>
-                  <span className="text-zinc-500">Typ:</span> {directionLabel(selected.documentDirection)}
-                </p>
-                <p>
-                  <span className="text-zinc-500">Sprzedawca:</span> {selected.sellerName}
-                  {selected.sellerTaxId ? ` (NIP ${selected.sellerTaxId})` : ""}
-                </p>
-                <p>
-                  <span className="text-zinc-500">Nabywca:</span> {selected.buyerName}
-                </p>
-                <p>
-                  <span className="text-zinc-500">Kwoty:</span> {selected.netAmount} + {selected.vatAmount} ={" "}
-                  <strong>{selected.grossAmount}</strong> {selected.currency}
-                </p>
-                <p>{workflowBadge(selected.workflowStatus)}</p>
-                {selected.duplicateMatchSummary ? (
-                  <div className="rounded border border-amber-200 bg-amber-50 px-2 py-1.5 text-xs text-amber-900 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-100">
-                    {selected.duplicateMatchSummary}
-                  </div>
-                ) : null}
-                {selected.workflowStatus === "IMPORTED" && selected.importedAsCostInvoiceId ? (
-                  <p>
-                    <Link
-                      href={`/cost-invoices?editCost=${encodeURIComponent(selected.importedAsCostInvoiceId)}`}
-                      className="text-blue-600 underline dark:text-blue-400"
-                    >
-                      Otwórz fakturę kosztową
-                    </Link>
-                  </p>
-                ) : null}
-                {selected.workflowStatus === "IMPORTED" && selected.importedAsRevenueInvoiceId ? (
-                  <p>
-                    <Link
-                      href={incomeInvoiceListEditHref(selected.importedAsRevenueInvoiceId)}
-                      className="text-blue-600 underline dark:text-blue-400"
-                    >
-                      Otwórz fakturę przychodową
-                    </Link>
-                  </p>
-                ) : null}
-                {selected.duplicateOfCostInvoiceId ? (
-                  <p>
-                    <Link href="/cost-invoices" className="text-blue-600 underline dark:text-blue-400">
-                      Podejrzany duplikat kosztu (ID: {selected.duplicateOfCostInvoiceId.slice(0, 8)}…)
-                    </Link>
-                  </p>
-                ) : null}
-
-                <div className="flex flex-col gap-2 border-t border-zinc-200 pt-3 dark:border-zinc-700">
-                  {canImportCost ? (
-                    <Button
-                      type="button"
-                      disabled={actingId === selected.id}
-                      onClick={() => void runAction(selected.id, "import-cost")}
-                    >
-                      Importuj jako koszt
-                    </Button>
-                  ) : null}
-
-                  {importBlockedReason ? (
-                    <p className="text-xs text-zinc-500">{importBlockedReason}</p>
-                  ) : null}
-
-                  {canImportRevenue ? (
-                    <Button
-                      type="button"
-                      disabled={actingId === selected.id}
-                      onClick={() => void runAction(selected.id, "import-revenue")}
-                    >
-                      Importuj jako przychód
-                    </Button>
-                  ) : null}
-
-                  {ws === "PROBABLE_DUPLICATE" && dir === "PURCHASE" ? (
-                    <Button type="button" variant="secondary" disabled>
-                      Duplikat — import zablokowany
-                    </Button>
-                  ) : null}
-
-                  {ws === "PROBABLE_DUPLICATE" && dir === "SALE" ? (
-                    <Button type="button" variant="secondary" disabled>
-                      Oznaczony jako duplikat — import zablokowany
-                    </Button>
-                  ) : null}
-
-                  {ws !== "IMPORTED" && ws !== "REJECTED" ? (
-                    <Button
-                      type="button"
-                      variant="secondary"
-                      disabled={actingId === selected.id}
-                      onClick={() => void runAction(selected.id, "mark-duplicate")}
-                    >
-                      Oznacz jako duplikat
-                    </Button>
-                  ) : null}
-
-                  {ws !== "IMPORTED" && ws !== "REJECTED" ? (
-                    <Button
-                      type="button"
-                      variant="secondary"
-                      disabled={actingId === selected.id}
-                      onClick={() => void runAction(selected.id, "reject")}
-                    >
-                      Odrzuć
-                    </Button>
-                  ) : null}
-
-                  {ws === "REJECTED" || ws === "PROBABLE_DUPLICATE" ? (
-                    <Button
-                      type="button"
-                      variant="secondary"
-                      disabled={actingId === selected.id}
-                      onClick={() => void runAction(selected.id, "restore")}
-                    >
-                      Przywróć do nowych
-                    </Button>
-                  ) : null}
-                </div>
-              </div>
+              <p className="text-sm text-zinc-500">Nie udało się wczytać podglądu faktury.</p>
             )}
           </aside>
         </div>

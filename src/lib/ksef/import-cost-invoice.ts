@@ -5,6 +5,9 @@ import { syncCostInvoiceStatus } from "@/lib/invoice-status-sync";
 import { inferVatRateFromAmounts } from "@/lib/vat-rate";
 import { findProbableCostDuplicate } from "./duplicate-match";
 import { ksefDocumentToPublicRow } from "./document-public-row";
+import { ksefImportNotes } from "./ksef-import-marker";
+
+const ALREADY_IN_SYSTEM_MSG = "Ta faktura prawdopodobnie już istnieje w systemie";
 
 export async function importKsefDocumentAsCost(documentId: string) {
   const doc = await prisma.ksefDocument.findUnique({ where: { id: documentId } });
@@ -23,9 +26,7 @@ export async function importKsefDocumentAsCost(documentId: string) {
   }
 
   if (doc.workflowStatus === "PROBABLE_DUPLICATE") {
-    throw new Error(
-      "Prawdopodobny duplikat — oznacz jako duplikat lub usuń dopasowanie przed importem.",
-    );
+    throw new Error("Dokument oznaczony jako już w systemie — przywróć do nowych przed importem.");
   }
 
   const probable = await findProbableCostDuplicate({
@@ -40,10 +41,12 @@ export async function importKsefDocumentAsCost(documentId: string) {
       data: {
         workflowStatus: "PROBABLE_DUPLICATE",
         duplicateOfCostInvoiceId: probable.id,
+        duplicateOfIncomeInvoiceId: null,
         duplicateMatchSummary: probable.summary,
+        processedAt: new Date(),
       },
     });
-    throw new Error(`Prawdopodobny duplikat: ${probable.summary}`);
+    throw new Error(`${ALREADY_IN_SYSTEM_MSG}: ${probable.summary}`);
   }
 
   const net = decToNumber(doc.netAmount);
@@ -70,7 +73,7 @@ export async function importKsefDocumentAsCost(documentId: string) {
         status: "DO_ZAPLATY",
         paid: false,
         paymentSource: "MAIN",
-        notes: `Import KSeF: ${doc.ksefId}`,
+        notes: ksefImportNotes(doc.ksefId),
         projectId: null,
         projectName: null,
         expenseCategoryId: null,

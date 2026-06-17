@@ -22,6 +22,7 @@ export function ksefDocumentToPublicRow(doc: KsefDocument) {
     grossAmount: doc.grossAmount.toString(),
     currency: doc.currency,
     duplicateOfCostInvoiceId: doc.duplicateOfCostInvoiceId,
+    duplicateOfIncomeInvoiceId: doc.duplicateOfIncomeInvoiceId,
     duplicateMatchSummary: doc.duplicateMatchSummary,
     importedAsCostInvoiceId: doc.importedAsCostInvoiceId,
     importedAsRevenueInvoiceId: doc.importedAsRevenueInvoiceId,

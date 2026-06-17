@@ -3,6 +3,10 @@ import { decToNumber } from "@/lib/cashflow/money";
 import { ensureClosingIncomePaymentIfFullySettled } from "@/lib/cashflow/invoice-auto-settlement";
 import { syncIncomeInvoiceStatus } from "@/lib/invoice-status-sync";
 import { inferVatRateFromAmounts } from "@/lib/vat-rate";
+import { findProbableIncomeDuplicate } from "./duplicate-match";
+import { ksefImportNotes } from "./ksef-import-marker";
+
+const ALREADY_IN_SYSTEM_MSG = "Ta faktura prawdopodobnie już istnieje w systemie";
 
 export async function importKsefDocumentAsRevenue(documentId: string) {
   const doc = await prisma.ksefDocument.findUnique({ where: { id: documentId } });
@@ -17,13 +21,34 @@ export async function importKsefDocumentAsRevenue(documentId: string) {
     throw new Error("Odrzucony dokument nie może być importowany.");
   }
   if (doc.workflowStatus === "PROBABLE_DUPLICATE") {
-    throw new Error("Oznaczony jako duplikat — przywróć do nowych przed importem.");
+    throw new Error("Dokument oznaczony jako już w systemie — przywróć do nowych przed importem.");
   }
   if (!doc.invoiceNumber.trim()) {
     throw new Error("Brak numeru faktury w dokumencie KSeF.");
   }
   if (!doc.buyerName.trim()) {
     throw new Error("Brak nabywcy (kontrahenta) w dokumencie KSeF.");
+  }
+
+  const probable = await findProbableIncomeDuplicate({
+    invoiceNumber: doc.invoiceNumber,
+    buyerTaxId: doc.buyerTaxId,
+    buyerName: doc.buyerName,
+    grossAmount: doc.grossAmount,
+    issueDate: doc.issueDate,
+  });
+  if (probable) {
+    await prisma.ksefDocument.update({
+      where: { id: doc.id },
+      data: {
+        workflowStatus: "PROBABLE_DUPLICATE",
+        duplicateOfIncomeInvoiceId: probable.id,
+        duplicateOfCostInvoiceId: null,
+        duplicateMatchSummary: probable.summary,
+        processedAt: new Date(),
+      },
+    });
+    throw new Error(`${ALREADY_IN_SYSTEM_MSG}: ${probable.summary}`);
   }
 
   const net = decToNumber(doc.netAmount);
@@ -51,7 +76,7 @@ export async function importKsefDocumentAsRevenue(documentId: string) {
         status: "WYSTAWIONA",
         vatDestination: "MAIN",
         confirmedIncome: false,
-        notes: `Import KSeF: ${doc.ksefId}`,
+        notes: ksefImportNotes(doc.ksefId),
         projectId: null,
         projectName: null,
         incomeCategoryId: null,

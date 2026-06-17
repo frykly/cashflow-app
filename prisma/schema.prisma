@@ -566,6 +566,7 @@ model KsefDocument {
   currency                   String           @default("PLN")
   rawPayload                 String
   duplicateOfCostInvoiceId   String?
+  duplicateOfIncomeInvoiceId String?
   duplicateMatchSummary      String?
   importedAsCostInvoiceId    String?
   importedAsRevenueInvoiceId String?
