@@ -1,6 +1,16 @@
-import { getKsefConfig, shouldUseKsefHttpApi } from "./config";
+import { clearKsefAccessCache, ensureValidAccessToken } from "./auth";
+import {
+  getKsefConfig,
+  shouldUseKsefHttpApi,
+  type KsefQuerySubjectType,
+} from "./config";
 import { classifyDocumentDirection } from "./document-direction";
 import type { KsefDateRange, KsefInboundDocument } from "./types";
+
+export type KsefSubjectFetchStats = {
+  subjectType: KsefQuerySubjectType;
+  count: number;
+};
 
 /** Wynik pobrania — pozwala zbudować czytelny komunikat sesji bez zgadywania po stronie sync. */
 export type FetchKsefDocumentsOutcome = {
@@ -9,6 +19,8 @@ export type FetchKsefDocumentsOutcome = {
   effectiveSource: "MOCK" | "KSEF";
   /** Krótki opis (stub, API, fallback). */
   detail: string;
+  /** Liczba dokumentów per subjectType (przed deduplikacją między zapytaniami). */
+  subjectStats?: KsefSubjectFetchStats[];
 };
 
 function invoiceNumberFromPayload(raw: Record<string, unknown>, fallback: string): string {
@@ -197,7 +209,7 @@ function mapMetadataToInbound(m: InvoiceMetadataJson): KsefInboundDocument {
   };
 }
 
-function buildQueryBody(range: KsefDateRange, subjectType: ReturnType<typeof getKsefConfig>["querySubjectType"]) {
+function buildQueryBody(range: KsefDateRange, subjectType: KsefQuerySubjectType) {
   return {
     subjectType,
     dateRange: {
@@ -226,18 +238,40 @@ async function readKsefErrorMessage(res: Response): Promise<string> {
   return `${res.status} ${res.statusText}${head ? ` — ${head}` : ""}`;
 }
 
-async function fetchKsefDocumentsFromApiForRange(range: KsefDateRange): Promise<KsefInboundDocument[]> {
+async function postMetadataQuery(
+  url: URL,
+  body: ReturnType<typeof buildQueryBody>,
+  accessToken: string,
+): Promise<Response> {
+  return fetch(url, {
+    method: "POST",
+    headers: {
+      Accept: "application/json",
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${accessToken}`,
+      "X-Error-Format": "problem-details",
+    },
+    body: JSON.stringify(body),
+  });
+}
+
+async function fetchKsefDocumentsFromApiForRange(
+  range: KsefDateRange,
+  subjectType: KsefQuerySubjectType,
+): Promise<KsefInboundDocument[]> {
   const cfg = getKsefConfig();
-  if (!cfg.accessToken) {
-    throw new Error("KSeF API: brak KSEF_ACCESS_TOKEN.");
+  if (!cfg.ksefToken) {
+    throw new Error("KSeF API: brak KSEF_KSEF_TOKEN (token z Aplikacji Podatnika).");
   }
 
   const base = cfg.apiBaseUrl.replace(/\/+$/, "");
-  const body = buildQueryBody(range, cfg.querySubjectType);
+  const body = buildQueryBody(range, subjectType);
   const collected: KsefInboundDocument[] = [];
 
   let pageOffset = 0;
   const pageSize = 250;
+  let accessToken = await ensureValidAccessToken();
+  let retriedAfter401 = false;
 
   for (;;) {
     const url = new URL(`${base}/invoices/query/metadata`);
@@ -245,16 +279,14 @@ async function fetchKsefDocumentsFromApiForRange(range: KsefDateRange): Promise<
     url.searchParams.set("pageSize", String(pageSize));
     url.searchParams.set("sortOrder", "Asc");
 
-    const res = await fetch(url, {
-      method: "POST",
-      headers: {
-        Accept: "application/json",
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${cfg.accessToken}`,
-        "X-Error-Format": "problem-details",
-      },
-      body: JSON.stringify(body),
-    });
+    let res = await postMetadataQuery(url, body, accessToken);
+
+    if (res.status === 401 && !retriedAfter401) {
+      clearKsefAccessCache();
+      accessToken = await ensureValidAccessToken();
+      retriedAfter401 = true;
+      res = await postMetadataQuery(url, body, accessToken);
+    }
 
     if (!res.ok) {
       throw new Error(`KSeF API: ${await readKsefErrorMessage(res)}`);
@@ -282,18 +314,34 @@ async function fetchKsefDocumentsFromApiForRange(range: KsefDateRange): Promise<
   return collected;
 }
 
+function formatSubjectStatsMessage(stats: KsefSubjectFetchStats[], deduplicatedTotal: number): string {
+  const parts = stats.map((s) => `${s.subjectType}: ${s.count}`).join(", ");
+  return `${parts}, po deduplikacji: ${deduplicatedTotal}`;
+}
+
 /**
- * Pobranie metadanych dla wielu chunków dat (≤90 dni każdy).
+ * Pobranie metadanych dla wielu chunków dat (≤90 dni każdy) i wielu subjectType.
  */
-export async function fetchKsefDocumentsFromApi(chunks: KsefDateRange[]): Promise<KsefInboundDocument[]> {
+export async function fetchKsefDocumentsFromApi(
+  chunks: KsefDateRange[],
+  subjectTypes: KsefQuerySubjectType[],
+): Promise<{ documents: KsefInboundDocument[]; subjectStats: KsefSubjectFetchStats[] }> {
   const byKsefId = new Map<string, KsefInboundDocument>();
-  for (const chunk of chunks) {
-    const batch = await fetchKsefDocumentsFromApiForRange(chunk);
-    for (const doc of batch) {
-      byKsefId.set(doc.ksefId, doc);
+  const subjectStats: KsefSubjectFetchStats[] = [];
+
+  for (const subjectType of subjectTypes) {
+    let count = 0;
+    for (const chunk of chunks) {
+      const batch = await fetchKsefDocumentsFromApiForRange(chunk, subjectType);
+      count += batch.length;
+      for (const doc of batch) {
+        byKsefId.set(doc.ksefId, doc);
+      }
     }
+    subjectStats.push({ subjectType, count });
   }
-  return [...byKsefId.values()];
+
+  return { documents: [...byKsefId.values()], subjectStats };
 }
 
 /**
@@ -327,15 +375,21 @@ export async function fetchKsefDocuments(chunks: KsefDateRange[]): Promise<Fetch
     return {
       documents: unique,
       effectiveSource: "MOCK",
-      detail: `stub — brak tokenu; zakres: ${rangeLabel}`,
+      detail: `stub — brak KSEF_KSEF_TOKEN lub NIP; zakres: ${rangeLabel}`,
     };
   }
 
-  const documents = await fetchKsefDocumentsFromApi(chunks);
+  const { documents, subjectStats } = await fetchKsefDocumentsFromApi(
+    chunks,
+    cfg.querySubjectTypes,
+  );
+  const subjectsLabel = cfg.querySubjectTypes.join("+");
+  const statsLabel = formatSubjectStatsMessage(subjectStats, documents.length);
   return {
     documents,
     effectiveSource: "KSEF",
-    detail: `API ${cfg.apiBaseUrl} (${cfg.querySubjectType}), zakres: ${rangeLabel}`,
+    detail: `API ${cfg.apiBaseUrl} (${subjectsLabel}), zakres: ${rangeLabel}; ${statsLabel}`,
+    subjectStats,
   };
 }
 

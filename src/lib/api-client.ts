@@ -17,10 +17,40 @@ export function readApiErrorBody(data: unknown): string {
 }
 
 export async function readApiError(res: Response): Promise<string> {
-  try {
-    const j = await res.json();
-    return readApiErrorBody(j);
-  } catch {
-    return res.statusText || `HTTP ${res.status}`;
+  const parsed = await readApiResponse(res);
+  return parsed.errorText || res.statusText || `HTTP ${res.status}`;
+}
+
+/** Bezpieczne odczytanie body — nie rzuca przy HTML lub pustej odpowiedzi. */
+export async function readApiResponse(res: Response): Promise<{
+  ok: boolean;
+  data: unknown;
+  errorText: string;
+}> {
+  const text = await res.text();
+  if (!text) {
+    if (!res.ok) {
+      return { ok: false, data: null, errorText: res.statusText || `HTTP ${res.status}` };
+    }
+    return { ok: true, data: null, errorText: "" };
   }
+
+  let data: unknown;
+  try {
+    data = JSON.parse(text);
+  } catch {
+    const snippet = text.replace(/\s+/g, " ").slice(0, 200);
+    return {
+      ok: false,
+      data: null,
+      errorText: res.ok
+        ? "Nieprawidłowa odpowiedź serwera (nie-JSON)."
+        : snippet || res.statusText || `HTTP ${res.status}`,
+    };
+  }
+
+  if (!res.ok) {
+    return { ok: false, data, errorText: readApiErrorBody(data) };
+  }
+  return { ok: true, data, errorText: "" };
 }

@@ -1,10 +1,10 @@
-import type { KsefDocument } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { decToNumber } from "@/lib/cashflow/money";
 import { ensureClosingCostPaymentIfFullySettled } from "@/lib/cashflow/invoice-auto-settlement";
 import { syncCostInvoiceStatus } from "@/lib/invoice-status-sync";
 import { inferVatRateFromAmounts } from "@/lib/vat-rate";
 import { findProbableCostDuplicate } from "./duplicate-match";
+import { ksefDocumentToPublicRow } from "./document-public-row";
 
 export async function importKsefDocumentAsCost(documentId: string) {
   const doc = await prisma.ksefDocument.findUnique({ where: { id: documentId } });
@@ -103,19 +103,4 @@ export async function importKsefDocumentAsCost(documentId: string) {
   return { costInvoice: fresh ?? cost, ksefDocument: updatedDoc };
 }
 
-export function ksefDocumentToPublicRow(doc: KsefDocument) {
-  return {
-    ...doc,
-    netAmount: doc.netAmount.toString(),
-    vatAmount: doc.vatAmount.toString(),
-    grossAmount: doc.grossAmount.toString(),
-    issueDate: doc.issueDate.toISOString(),
-    saleDate: doc.saleDate?.toISOString() ?? null,
-    paymentDueDate: doc.paymentDueDate?.toISOString() ?? null,
-    rejectedAt: doc.rejectedAt?.toISOString() ?? null,
-    importedAt: doc.importedAt?.toISOString() ?? null,
-    processedAt: doc.processedAt?.toISOString() ?? null,
-    createdAt: doc.createdAt.toISOString(),
-    updatedAt: doc.updatedAt.toISOString(),
-  };
-}
+export { ksefDocumentToPublicRow } from "./document-public-row";

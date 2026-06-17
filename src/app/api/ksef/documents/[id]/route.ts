@@ -2,7 +2,7 @@ import { prisma } from "@/lib/db";
 import { jsonData } from "@/lib/api/json-response";
 import { jsonError } from "@/lib/api/errors";
 import { findProbableCostDuplicate } from "@/lib/ksef/duplicate-match";
-import { ksefDocumentToPublicRow } from "@/lib/ksef/import-cost-invoice";
+import { ksefDocumentToPublicRow } from "@/lib/ksef/document-public-row";
 
 export const runtime = "nodejs";
 

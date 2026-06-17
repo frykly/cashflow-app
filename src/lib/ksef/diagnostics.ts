@@ -1,11 +1,19 @@
 import { prisma } from "@/lib/db";
+import { getKsefAuthDiagnostics } from "./auth";
 import { getKsefConfig, shouldUseKsefHttpApi } from "./config";
 
 /** Odpowiedź GET /api/ksef/status — diagnostyka + kontekst sync. */
 export type KsefStatusResponse = {
   configuredDataSource: "STUB" | "API";
   ksefEnabled: boolean;
+  apiBaseUrl: string;
+  /** @deprecated Użyj ksefTokenConfigured */
   tokenConfigured: boolean;
+  ksefTokenConfigured: boolean;
+  ksefTokenLength: number | null;
+  deprecatedAccessTokenEnvSet: boolean;
+  accessSessionActive: boolean;
+  accessExpiresAt: string | null;
   companyTaxIdConfigured: boolean;
   willUseRealApiNextSync: boolean;
   initialSyncFrom: string | null;
@@ -56,10 +64,18 @@ export async function getKsefStatusResponse(): Promise<KsefStatusResponse> {
   const needsInitialSyncFrom =
     !settings?.ksefInitialSyncFrom && !lastSuccess?.syncRangeTo;
 
+  const authDiag = getKsefAuthDiagnostics();
+
   return {
     configuredDataSource,
     ksefEnabled: cfg.enabled,
-    tokenConfigured: Boolean(cfg.accessToken),
+    apiBaseUrl: cfg.apiBaseUrl,
+    tokenConfigured: authDiag.ksefTokenConfigured,
+    ksefTokenConfigured: authDiag.ksefTokenConfigured,
+    ksefTokenLength: authDiag.ksefTokenLength,
+    deprecatedAccessTokenEnvSet: authDiag.deprecatedAccessTokenEnvSet,
+    accessSessionActive: authDiag.accessSessionActive,
+    accessExpiresAt: authDiag.accessExpiresAt,
     companyTaxIdConfigured: Boolean(cfg.companyTaxId),
     willUseRealApiNextSync: shouldUseKsefHttpApi(cfg),
     initialSyncFrom: settings?.ksefInitialSyncFrom?.toISOString().slice(0, 10) ?? null,

@@ -1,7 +1,7 @@
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { jsonData } from "@/lib/api/json-response";
-import { ksefDocumentToPublicRow } from "@/lib/ksef/import-cost-invoice";
+import { ksefDocumentToPublicRow } from "@/lib/ksef/document-public-row";
 
 export const runtime = "nodejs";
 

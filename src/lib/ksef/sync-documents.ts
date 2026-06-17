@@ -2,14 +2,17 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { getKsefConfig } from "./config";
 import { applyDuplicateScanToDocument } from "./duplicate-match";
+import { reclassifyExistingKsefDocuments } from "./reclassify-documents";
 import { fetchKsefDocuments } from "./ksef-api-client";
-import { resolveSyncRange } from "./sync-range";
+import { resolveSyncRange, type SyncRangeRequest } from "./sync-range";
 import type { KsefInboundDocument } from "./types";
 
 export type KsefSyncResult = {
   sessionId: string;
   status: "SUCCEEDED" | "FAILED";
   upserted: number;
+  reclassified: number;
+  effectiveSource: "MOCK" | "KSEF";
   syncRangeFrom: string;
   syncRangeTo: string;
   message?: string;
@@ -64,15 +67,15 @@ function mapMetadataUpdate(d: KsefInboundDocument, sessionId: string) {
 }
 
 /**
- * Ręczny sync: zakres dat → pobranie (API lub stub) → upsert po ksefId → skan duplikatów.
+ * Ręczny sync: zakres dat → pobranie → upsert → reklasyfikacja wszystkich otwartych dokumentów.
  */
-export async function runKsefSync(syncFromOverride?: string | null): Promise<KsefSyncResult> {
+export async function runKsefSync(req: SyncRangeRequest = {}): Promise<KsefSyncResult> {
   const cfg = getKsefConfig();
   if (!cfg.enabled) {
     throw new Error("KSeF sync wyłączony (KSEF_ENABLED=false).");
   }
 
-  const range = await resolveSyncRange(syncFromOverride);
+  const range = await resolveSyncRange(req);
 
   const session = await prisma.ksefSyncSession.create({
     data: {
@@ -121,7 +124,13 @@ export async function runKsefSync(syncFromOverride?: string | null): Promise<Kse
       await applyDuplicateScanToDocument(id);
     }
 
-    const message = `Zsynchronizowano ${docs.length} dokument(ów). Źródło: ${outcome.effectiveSource}. ${outcome.detail}`;
+    const reclassified = await reclassifyExistingKsefDocuments();
+
+    const subjectSummary =
+      outcome.subjectStats && outcome.subjectStats.length > 0
+        ? `${outcome.subjectStats.map((s) => `${s.subjectType}: ${s.count}`).join(", ")}, po deduplikacji: ${docs.length}. `
+        : "";
+    const message = `Zsynchronizowano ${docs.length} dokument(ów). ${subjectSummary}Źródło: ${outcome.effectiveSource}. ${outcome.detail}`;
     await prisma.ksefSyncSession.update({
       where: { id: session.id },
       data: {
@@ -136,6 +145,8 @@ export async function runKsefSync(syncFromOverride?: string | null): Promise<Kse
       sessionId: session.id,
       status: "SUCCEEDED",
       upserted: docs.length,
+      reclassified,
+      effectiveSource: outcome.effectiveSource,
       syncRangeFrom: range.from.toISOString(),
       syncRangeTo: range.to.toISOString(),
       message,

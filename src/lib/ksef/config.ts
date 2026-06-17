@@ -14,16 +14,22 @@ export type KsefConfig = {
    */
   apiBaseUrl: string;
   /**
-   * JWT `accessToken` z nagłówka `Authorization: Bearer` (uzyskany poza aplikacją w Stage 1B).
+   * Token KSeF z Aplikacji Podatnika / MCU — wejście do flow `/auth/ksef-token`.
+   * Nie używać bezpośrednio jako Bearer przy API metadanych.
    */
-  accessToken: string | null;
+  ksefToken: string | null;
   /**
    * `stub` — zawsze stub (Stage 1A).
    * `api` — próba HTTP; gdy brak tokenu lub błąd konfiguracji, klient może przełączyć na stub (patrz `ksef-api-client`).
    */
   dataSource: "stub" | "api";
-  /** Typ podmiotu w zapytaniu metadanych (np. Subject2 = nabywca — faktury zakupu). */
+  /**
+   * Legacy — pierwszy typ z {@link querySubjectTypes}; przy sync API domyślnie oba kierunki.
+   * @deprecated Preferuj querySubjectTypes
+   */
   querySubjectType: KsefQuerySubjectType;
+  /** Typy podmiotu w zapytaniach metadanych (domyślnie Subject1 + Subject2). */
+  querySubjectTypes: KsefQuerySubjectType[];
   /** Zakres dat wstecz (legacy env; incremental sync używa sync-range). */
   lookbackDays: number;
   /** NIP własnej firmy — klasyfikacja zakup/sprzedaż. */
@@ -38,17 +44,37 @@ function parseDataSource(raw: string | undefined): "stub" | "api" {
   return "stub";
 }
 
-function parseSubjectType(raw: string | undefined): KsefQuerySubjectType {
-  const v = raw?.trim();
-  if (
-    v === "Subject1" ||
-    v === "Subject2" ||
-    v === "Subject3" ||
-    v === "SubjectAuthorized"
-  ) {
-    return v;
+const VALID_SUBJECT_TYPES = new Set<KsefQuerySubjectType>([
+  "Subject1",
+  "Subject2",
+  "Subject3",
+  "SubjectAuthorized",
+]);
+
+const DEFAULT_QUERY_SUBJECT_TYPES: KsefQuerySubjectType[] = ["Subject2", "Subject1"];
+
+function isSubjectType(v: string): v is KsefQuerySubjectType {
+  return VALID_SUBJECT_TYPES.has(v as KsefQuerySubjectType);
+}
+
+/** Lista typów podmiotu do zapytań metadata — domyślnie kosztowe + przychodowe. */
+export function resolveQuerySubjectTypes(): KsefQuerySubjectType[] {
+  const listRaw = process.env.KSEF_QUERY_SUBJECT_TYPES?.trim();
+  if (listRaw) {
+    const parsed = listRaw
+      .split(",")
+      .map((s) => s.trim())
+      .filter(isSubjectType);
+    if (parsed.length > 0) return [...new Set(parsed)];
   }
-  return "Subject2";
+
+  const singleRaw = process.env.KSEF_QUERY_SUBJECT_TYPE?.trim();
+  if (singleRaw) {
+    if (singleRaw.toUpperCase() === "BOTH") return [...DEFAULT_QUERY_SUBJECT_TYPES];
+    if (isSubjectType(singleRaw)) return [singleRaw];
+  }
+
+  return [...DEFAULT_QUERY_SUBJECT_TYPES];
 }
 
 function parseLookbackDays(raw: string | undefined): number {
@@ -75,9 +101,13 @@ export function getKsefConfig(): KsefConfig {
     apiBaseUrl: normalizeKsefApiBaseUrl(
       process.env.KSEF_API_BASE_URL?.trim() || "",
     ),
-    accessToken: process.env.KSEF_ACCESS_TOKEN?.trim() || null,
+    ksefToken:
+      process.env.KSEF_KSEF_TOKEN?.trim() ||
+      process.env.KSEF_ACCESS_TOKEN?.trim() ||
+      null,
     dataSource: parseDataSource(process.env.KSEF_DATA_SOURCE),
-    querySubjectType: parseSubjectType(process.env.KSEF_QUERY_SUBJECT_TYPE),
+    querySubjectTypes: resolveQuerySubjectTypes(),
+    querySubjectType: resolveQuerySubjectTypes()[0] ?? "Subject2",
     lookbackDays: parseLookbackDays(process.env.KSEF_SYNC_LOOKBACK_DAYS),
     companyTaxId: (process.env.KSEF_COMPANY_TAX_ID ?? "").replace(/\D/g, ""),
   };
@@ -87,5 +117,10 @@ export function getKsefConfig(): KsefConfig {
  * Czy próbować realnego API (wymaga tokenu i włączonego źródła `api`).
  */
 export function shouldUseKsefHttpApi(cfg: KsefConfig): boolean {
-  return cfg.enabled && cfg.dataSource === "api" && Boolean(cfg.accessToken);
+  return (
+    cfg.enabled &&
+    cfg.dataSource === "api" &&
+    Boolean(cfg.ksefToken) &&
+    Boolean(cfg.companyTaxId)
+  );
 }

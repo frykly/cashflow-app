@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { Alert, Badge, Button, Field, Input, Select, Spinner } from "@/components/ui";
-import { readApiErrorBody } from "@/lib/api-client";
+import { readApiResponse } from "@/lib/api-client";
 import type { KsefStatusResponse } from "@/lib/ksef/diagnostics";
 import type { KsefDocumentDirection, KsefWorkflowStatus } from "@/lib/ksef/types";
 
@@ -55,6 +55,32 @@ function directionLabel(dir: KsefDocumentDirection) {
   return "Nieznane";
 }
 
+type SyncResponse = {
+  status?: string;
+  upserted?: number;
+  reclassified?: number;
+  effectiveSource?: "MOCK" | "KSEF";
+  syncRangeFrom?: string;
+  syncRangeTo?: string;
+};
+
+function formatSyncResultMessage(j: SyncResponse, isStub: boolean): string {
+  const from = j.syncRangeFrom?.slice(0, 10) ?? "?";
+  const to = j.syncRangeTo?.slice(0, 10) ?? "?";
+  const upserted = typeof j.upserted === "number" ? j.upserted : 0;
+  const reclassified = typeof j.reclassified === "number" ? j.reclassified : 0;
+  const source = j.effectiveSource ?? "?";
+  let text = `Sync ${String(j.status)}: ${upserted} dokument(ów) dla zakresu ${from}…${to} (źródło: ${source}).`;
+  if (reclassified > 0) {
+    text += ` Przeklasyfikowano: ${reclassified}.`;
+  }
+  if (upserted === 0 && isStub) {
+    text +=
+      " 0 dokumentów dla tego zakresu. W trybie STUB dokumenty testowe są z lutego–kwietnia 2026 i mogą nie istnieć w tym zakresie.";
+  }
+  return text;
+}
+
 export function KsefInboxClient() {
   const [rows, setRows] = useState<Row[]>([]);
   const [status, setStatus] = useState<KsefStatusResponse | null>(null);
@@ -66,8 +92,11 @@ export function KsefInboxClient() {
   const [directionTab, setDirectionTab] = useState<DirectionTab>("PURCHASE");
   const [workflowFilter, setWorkflowFilter] = useState<WorkflowFilter>("");
   const [syncFrom, setSyncFrom] = useState("");
+  const [manualRangeFrom, setManualRangeFrom] = useState("2026-01-01");
+  const [manualRangeTo, setManualRangeTo] = useState("");
 
   const needsInitialSyncFrom = status?.needsInitialSyncFrom ?? false;
+  const isStubMode = status?.configuredDataSource === "STUB";
 
   const load = useCallback(async () => {
     const params = new URLSearchParams({ direction: directionTab });
@@ -77,20 +106,21 @@ export function KsefInboxClient() {
       fetch(`/api/ksef/documents?${params}`),
       fetch("/api/ksef/status"),
     ]);
-    const [j, st] = await Promise.all([docRes.json(), stRes.json()]);
-    if (stRes.ok && st && typeof st === "object") {
-      const stTyped = st as KsefStatusResponse;
+    const docParsed = await readApiResponse(docRes);
+    const stParsed = await readApiResponse(stRes);
+    if (stParsed.ok && stParsed.data && typeof stParsed.data === "object") {
+      const stTyped = stParsed.data as KsefStatusResponse;
       setStatus(stTyped);
       setSyncFrom((prev) => prev || stTyped.initialSyncFrom || "");
     } else {
       setStatus(null);
     }
-    if (!docRes.ok) {
+    if (!docParsed.ok) {
       setRows([]);
-      setMsg({ type: "err", text: readApiErrorBody(j) });
+      setMsg({ type: "err", text: docParsed.errorText });
       return;
     }
-    const list = Array.isArray(j) ? (j as Row[]) : [];
+    const list = Array.isArray(docParsed.data) ? (docParsed.data as Row[]) : [];
     setRows(list);
     setSelectedId((prev) => (prev && list.some((r) => r.id === prev) ? prev : null));
   }, [directionTab, workflowFilter]);
@@ -100,32 +130,24 @@ export function KsefInboxClient() {
     load().finally(() => setLoading(false));
   }, [load]);
 
-  async function sync() {
-    if (needsInitialSyncFrom && !syncFrom.trim()) {
-      setMsg({
-        type: "err",
-        text: "Ustaw datę „Pobieraj od” przed pierwszą synchronizacją.",
-      });
-      return;
-    }
-
+  async function postSync(body: Record<string, unknown>) {
     setMsg(null);
     setSyncing(true);
     try {
-      const body = needsInitialSyncFrom ? { syncFrom: syncFrom.trim() } : {};
       const res = await fetch("/api/ksef/sync", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
-      const j = await res.json();
-      if (!res.ok) {
-        setMsg({ type: "err", text: readApiErrorBody(j) });
+      const parsed = await readApiResponse(res);
+      const j = parsed.data as SyncResponse & { error?: string };
+      if (!parsed.ok) {
+        setMsg({ type: "err", text: parsed.errorText });
         return;
       }
       setMsg({
         type: "ok",
-        text: `Sync: ${String(j.status)} — ${typeof j.upserted === "number" ? j.upserted : "?"} dokument(ów).`,
+        text: formatSyncResultMessage(j, isStubMode),
       });
       await load();
     } catch {
@@ -135,20 +157,48 @@ export function KsefInboxClient() {
     }
   }
 
+  async function sync() {
+    if (needsInitialSyncFrom && !syncFrom.trim()) {
+      setMsg({
+        type: "err",
+        text: "Ustaw datę „Pobieraj od” przed pierwszą synchronizacją.",
+      });
+      return;
+    }
+    const body = needsInitialSyncFrom ? { syncFrom: syncFrom.trim() } : {};
+    await postSync(body);
+  }
+
+  async function syncManualRange() {
+    if (!manualRangeFrom.trim()) {
+      setMsg({ type: "err", text: "Ustaw datę „Od” w ręcznym zakresie." });
+      return;
+    }
+    await postSync({
+      syncFrom: manualRangeFrom.trim(),
+      ...(manualRangeTo.trim() ? { syncTo: manualRangeTo.trim() } : {}),
+      forceRange: true,
+    });
+  }
+
   async function runAction(id: string, action: "import-cost" | "mark-duplicate" | "reject" | "restore") {
     setActingId(id);
     setMsg(null);
     try {
       const res = await fetch(`/api/ksef/documents/${id}/${action}`, { method: "POST" });
-      const j = await res.json();
-      if (!res.ok) {
-        setMsg({ type: "err", text: readApiErrorBody(j) });
+      const parsed = await readApiResponse(res);
+      if (!parsed.ok) {
+        setMsg({ type: "err", text: parsed.errorText });
         return;
       }
-      setMsg({ type: "ok", text: `Akcja wykonana.` });
+      setMsg({ type: "ok", text: "Akcja wykonana." });
       await load();
-    } catch {
-      setMsg({ type: "err", text: "Błąd sieci przy akcji na dokumencie." });
+    } catch (e) {
+      const detail = e instanceof Error ? e.message : "";
+      setMsg({
+        type: "err",
+        text: detail ? `Błąd akcji na dokumencie: ${detail}` : "Błąd akcji na dokumencie.",
+      });
     } finally {
       setActingId(null);
     }
@@ -200,6 +250,49 @@ export function KsefInboxClient() {
         </Alert>
       ) : null}
 
+      {isStubMode ? (
+        <Alert variant="info">
+          Tryb STUB — pobierane są tylko testowe dokumenty, nie realne faktury z KSeF. Dokumenty
+          testowe są z lutego–kwietnia 2026. Dla danych testowych STUB użyj{" "}
+          <span className="font-mono">KSEF_COMPANY_TAX_ID=9512120077</span>, żeby zobaczyć podział
+          kosztowe/przychodowe.
+        </Alert>
+      ) : null}
+
+      {!needsInitialSyncFrom ? (
+        <div className="rounded border border-zinc-200 bg-zinc-50/80 p-3 dark:border-zinc-700 dark:bg-zinc-900/40">
+          <p className="mb-2 text-sm font-medium text-zinc-800 dark:text-zinc-200">Ręczny zakres</p>
+          <p className="mb-3 text-xs text-zinc-500">
+            Pobierz dokumenty z wybranego okresu (np. testowe stuby z początku 2026). Standardowe
+            „Odśwież KSeF” nadal używa ostatniego syncu − 3 dni.
+          </p>
+          <div className="flex flex-wrap items-end gap-3">
+            <Field label="Od">
+              <Input
+                type="date"
+                value={manualRangeFrom}
+                onChange={(e) => setManualRangeFrom(e.target.value)}
+              />
+            </Field>
+            <Field label="Do (opcjonalnie)">
+              <Input
+                type="date"
+                value={manualRangeTo}
+                onChange={(e) => setManualRangeTo(e.target.value)}
+              />
+            </Field>
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => void syncManualRange()}
+              disabled={syncing || loading || !manualRangeFrom.trim()}
+            >
+              Synchronizuj zakres
+            </Button>
+          </div>
+        </div>
+      ) : null}
+
       {status && !status.companyTaxIdConfigured ? (
         <Alert variant="info">
           Brak KSEF_COMPANY_TAX_ID — dokumenty mogą trafiać do zakładki „Nieznane”. Możesz je
@@ -213,10 +306,30 @@ export function KsefInboxClient() {
           aria-label="Status techniczny KSeF"
         >
           <p className="mb-2 font-medium text-neutral-700 dark:text-neutral-200">Diagnostyka</p>
-          <dl className="grid gap-x-6 gap-y-1 sm:grid-cols-2 lg:grid-cols-4">
+          <dl className="grid gap-x-6 gap-y-1 sm:grid-cols-2 lg:grid-cols-3">
             <div className="flex flex-wrap gap-x-2">
               <dt className="text-neutral-500">Źródło</dt>
               <dd className="font-mono">{status.configuredDataSource}</dd>
+            </div>
+            <div className="flex flex-wrap gap-x-2">
+              <dt className="text-neutral-500">API base URL</dt>
+              <dd className="font-mono text-xs">{status.apiBaseUrl}</dd>
+            </div>
+            <div className="flex flex-wrap gap-x-2">
+              <dt className="text-neutral-500">Token KSeF (env)</dt>
+              <dd className="font-mono">
+                {status.ksefTokenConfigured
+                  ? `tak (${status.ksefTokenLength ?? "?"} znaków)`
+                  : "nie"}
+              </dd>
+            </div>
+            <div className="flex flex-wrap gap-x-2">
+              <dt className="text-neutral-500">Sesja access JWT</dt>
+              <dd className="font-mono">
+                {status.accessSessionActive
+                  ? `aktywna do ${status.accessExpiresAt?.slice(11, 19) ?? "?"}`
+                  : "brak"}
+              </dd>
             </div>
             <div className="flex flex-wrap gap-x-2">
               <dt className="text-neutral-500">NIP firmy (env)</dt>
@@ -235,6 +348,12 @@ export function KsefInboxClient() {
               </dd>
             </div>
           </dl>
+          {status.deprecatedAccessTokenEnvSet ? (
+            <p className="mt-2 text-xs text-amber-700 dark:text-amber-400">
+              Uwaga: KSEF_ACCESS_TOKEN jest przestarzały — użyj KSEF_KSEF_TOKEN (token z Aplikacji
+              Podatnika). Wartość nie jest wysyłana jako Bearer.
+            </p>
+          ) : null}
         </div>
       ) : null}
 
