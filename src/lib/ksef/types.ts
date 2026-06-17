@@ -1,14 +1,19 @@
-/** Źródło rekordu w stagingu (stub vs przyszłe API). */
+/** Źródło rekordu w stagingu (stub vs API). */
 export type KsefDocumentSource = "MOCK" | "KSEF";
 
-/** Kształt dokumentu z warstwy pobrania (stub / później HTTP) przed zapisem Prisma. */
+export type KsefWorkflowStatus = "NEW" | "PROBABLE_DUPLICATE" | "IMPORTED" | "REJECTED";
+
+export type KsefDocumentDirection = "PURCHASE" | "SALE" | "UNKNOWN";
+
+/** Kształt dokumentu z warstwy pobrania przed zapisem Prisma. */
 export type KsefInboundDocument = {
   ksefId: string;
   source: KsefDocumentSource;
-  status: string;
   documentType: string;
+  invoiceNumber: string;
   issueDate: Date;
   saleDate: Date | null;
+  paymentDueDate: Date | null;
   sellerName: string;
   sellerTaxId: string;
   buyerName: string;
@@ -18,4 +23,10 @@ export type KsefInboundDocument = {
   grossAmount: string;
   currency: string;
   rawPayload: string;
+  documentDirection: KsefDocumentDirection;
+};
+
+export type KsefDateRange = {
+  from: Date;
+  to: Date;
 };

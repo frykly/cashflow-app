@@ -24,8 +24,10 @@ export type KsefConfig = {
   dataSource: "stub" | "api";
   /** Typ podmiotu w zapytaniu metadanych (np. Subject2 = nabywca — faktury zakupu). */
   querySubjectType: KsefQuerySubjectType;
-  /** Zakres dat wstecz (API ogranicza okres do ok. 3 miesięcy). */
+  /** Zakres dat wstecz (legacy env; incremental sync używa sync-range). */
   lookbackDays: number;
+  /** NIP własnej firmy — klasyfikacja zakup/sprzedaż. */
+  companyTaxId: string;
 };
 
 const DEFAULT_API_BASE = "https://api-test.ksef.mf.gov.pl/v2";
@@ -77,6 +79,7 @@ export function getKsefConfig(): KsefConfig {
     dataSource: parseDataSource(process.env.KSEF_DATA_SOURCE),
     querySubjectType: parseSubjectType(process.env.KSEF_QUERY_SUBJECT_TYPE),
     lookbackDays: parseLookbackDays(process.env.KSEF_SYNC_LOOKBACK_DAYS),
+    companyTaxId: (process.env.KSEF_COMPANY_TAX_ID ?? "").replace(/\D/g, ""),
   };
 }
 

@@ -8,11 +8,13 @@ datasource db {
 }
 
 model AppSettings {
-  id                 Int      @id @default(1)
+  id                 Int       @id @default(1)
   mainOpeningBalance Decimal
   vatOpeningBalance  Decimal
   effectiveFrom      DateTime
-  updatedAt          DateTime @updatedAt
+  /// Data „Pobieraj od” ustawiona przy pierwszym sync KSeF.
+  ksefInitialSyncFrom DateTime?
+  updatedAt          DateTime  @updatedAt
 }
 
 /// Ręczna kontrola sald bankowych vs prognoza (dzień kalendarzowy = dayKey jak w ForecastDayRow).
@@ -527,27 +529,33 @@ model BankTransaction {
   @@index([status])
 }
 
-/// Staging dokumentów KSeF (etap 1 — bez powiązań z fakturami domenowymi).
+/// Sesja synchronizacji KSeF (zakres dat + status techniczny).
 model KsefSyncSession {
-  id          String         @id @default(cuid())
-  status      String // RUNNING | SUCCEEDED | FAILED
-  environment String         @default("test")
-  startedAt   DateTime       @default(now())
-  finishedAt  DateTime?
-  message     String?
-  documents   KsefDocument[]
-  createdAt   DateTime       @default(now())
-  updatedAt   DateTime       @updatedAt
+  id                String         @id @default(cuid())
+  status            String // RUNNING | SUCCEEDED | FAILED
+  environment       String         @default("test")
+  startedAt         DateTime       @default(now())
+  finishedAt        DateTime?
+  message           String?
+  syncRangeFrom     DateTime?
+  syncRangeTo       DateTime?
+  documentsUpserted Int?
+  documents         KsefDocument[]
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
 }
 
 model KsefDocument {
   id                         String           @id @default(cuid())
   ksefId                     String           @unique
   source                     String // MOCK | KSEF
-  status                     String
+  workflowStatus             String           @default("NEW") // NEW | PROBABLE_DUPLICATE | IMPORTED | REJECTED
+  documentDirection          String           @default("UNKNOWN") // PURCHASE | SALE | UNKNOWN
   documentType               String
+  invoiceNumber              String           @default("")
   issueDate                  DateTime
   saleDate                   DateTime?
+  paymentDueDate             DateTime?
   sellerName                 String
   sellerTaxId                String           @default("")
   buyerName                  String
@@ -557,8 +565,13 @@ model KsefDocument {
   grossAmount                Decimal
   currency                   String           @default("PLN")
   rawPayload                 String
+  duplicateOfCostInvoiceId   String?
+  duplicateMatchSummary      String?
   importedAsCostInvoiceId    String?
   importedAsRevenueInvoiceId String?
+  rejectedAt                 DateTime?
+  importedAt                 DateTime?
+  processedAt                DateTime?
   syncSessionId              String?
   syncSession                KsefSyncSession? @relation(fields: [syncSessionId], references: [id], onDelete: SetNull)
   createdAt                  DateTime         @default(now())
@@ -566,6 +579,9 @@ model KsefDocument {
 
   @@index([syncSessionId])
   @@index([issueDate])
+  @@index([workflowStatus])
+  @@index([documentDirection])
+  @@index([invoiceNumber])
 }
 
 /// Użytkownik aplikacji — Etap 1: tylko logowanie; role jako string pod przyszłe RBAC.

@@ -1,21 +1,24 @@
 import { prisma } from "@/lib/db";
 import { getKsefConfig, shouldUseKsefHttpApi } from "./config";
 
-/** Odpowiedź GET /api/ksef/status — tylko diagnostyka, bez sekretów. */
+/** Odpowiedź GET /api/ksef/status — diagnostyka + kontekst sync. */
 export type KsefStatusResponse = {
   configuredDataSource: "STUB" | "API";
   ksefEnabled: boolean;
   tokenConfigured: boolean;
-  /** Czy przy następnym sync zostanie użyte HTTP API (env + token). */
+  companyTaxIdConfigured: boolean;
   willUseRealApiNextSync: boolean;
+  initialSyncFrom: string | null;
+  needsInitialSyncFrom: boolean;
   lastSync: null | {
     status: string;
     message: string | null;
     startedAt: string;
     finishedAt: string | null;
-    /** Z parsowania komunikatu sukcesu (`Źródło: MOCK|KSEF`). */
+    syncRangeFrom: string | null;
+    syncRangeTo: string | null;
+    documentsUpserted: number | null;
     effectiveSource: "MOCK" | "KSEF" | null;
-    /** true gdy skonfigurowano API, a ostatni udany sync poszedł w MOCK (typowo brak tokenu). */
     fallbackToStub: boolean;
   };
 };
@@ -31,8 +34,14 @@ function parseEffectiveSourceFromMessage(
 
 export async function getKsefStatusResponse(): Promise<KsefStatusResponse> {
   const cfg = getKsefConfig();
-  const last = await prisma.ksefSyncSession.findFirst({
-    orderBy: { startedAt: "desc" },
+  const [settings, last] = await Promise.all([
+    prisma.appSettings.findUnique({ where: { id: 1 } }),
+    prisma.ksefSyncSession.findFirst({ orderBy: { startedAt: "desc" } }),
+  ]);
+
+  const lastSuccess = await prisma.ksefSyncSession.findFirst({
+    where: { status: "SUCCEEDED" },
+    orderBy: { finishedAt: "desc" },
   });
 
   const effectiveSource = parseEffectiveSourceFromMessage(last?.message);
@@ -44,17 +53,26 @@ export async function getKsefStatusResponse(): Promise<KsefStatusResponse> {
     configuredDataSource === "API" &&
     effectiveSource === "MOCK";
 
+  const needsInitialSyncFrom =
+    !settings?.ksefInitialSyncFrom && !lastSuccess?.syncRangeTo;
+
   return {
     configuredDataSource,
     ksefEnabled: cfg.enabled,
     tokenConfigured: Boolean(cfg.accessToken),
+    companyTaxIdConfigured: Boolean(cfg.companyTaxId),
     willUseRealApiNextSync: shouldUseKsefHttpApi(cfg),
+    initialSyncFrom: settings?.ksefInitialSyncFrom?.toISOString().slice(0, 10) ?? null,
+    needsInitialSyncFrom,
     lastSync: last
       ? {
           status: last.status,
           message: last.message,
           startedAt: last.startedAt.toISOString(),
           finishedAt: last.finishedAt?.toISOString() ?? null,
+          syncRangeFrom: last.syncRangeFrom?.toISOString() ?? null,
+          syncRangeTo: last.syncRangeTo?.toISOString() ?? null,
+          documentsUpserted: last.documentsUpserted,
           effectiveSource,
           fallbackToStub,
         }

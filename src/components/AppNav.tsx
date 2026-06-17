@@ -13,6 +13,7 @@ const links = [
   { href: "/income-invoices", label: "Przychody" },
   { href: "/other-income", label: "Pozostałe przychody" },
   { href: "/cost-invoices", label: "Koszty" },
+  { href: "/ksef-inbox", label: "KSeF" },
   { href: "/bank-imports", label: "Import bankowy" },
   { href: "/planned-events", label: "Zdarzenia" },
   { href: "/recurring", label: "Reguły cykliczne" },
