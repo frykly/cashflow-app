@@ -1,4 +1,5 @@
 import type { KsefDocument } from "@prisma/client";
+import { parseFaInvoiceXml } from "./fa-xml-parser";
 import {
   extractVatBreakdownFromRawPayload,
   parseRawPayloadJson,
@@ -46,6 +47,8 @@ export type KsefInvoicePreview = {
   grossAmount: string;
   vatBreakdown: VatBreakdownLine[];
   lines: KsefInvoiceLinePreview[];
+  /** metadata = tylko zapytanie metadata; xml = pełna faktura z cache XML */
+  previewSource: "metadata" | "xml";
 };
 
 function asRecord(v: unknown): Record<string, unknown> | null {
@@ -286,12 +289,14 @@ export function buildKsefInvoicePreview(
     | "currency"
     | "rawPayload"
     | "createdAt"
+    | "xmlPayload"
+    | "xmlFetchStatus"
   >,
 ): KsefInvoicePreview {
   const root = asRecord(parseRawPayloadJson(doc.rawPayload));
   const saleFromPayload = previewDate(firstString(root?.invoicingDate, root?.saleDate));
 
-  return {
+  const base: KsefInvoicePreview = {
     invoiceNumber: doc.invoiceNumber.trim() || "—",
     ksefId: doc.ksefId,
     documentType: doc.documentType,
@@ -312,5 +317,42 @@ export function buildKsefInvoicePreview(
     grossAmount: doc.grossAmount.toString(),
     vatBreakdown: extractVatBreakdownFromRawPayload(doc.rawPayload),
     lines: extractInvoiceLinesFromRawPayload(doc.rawPayload),
+    previewSource: "metadata",
   };
+
+  if (doc.xmlFetchStatus === "OK" && doc.xmlPayload?.trim()) {
+    try {
+      const xml = parseFaInvoiceXml(doc.xmlPayload);
+      return {
+        ...base,
+        previewSource: "xml",
+        invoiceNumber: xml.invoiceNumber ?? base.invoiceNumber,
+        issueDate: xml.issueDate ?? base.issueDate,
+        saleDate: xml.saleDate ?? base.saleDate,
+        paymentDueDate: xml.paymentDueDate ?? base.paymentDueDate,
+        currency: xml.currency ?? base.currency,
+        seller: {
+          name: xml.seller.name || base.seller.name,
+          taxId: xml.seller.taxId ?? base.seller.taxId,
+          address: xml.seller.address ?? base.seller.address,
+          bankAccount: xml.seller.bankAccount ?? base.seller.bankAccount,
+        },
+        buyer: {
+          name: xml.buyer.name || base.buyer.name,
+          taxId: xml.buyer.taxId ?? base.buyer.taxId,
+          address: xml.buyer.address ?? base.buyer.address,
+          bankAccount: xml.buyer.bankAccount,
+        },
+        netAmount: xml.netAmount ?? base.netAmount,
+        vatAmount: xml.vatAmount ?? base.vatAmount,
+        grossAmount: xml.grossAmount ?? base.grossAmount,
+        vatBreakdown: xml.vatBreakdown.length > 0 ? xml.vatBreakdown : base.vatBreakdown,
+        lines: xml.lines.length > 0 ? xml.lines : base.lines,
+      };
+    } catch {
+      return base;
+    }
+  }
+
+  return base;
 }

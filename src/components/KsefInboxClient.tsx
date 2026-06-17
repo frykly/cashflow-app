@@ -37,9 +37,15 @@ type Row = {
 };
 
 type DocDetail = {
-  document: Row;
+  document: Row & {
+    xmlFetchStatus: string | null;
+    xmlFetchedAt: string | null;
+    xmlFetchError: string | null;
+  };
   preview: KsefInvoicePreview;
   rawPayload: unknown;
+  xmlAvailable: boolean;
+  xmlPayload: string | null;
   duplicateCost: {
     id: string;
     documentNumber: string;
@@ -62,7 +68,8 @@ type DocAction =
   | "mark-duplicate"
   | "reject"
   | "restore"
-  | "undo-import";
+  | "undo-import"
+  | "fetch-xml";
 
 const DIRECTION_TABS: { id: DirectionTab; label: string }[] = [
   { id: "PURCHASE", label: "Kosztowe" },
@@ -233,11 +240,16 @@ export function KsefInboxClient() {
     });
   }
 
-  async function runAction(id: string, action: DocAction) {
+  async function runAction(id: string, action: DocAction, opts?: { forceXml?: boolean }) {
     setActingId(id);
     setMsg(null);
     try {
-      const res = await fetch(`/api/ksef/documents/${id}/${action}`, { method: "POST" });
+      const init: RequestInit = { method: "POST" };
+      if (action === "fetch-xml") {
+        init.headers = { "Content-Type": "application/json" };
+        init.body = JSON.stringify({ force: opts?.forceXml === true });
+      }
+      const res = await fetch(`/api/ksef/documents/${id}/${action}`, init);
       const parsed = await readApiResponse(res);
       if (!parsed.ok) {
         setMsg({ type: "err", text: parsed.errorText });
@@ -252,11 +264,15 @@ export function KsefInboxClient() {
         return;
       }
       const okText =
-        action === "undo-import"
-          ? "Import cofnięty."
-          : action === "mark-duplicate"
-            ? "Oznaczono jako już w systemie."
-            : "Akcja wykonana.";
+        action === "fetch-xml"
+          ? (parsed.data as { fetchResult?: { cached?: boolean } })?.fetchResult?.cached
+            ? "Pełna faktura XML jest już w cache."
+            : "Pobrano pełną fakturę XML."
+          : action === "undo-import"
+            ? "Import cofnięty."
+            : action === "mark-duplicate"
+              ? "Oznaczono jako już w systemie."
+              : "Akcja wykonana.";
       setMsg({ type: "ok", text: okText });
       await load();
       if (selectedId === id) {
@@ -290,6 +306,9 @@ export function KsefInboxClient() {
     selected && ws !== "IMPORTED" && ws !== "REJECTED" && dir === "UNKNOWN"
       ? "Import dostępny po poprawnej klasyfikacji (zakup lub sprzedaż). Ustaw KSEF_COMPANY_TAX_ID i zsynchronizuj ponownie."
       : null;
+  const canFetchXml = Boolean(
+    selected?.source === "KSEF" && status?.willUseRealApiNextSync && status?.ksefEnabled,
+  );
 
   return (
     <div className="mx-auto max-w-6xl space-y-4 p-4">
@@ -516,12 +535,18 @@ export function KsefInboxClient() {
               <Spinner />
             ) : detail?.preview ? (
               <KsefDocumentDetailPanel
+                source={selected.source}
                 workflowStatus={selected.workflowStatus}
                 importedAsCostInvoiceId={selected.importedAsCostInvoiceId}
                 importedAsRevenueInvoiceId={selected.importedAsRevenueInvoiceId}
                 duplicateMatchSummary={selected.duplicateMatchSummary}
                 preview={detail.preview}
                 rawPayload={detail.rawPayload}
+                xmlPayload={detail.xmlPayload}
+                xmlFetchStatus={detail.document.xmlFetchStatus}
+                xmlFetchedAt={detail.document.xmlFetchedAt}
+                xmlFetchError={detail.document.xmlFetchError}
+                canFetchXml={canFetchXml}
                 duplicateCost={detail.duplicateCost}
                 duplicateIncome={detail.duplicateIncome}
                 acting={actingId === selected.id}

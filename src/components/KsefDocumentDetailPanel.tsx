@@ -30,15 +30,22 @@ type DocAction =
   | "mark-duplicate"
   | "reject"
   | "restore"
-  | "undo-import";
+  | "undo-import"
+  | "fetch-xml";
 
 export type KsefDocumentDetailPanelProps = {
+  source: string;
   workflowStatus: KsefWorkflowStatus;
   importedAsCostInvoiceId: string | null;
   importedAsRevenueInvoiceId: string | null;
   duplicateMatchSummary: string | null;
   preview: KsefInvoicePreview;
   rawPayload: unknown;
+  xmlPayload: string | null;
+  xmlFetchStatus: string | null;
+  xmlFetchedAt: string | null;
+  xmlFetchError: string | null;
+  canFetchXml: boolean;
   duplicateCost: DuplicateCost;
   duplicateIncome: DuplicateIncome;
   acting: boolean;
@@ -46,7 +53,7 @@ export type KsefDocumentDetailPanelProps = {
   canImportRevenue: boolean;
   canUndoImport: boolean;
   importBlockedReason: string | null;
-  onAction: (action: DocAction) => void;
+  onAction: (action: DocAction, opts?: { forceXml?: boolean }) => void;
 };
 
 function workflowBadge(status: KsefWorkflowStatus) {
@@ -191,12 +198,18 @@ function LinesTable({ lines }: { lines: KsefInvoicePreview["lines"] }) {
 }
 
 export function KsefDocumentDetailPanel({
+  source,
   workflowStatus,
   importedAsCostInvoiceId,
   importedAsRevenueInvoiceId,
   duplicateMatchSummary,
   preview,
   rawPayload,
+  xmlPayload,
+  xmlFetchStatus,
+  xmlFetchedAt,
+  xmlFetchError,
+  canFetchXml,
   duplicateCost,
   duplicateIncome,
   acting,
@@ -207,6 +220,7 @@ export function KsefDocumentDetailPanel({
   onAction,
 }: KsefDocumentDetailPanelProps) {
   const [showTechnical, setShowTechnical] = useState(false);
+  const [showMetadata, setShowMetadata] = useState(false);
 
   const duplicateCostId = duplicateCost?.id ?? null;
   const duplicateIncomeId = duplicateIncome?.id ?? null;
@@ -226,6 +240,9 @@ export function KsefDocumentDetailPanel({
               ? ` · ${preview.documentType}`
               : ""}
           </span>
+          {preview.previewSource === "xml" ? (
+            <Badge variant="success">Pełna faktura XML</Badge>
+          ) : null}
         </div>
         <dl className="space-y-1 rounded border border-zinc-100 bg-zinc-50/80 p-2 dark:border-zinc-800 dark:bg-zinc-900/40">
           <InfoRow label="Data wystawienia" value={preview.issueDate ?? "—"} />
@@ -249,12 +266,44 @@ export function KsefDocumentDetailPanel({
         <SectionTitle>Pozycje faktury</SectionTitle>
         {preview.lines.length > 0 ? (
           <LinesTable lines={preview.lines} />
+        ) : preview.previewSource === "xml" ? (
+          <p className="text-xs text-zinc-500">Brak pozycji w strukturze XML tej faktury.</p>
         ) : (
           <p className="rounded border border-dashed border-zinc-200 bg-zinc-50/60 px-2 py-2 text-xs leading-relaxed text-zinc-600 dark:border-zinc-700 dark:bg-zinc-900/30 dark:text-zinc-400">
-            Pozycje faktury nie są dostępne w metadanych KSeF. Będą dostępne po pobraniu pełnej
-            faktury XML.
+            Pozycje faktury nie są dostępne w metadanych KSeF. Kliknij „Pobierz pełną fakturę”, aby
+            wczytać dane z XML.
           </p>
         )}
+      </section>
+
+      <section className="space-y-2 border-t border-zinc-200 pt-3 dark:border-zinc-700">
+        <SectionTitle>Pełna faktura</SectionTitle>
+        {xmlFetchStatus === "OK" && xmlFetchedAt ? (
+          <p className="text-xs text-zinc-500">
+            XML pobrany {xmlFetchedAt.slice(0, 16).replace("T", " ")}
+            {source === "MOCK" ? " (źródło testowe)" : ""}.
+          </p>
+        ) : null}
+        {xmlFetchError ? (
+          <p className="rounded border border-red-200 bg-red-50 px-2 py-1.5 text-xs text-red-800 dark:border-red-900 dark:bg-red-950/40 dark:text-red-200">
+            {xmlFetchError}
+          </p>
+        ) : null}
+        {canFetchXml ? (
+          <Button
+            type="button"
+            variant="secondary"
+            className="w-full"
+            disabled={acting}
+            onClick={() => onAction("fetch-xml", { forceXml: xmlFetchStatus === "OK" })}
+          >
+            {xmlFetchStatus === "OK" ? "Odśwież pełną fakturę" : "Pobierz pełną fakturę"}
+          </Button>
+        ) : source === "MOCK" ? (
+          <p className="text-xs text-zinc-500">
+            Pobieranie XML dostępne tylko dla dokumentów zsynchronizowanych z produkcyjnego API KSeF.
+          </p>
+        ) : null}
       </section>
 
       <section className="space-y-2 border-t border-zinc-200 pt-3 dark:border-zinc-700">
@@ -374,7 +423,7 @@ export function KsefDocumentDetailPanel({
         ) : null}
       </div>
 
-      {rawPayload != null ? (
+      {xmlPayload || rawPayload != null ? (
         <section className="border-t border-zinc-200 pt-3 dark:border-zinc-700">
           <button
             type="button"
@@ -385,9 +434,34 @@ export function KsefDocumentDetailPanel({
             {showTechnical ? "Ukryj dane techniczne" : "Pokaż dane techniczne"}
           </button>
           {showTechnical ? (
-            <pre className="mt-2 max-h-48 overflow-auto rounded border border-zinc-200 bg-zinc-50 p-2 text-[10px] leading-snug text-zinc-700 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300">
-              {JSON.stringify(rawPayload, null, 2)}
-            </pre>
+            <div className="mt-2 space-y-2">
+              {xmlPayload ? (
+                <div>
+                  <p className="mb-1 text-[10px] font-medium uppercase tracking-wide text-zinc-500">
+                    Surowy XML
+                  </p>
+                  <pre className="max-h-56 overflow-auto rounded border border-zinc-200 bg-zinc-50 p-2 text-[10px] leading-snug text-zinc-700 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300">
+                    {xmlPayload}
+                  </pre>
+                </div>
+              ) : null}
+              {rawPayload != null ? (
+                <div>
+                  <button
+                    type="button"
+                    className="text-[10px] text-zinc-500 underline"
+                    onClick={() => setShowMetadata((v) => !v)}
+                  >
+                    {showMetadata ? "Ukryj metadane API" : "Pokaż metadane API (JSON)"}
+                  </button>
+                  {showMetadata ? (
+                    <pre className="mt-1 max-h-40 overflow-auto rounded border border-zinc-200 bg-zinc-50 p-2 text-[10px] leading-snug text-zinc-700 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300">
+                      {JSON.stringify(rawPayload, null, 2)}
+                    </pre>
+                  ) : null}
+                </div>
+              ) : null}
+            </div>
           ) : null}
         </section>
       ) : null}

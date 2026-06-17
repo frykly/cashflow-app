@@ -565,6 +565,11 @@ model KsefDocument {
   grossAmount                Decimal
   currency                   String           @default("PLN")
   rawPayload                 String
+  xmlPayload                 String?
+  xmlFetchedAt               DateTime?
+  /// NONE | OK | FAILED
+  xmlFetchStatus             String?
+  xmlFetchError              String?
   duplicateOfCostInvoiceId   String?
   duplicateOfIncomeInvoiceId String?
   duplicateMatchSummary      String?

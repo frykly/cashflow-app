@@ -393,4 +393,40 @@ export async function fetchKsefDocuments(chunks: KsefDateRange[]): Promise<Fetch
   };
 }
 
+export async function fetchInvoiceXmlFromKsefApi(ksefNumber: string): Promise<string> {
+  const cfg = getKsefConfig();
+  if (!cfg.ksefToken) {
+    throw new Error("KSeF API: brak KSEF_KSEF_TOKEN (token z Aplikacji Podatnika).");
+  }
+
+  const base = cfg.apiBaseUrl.replace(/\/+$/, "");
+  const encoded = encodeURIComponent(ksefNumber);
+  let accessToken = await ensureValidAccessToken();
+  let retriedAfter401 = false;
+
+  for (;;) {
+    const res = await fetch(`${base}/invoices/ksef/${encoded}`, {
+      method: "GET",
+      headers: {
+        Accept: "application/xml",
+        Authorization: `Bearer ${accessToken}`,
+        "X-Error-Format": "problem-details",
+      },
+    });
+
+    if (res.status === 401 && !retriedAfter401) {
+      clearKsefAccessCache();
+      accessToken = await ensureValidAccessToken();
+      retriedAfter401 = true;
+      continue;
+    }
+
+    if (!res.ok) {
+      throw new Error(`KSeF API: ${await readKsefErrorMessage(res)}`);
+    }
+
+    return res.text();
+  }
+}
+
 export { invoiceNumberFromPayload };
