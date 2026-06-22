@@ -80,6 +80,38 @@ export function Alert({
   return <div className={`rounded-lg border px-3 py-2 text-sm whitespace-pre-wrap ${cls}`}>{children}</div>;
 }
 
+export function Drawer({
+  open,
+  onClose,
+  children,
+  "aria-label": ariaLabel,
+}: {
+  open: boolean;
+  onClose: () => void;
+  children: React.ReactNode;
+  "aria-label"?: string;
+}) {
+  if (!open) return null;
+  return (
+    <div className="fixed inset-0 z-50 flex justify-end">
+      <button
+        type="button"
+        className="absolute inset-0 cursor-default bg-black/40"
+        aria-label="Zamknij"
+        onClick={onClose}
+      />
+      <div
+        role="dialog"
+        aria-modal
+        aria-label={ariaLabel}
+        className="relative flex h-full w-[90vw] max-w-6xl flex-col border-l border-zinc-200 bg-white shadow-2xl dark:border-zinc-700 dark:bg-zinc-900"
+      >
+        {children}
+      </div>
+    </div>
+  );
+}
+
 export function Modal({
   open,
   title,

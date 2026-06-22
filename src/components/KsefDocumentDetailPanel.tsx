@@ -8,7 +8,7 @@ import {
   incomeInvoiceListEditHref,
 } from "@/lib/navigation/invoice-deep-links";
 import type { KsefInvoicePreview } from "@/lib/ksef/invoice-preview";
-import type { KsefDocumentDirection, KsefWorkflowStatus } from "@/lib/ksef/types";
+import type { KsefWorkflowStatus } from "@/lib/ksef/types";
 
 type DuplicateCost = {
   id: string;
@@ -55,7 +55,141 @@ export type KsefDocumentDetailPanelProps = {
   canUndoImport: boolean;
   importBlockedReason: string | null;
   onAction: (action: DocAction, opts?: { forceXml?: boolean }) => void;
+  hideActions?: boolean;
 };
+
+export type KsefDocumentDetailActionsProps = Pick<
+  KsefDocumentDetailPanelProps,
+  | "workflowStatus"
+  | "importedAsCostInvoiceId"
+  | "importedAsRevenueInvoiceId"
+  | "acting"
+  | "canImportCost"
+  | "canImportRevenue"
+  | "canUndoImport"
+  | "importBlockedReason"
+  | "onAction"
+> & {
+  duplicateCostId: string | null;
+  duplicateIncomeId: string | null;
+  compact?: boolean;
+};
+
+const linkBtnClass =
+  "inline-flex items-center justify-center gap-2 rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm font-medium text-zinc-900 transition hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-600 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800";
+
+export function KsefDocumentDetailActions({
+  workflowStatus: ws,
+  importedAsCostInvoiceId,
+  importedAsRevenueInvoiceId,
+  duplicateCostId,
+  duplicateIncomeId,
+  acting,
+  canImportCost,
+  canImportRevenue,
+  canUndoImport,
+  importBlockedReason,
+  onAction,
+  compact = false,
+}: KsefDocumentDetailActionsProps) {
+  const btnClass = compact ? "text-xs px-2 py-1" : "";
+  return (
+    <div className={`flex flex-wrap gap-2 ${compact ? "" : "flex-col"}`}>
+      {canImportCost ? (
+        <Button
+          type="button"
+          disabled={acting}
+          className={btnClass}
+          onClick={() => onAction("import-cost")}
+        >
+          Importuj jako koszt
+        </Button>
+      ) : null}
+      {importBlockedReason ? (
+        <p className="text-xs text-zinc-500">{importBlockedReason}</p>
+      ) : null}
+      {canImportRevenue ? (
+        <Button
+          type="button"
+          disabled={acting}
+          className={btnClass}
+          onClick={() => onAction("import-revenue")}
+        >
+          Importuj jako przychód
+        </Button>
+      ) : null}
+      {ws === "PROBABLE_DUPLICATE" ? (
+        <Button type="button" variant="secondary" disabled className={btnClass}>
+          Już w systemie — import zablokowany
+        </Button>
+      ) : null}
+      {ws !== "IMPORTED" && ws !== "REJECTED" ? (
+        <Button
+          type="button"
+          variant="secondary"
+          disabled={acting}
+          className={btnClass}
+          onClick={() => onAction("mark-duplicate")}
+        >
+          Już mam w systemie
+        </Button>
+      ) : null}
+      {ws !== "IMPORTED" && ws !== "REJECTED" ? (
+        <Button
+          type="button"
+          variant="secondary"
+          disabled={acting}
+          className={btnClass}
+          onClick={() => onAction("reject")}
+        >
+          Odrzuć
+        </Button>
+      ) : null}
+      {ws === "IMPORTED" && importedAsCostInvoiceId ? (
+        <Link href={costInvoiceListEditHref(importedAsCostInvoiceId)} className={`${linkBtnClass} ${btnClass}`}>
+          Otwórz fakturę kosztową
+        </Link>
+      ) : null}
+      {ws === "IMPORTED" && importedAsRevenueInvoiceId ? (
+        <Link href={incomeInvoiceListEditHref(importedAsRevenueInvoiceId)} className={`${linkBtnClass} ${btnClass}`}>
+          Otwórz fakturę przychodową
+        </Link>
+      ) : null}
+      {duplicateCostId ? (
+        <Link href={costInvoiceListEditHref(duplicateCostId)} className={`${linkBtnClass} ${btnClass}`}>
+          Otwórz powiązaną kosztową
+        </Link>
+      ) : null}
+      {duplicateIncomeId ? (
+        <Link href={incomeInvoiceListEditHref(duplicateIncomeId)} className={`${linkBtnClass} ${btnClass}`}>
+          Otwórz powiązaną przychodową
+        </Link>
+      ) : null}
+      {canUndoImport ? (
+        <Button
+          type="button"
+          variant="secondary"
+          disabled={acting}
+          className={btnClass}
+          onClick={() => onAction("undo-import")}
+        >
+          Cofnij import
+        </Button>
+      ) : null}
+      {ws === "REJECTED" || ws === "PROBABLE_DUPLICATE" ? (
+        <Button
+          type="button"
+          variant="secondary"
+          disabled={acting}
+          className={btnClass}
+          onClick={() => onAction("restore")}
+        >
+          Przywróć do nowych
+        </Button>
+      ) : null}
+    </div>
+  );
+}
 
 function workflowBadge(status: KsefWorkflowStatus) {
   if (status === "NEW") return <Badge variant="default">Nowy</Badge>;
@@ -220,13 +354,13 @@ export function KsefDocumentDetailPanel({
   canUndoImport,
   importBlockedReason,
   onAction,
+  hideActions = false,
 }: KsefDocumentDetailPanelProps) {
   const [showTechnical, setShowTechnical] = useState(false);
   const [showMetadata, setShowMetadata] = useState(false);
 
   const duplicateCostId = duplicateCost?.id ?? null;
   const duplicateIncomeId = duplicateIncome?.id ?? null;
-  const ws = workflowStatus;
 
   return (
     <div className="space-y-4 text-sm">
@@ -379,59 +513,23 @@ export function KsefDocumentDetailPanel({
         !importedAsRevenueInvoiceId ? (
           <p className="text-xs text-zinc-500">Brak powiązań z fakturami w systemie.</p>
         ) : null}
-        {canUndoImport ? (
-          <Button
-            type="button"
-            variant="secondary"
-            className="mt-1 w-full"
-            disabled={acting}
-            onClick={() => onAction("undo-import")}
-          >
-            Cofnij import
-          </Button>
-        ) : null}
       </section>
 
-      <div className="flex flex-col gap-2 border-t border-zinc-200 pt-3 dark:border-zinc-700">
-        {canImportCost ? (
-          <Button type="button" disabled={acting} onClick={() => onAction("import-cost")}>
-            Importuj jako koszt
-          </Button>
-        ) : null}
-        {importBlockedReason ? (
-          <p className="text-xs text-zinc-500">{importBlockedReason}</p>
-        ) : null}
-        {canImportRevenue ? (
-          <Button type="button" disabled={acting} onClick={() => onAction("import-revenue")}>
-            Importuj jako przychód
-          </Button>
-        ) : null}
-        {ws === "PROBABLE_DUPLICATE" ? (
-          <Button type="button" variant="secondary" disabled>
-            Już w systemie — import zablokowany
-          </Button>
-        ) : null}
-        {ws !== "IMPORTED" && ws !== "REJECTED" ? (
-          <Button
-            type="button"
-            variant="secondary"
-            disabled={acting}
-            onClick={() => onAction("mark-duplicate")}
-          >
-            Już mam w systemie
-          </Button>
-        ) : null}
-        {ws !== "IMPORTED" && ws !== "REJECTED" ? (
-          <Button type="button" variant="secondary" disabled={acting} onClick={() => onAction("reject")}>
-            Odrzuć
-          </Button>
-        ) : null}
-        {ws === "REJECTED" || ws === "PROBABLE_DUPLICATE" ? (
-          <Button type="button" variant="secondary" disabled={acting} onClick={() => onAction("restore")}>
-            Przywróć do nowych
-          </Button>
-        ) : null}
-      </div>
+      {!hideActions ? (
+        <KsefDocumentDetailActions
+          workflowStatus={workflowStatus}
+          importedAsCostInvoiceId={importedAsCostInvoiceId}
+          importedAsRevenueInvoiceId={importedAsRevenueInvoiceId}
+          duplicateCostId={duplicateCostId}
+          duplicateIncomeId={duplicateIncomeId}
+          acting={acting}
+          canImportCost={canImportCost}
+          canImportRevenue={canImportRevenue}
+          canUndoImport={canUndoImport}
+          importBlockedReason={importBlockedReason}
+          onAction={onAction}
+        />
+      ) : null}
 
       {xmlPayload || rawPayload != null ? (
         <section className="border-t border-zinc-200 pt-3 dark:border-zinc-700">

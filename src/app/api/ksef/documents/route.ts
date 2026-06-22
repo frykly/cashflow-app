@@ -1,7 +1,7 @@
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { jsonData } from "@/lib/api/json-response";
-import { ksefDocumentToPublicRow } from "@/lib/ksef/document-public-row";
+import { enrichKsefDocumentListRows } from "@/lib/ksef/enrich-document-list";
 
 export const runtime = "nodejs";
 
@@ -26,5 +26,5 @@ export async function GET(req: Request) {
     orderBy: { issueDate: "desc" },
   });
 
-  return jsonData(rows.map(ksefDocumentToPublicRow));
+  return jsonData(await enrichKsefDocumentListRows(rows));
 }

@@ -1,11 +1,17 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
+import { useCallback, useEffect, useState, type MouseEvent } from "react";
 import { AlertCircle, FileCheck, FileText, RefreshCw } from "lucide-react";
 import { Alert, Badge, Button, Field, Input, Select, Spinner } from "@/components/ui";
-import { KsefDocumentDetailPanel } from "@/components/KsefDocumentDetailPanel";
+import { KsefDocumentDrawer } from "@/components/KsefDocumentDrawer";
 import { readApiResponse } from "@/lib/api-client";
+import {
+  costInvoiceListEditHref,
+  incomeInvoiceListEditHref,
+} from "@/lib/navigation/invoice-deep-links";
 import type { KsefInvoicePreview } from "@/lib/ksef/invoice-preview";
+import type { KsefPaymentStatus } from "@/lib/ksef/payment-status";
 import type { KsefStatusResponse } from "@/lib/ksef/diagnostics";
 import type { KsefDocumentDirection, KsefWorkflowStatus } from "@/lib/ksef/types";
 
@@ -38,6 +44,11 @@ type Row = {
   xmlFetchStatus: string | null;
   xmlFetchedAt: string | null;
   xmlFetchError: string | null;
+  contractorName: string;
+  linkedCostInvoiceId: string | null;
+  linkedIncomeInvoiceId: string | null;
+  paymentStatus: KsefPaymentStatus;
+  paymentStatusLabel: string;
 };
 
 type DocDetail = {
@@ -82,10 +93,121 @@ const DIRECTION_TABS: { id: DirectionTab; label: string }[] = [
 ];
 
 function workflowBadge(status: KsefWorkflowStatus) {
-  if (status === "NEW") return <Badge variant="default">Nowy</Badge>;
+  if (status === "NEW") return <Badge variant="default">Nowa</Badge>;
   if (status === "PROBABLE_DUPLICATE") return <Badge variant="warning">Już w systemie</Badge>;
-  if (status === "IMPORTED") return <Badge variant="success">Zaimportowany</Badge>;
-  return <Badge variant="muted">Odrzucony</Badge>;
+  if (status === "IMPORTED") return <Badge variant="success">Zaimportowana</Badge>;
+  return <Badge variant="muted">Odrzucona</Badge>;
+}
+
+function directionLabel(direction: KsefDocumentDirection) {
+  if (direction === "PURCHASE") return "Zakup";
+  if (direction === "SALE") return "Sprzedaż";
+  return "Nieznany";
+}
+
+function paymentBadge(status: KsefPaymentStatus, label: string) {
+  if (status === "PAID") return <Badge variant="success">{label}</Badge>;
+  if (status === "PARTIAL") return <Badge variant="warning">{label}</Badge>;
+  if (status === "OVERDUE") return <Badge variant="danger">{label}</Badge>;
+  if (status === "NOT_APPLICABLE" || status === "NO_INVOICE") {
+    return <Badge variant="muted">{label}</Badge>;
+  }
+  return <Badge variant="default">{label}</Badge>;
+}
+
+function QuickActionCell({
+  row,
+  acting,
+  onAction,
+}: {
+  row: Row;
+  acting: boolean;
+  onAction: (action: DocAction) => void;
+}) {
+  const stop = (e: MouseEvent) => e.stopPropagation();
+
+  if (row.workflowStatus === "NEW" && row.documentDirection === "PURCHASE") {
+    return (
+      <Button
+        type="button"
+        variant="secondary"
+        className="whitespace-nowrap px-2 py-1 text-xs"
+        disabled={acting}
+        onClick={(e) => {
+          stop(e);
+          onAction("import-cost");
+        }}
+      >
+        Importuj koszt
+      </Button>
+    );
+  }
+  if (row.workflowStatus === "NEW" && row.documentDirection === "SALE") {
+    return (
+      <Button
+        type="button"
+        variant="secondary"
+        className="whitespace-nowrap px-2 py-1 text-xs"
+        disabled={acting}
+        onClick={(e) => {
+          stop(e);
+          onAction("import-revenue");
+        }}
+      >
+        Importuj przychód
+      </Button>
+    );
+  }
+  if (row.workflowStatus === "IMPORTED") {
+    const href = row.importedAsCostInvoiceId
+      ? costInvoiceListEditHref(row.importedAsCostInvoiceId)
+      : row.importedAsRevenueInvoiceId
+        ? incomeInvoiceListEditHref(row.importedAsRevenueInvoiceId)
+        : null;
+    if (!href) return <span className="text-xs text-zinc-400">—</span>;
+    return (
+      <Link
+        href={href}
+        className="text-xs text-blue-600 underline dark:text-blue-400"
+        onClick={stop}
+      >
+        Otwórz fakturę
+      </Link>
+    );
+  }
+  if (row.workflowStatus === "PROBABLE_DUPLICATE") {
+    const href = row.linkedCostInvoiceId
+      ? costInvoiceListEditHref(row.linkedCostInvoiceId)
+      : row.linkedIncomeInvoiceId
+        ? incomeInvoiceListEditHref(row.linkedIncomeInvoiceId)
+        : null;
+    if (href) {
+      return (
+        <Link
+          href={href}
+          className="text-xs text-amber-800 underline dark:text-amber-300"
+          onClick={stop}
+        >
+          Otwórz powiązaną
+        </Link>
+      );
+    }
+    return (
+      <Button
+        type="button"
+        variant="secondary"
+        className="whitespace-nowrap px-2 py-1 text-xs"
+        disabled={acting}
+        onClick={(e) => {
+          stop(e);
+          onAction("mark-duplicate");
+        }}
+      >
+        Już w systemie
+      </Button>
+    );
+  }
+  return <span className="text-xs text-zinc-400">—</span>;
 }
 
 function XmlStatusIcon({
@@ -383,6 +505,7 @@ export function KsefInboxClient() {
   }
 
   const selected = rows.find((r) => r.id === selectedId) ?? null;
+  const selectedIndex = selectedId ? rows.findIndex((r) => r.id === selectedId) : -1;
   const ws = selected?.workflowStatus;
   const dir = selected?.documentDirection;
   const canImportCost = selected && dir === "PURCHASE" && ws === "NEW";
@@ -403,7 +526,7 @@ export function KsefInboxClient() {
   );
 
   return (
-    <div className="mx-auto max-w-6xl space-y-4 p-4">
+    <div className="mx-auto w-full max-w-[1600px] space-y-4 p-4">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="text-xl font-semibold">KSeF</h1>
@@ -581,86 +704,123 @@ export function KsefInboxClient() {
       {loading ? (
         <Spinner />
       ) : (
-        <div className="grid gap-4 lg:grid-cols-[1fr_420px]">
-          <div className="overflow-x-auto rounded border border-neutral-200 dark:border-neutral-700">
-            <table className="w-full min-w-[720px] border-collapse text-sm">
-              <thead>
-                <tr className="border-b border-neutral-200 bg-neutral-50 text-left dark:border-neutral-700 dark:bg-neutral-900">
-                  <th className="p-2">Data</th>
-                  <th className="p-2">Numer</th>
-                  <th className="p-2">Sprzedawca</th>
-                  <th className="p-2 text-right">Brutto</th>
-                  <th className="p-2 w-10 text-center" title="Status XML">
-                    XML
-                  </th>
-                  <th className="p-2">Status</th>
+        <div className="overflow-x-auto rounded border border-neutral-200 dark:border-neutral-700">
+          <table className="w-full min-w-[1100px] border-collapse text-sm">
+            <thead>
+              <tr className="border-b border-neutral-200 bg-neutral-50 text-left dark:border-neutral-700 dark:bg-neutral-900">
+                <th className="p-2">Data</th>
+                <th className="p-2">Numer</th>
+                <th className="p-2">Kontrahent</th>
+                <th className="p-2">Typ</th>
+                <th className="p-2 text-right">Brutto</th>
+                <th className="p-2">Workflow</th>
+                <th className="p-2">Płatność</th>
+                <th className="p-2 w-10 text-center" title="Status XML">
+                  XML
+                </th>
+                <th className="p-2">Akcja</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r) => (
+                <tr
+                  key={r.id}
+                  className={`cursor-pointer border-b border-neutral-100 dark:border-neutral-800 ${
+                    selectedId === r.id
+                      ? "bg-zinc-100 dark:bg-zinc-800/60"
+                      : "hover:bg-zinc-50 dark:hover:bg-zinc-900/50"
+                  }`}
+                  onClick={() => setSelectedId(r.id)}
+                >
+                  <td className="p-2 whitespace-nowrap">{r.issueDate?.slice(0, 10) ?? "—"}</td>
+                  <td className="p-2 font-mono text-xs">{r.invoiceNumber || "—"}</td>
+                  <td className="max-w-[180px] truncate p-2" title={r.contractorName}>
+                    {r.contractorName}
+                  </td>
+                  <td className="p-2 whitespace-nowrap text-xs text-zinc-600 dark:text-zinc-400">
+                    {directionLabel(r.documentDirection)}
+                  </td>
+                  <td className="p-2 text-right font-mono whitespace-nowrap">
+                    {r.grossAmount} {r.currency}
+                  </td>
+                  <td className="p-2">{workflowBadge(r.workflowStatus)}</td>
+                  <td className="p-2">{paymentBadge(r.paymentStatus, r.paymentStatusLabel)}</td>
+                  <td className="p-2 text-center">
+                    <XmlStatusIcon row={r} loading={selectedId === r.id && xmlFetching} />
+                  </td>
+                  <td className="p-2" onClick={(e) => e.stopPropagation()}>
+                    <QuickActionCell
+                      row={r}
+                      acting={actingId === r.id}
+                      onAction={(action) => void runAction(r.id, action)}
+                    />
+                  </td>
                 </tr>
-              </thead>
-              <tbody>
-                {rows.map((r) => (
-                  <tr
-                    key={r.id}
-                    className={`cursor-pointer border-b border-neutral-100 dark:border-neutral-800 ${
-                      selectedId === r.id
-                        ? "bg-zinc-100 dark:bg-zinc-800/60"
-                        : "hover:bg-zinc-50 dark:hover:bg-zinc-900/50"
-                    }`}
-                    onClick={() => setSelectedId(r.id)}
-                  >
-                    <td className="p-2 whitespace-nowrap">{r.issueDate?.slice(0, 10) ?? "—"}</td>
-                    <td className="p-2 font-mono text-xs">{r.invoiceNumber || "—"}</td>
-                    <td className="p-2 max-w-[200px] truncate" title={r.sellerName}>
-                      {r.sellerName}
-                    </td>
-                    <td className="p-2 text-right font-mono">{r.grossAmount}</td>
-                    <td className="p-2 text-center">
-                      <XmlStatusIcon row={r} loading={selectedId === r.id && xmlFetching} />
-                    </td>
-                    <td className="p-2">{workflowBadge(r.workflowStatus)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            {rows.length === 0 ? (
-              <p className="p-4 text-neutral-500">Brak dokumentów w tej zakładce — uruchom „Odśwież KSeF”.</p>
-            ) : null}
-          </div>
-
-          <aside className="max-h-[calc(100vh-8rem)] overflow-y-auto rounded border border-neutral-200 p-3 dark:border-neutral-700">
-            {!selected ? (
-              <p className="text-sm text-zinc-500">Wybierz dokument z listy.</p>
-            ) : detailLoading && !detail ? (
-              <Spinner />
-            ) : detail?.preview ? (
-              <KsefDocumentDetailPanel
-                source={selected.source}
-                workflowStatus={selected.workflowStatus}
-                importedAsCostInvoiceId={selected.importedAsCostInvoiceId}
-                importedAsRevenueInvoiceId={selected.importedAsRevenueInvoiceId}
-                duplicateMatchSummary={selected.duplicateMatchSummary}
-                preview={detail.preview}
-                rawPayload={detail.rawPayload}
-                xmlPayload={detail.xmlPayload}
-                xmlFetchStatus={detail.document.xmlFetchStatus}
-                xmlFetchedAt={detail.document.xmlFetchedAt}
-                xmlFetchError={detail.document.xmlFetchError}
-                xmlFetching={xmlFetching}
-                canRefreshXml={canRefreshXml}
-                duplicateCost={detail.duplicateCost}
-                duplicateIncome={detail.duplicateIncome}
-                acting={actingId === selected.id}
-                canImportCost={Boolean(canImportCost)}
-                canImportRevenue={Boolean(canImportRevenue)}
-                canUndoImport={Boolean(canUndoImport)}
-                importBlockedReason={importBlockedReason}
-                onAction={(action, opts) => void runAction(selected.id, action, opts)}
-              />
-            ) : (
-              <p className="text-sm text-zinc-500">Nie udało się wczytać podglądu faktury.</p>
-            )}
-          </aside>
+              ))}
+            </tbody>
+          </table>
+          {rows.length === 0 ? (
+            <p className="p-4 text-neutral-500">Brak dokumentów w tej zakładce — uruchom „Odśwież KSeF”.</p>
+          ) : null}
         </div>
       )}
+
+      <KsefDocumentDrawer
+        open={Boolean(selectedId && selected)}
+        document={
+          selected
+            ? {
+                id: selected.id,
+                invoiceNumber: selected.invoiceNumber,
+                workflowStatus: selected.workflowStatus,
+                documentDirection: selected.documentDirection,
+                paymentStatus: selected.paymentStatus,
+                paymentStatusLabel: selected.paymentStatusLabel,
+              }
+            : null
+        }
+        index={selectedIndex}
+        total={rows.length}
+        detailLoading={detailLoading}
+        detailProps={
+          selected && detail?.preview
+            ? {
+                source: selected.source,
+                workflowStatus: selected.workflowStatus,
+                importedAsCostInvoiceId: selected.importedAsCostInvoiceId,
+                importedAsRevenueInvoiceId: selected.importedAsRevenueInvoiceId,
+                duplicateMatchSummary: selected.duplicateMatchSummary,
+                preview: detail.preview,
+                rawPayload: detail.rawPayload,
+                xmlPayload: detail.xmlPayload,
+                xmlFetchStatus: detail.document.xmlFetchStatus,
+                xmlFetchedAt: detail.document.xmlFetchedAt,
+                xmlFetchError: detail.document.xmlFetchError,
+                xmlFetching,
+                canRefreshXml,
+                duplicateCost: detail.duplicateCost,
+                duplicateIncome: detail.duplicateIncome,
+                acting: actingId === selected.id,
+                canImportCost: Boolean(canImportCost),
+                canImportRevenue: Boolean(canImportRevenue),
+                canUndoImport: Boolean(canUndoImport),
+                importBlockedReason,
+                onAction: (action, opts) => void runAction(selected.id, action, opts),
+              }
+            : null
+        }
+        onClose={() => setSelectedId(null)}
+        onPrevious={() => {
+          if (selectedIndex > 0) setSelectedId(rows[selectedIndex - 1]!.id);
+        }}
+        onNext={() => {
+          if (selectedIndex >= 0 && selectedIndex < rows.length - 1) {
+            setSelectedId(rows[selectedIndex + 1]!.id);
+          }
+        }}
+        canPrevious={selectedIndex > 0}
+        canNext={selectedIndex >= 0 && selectedIndex < rows.length - 1}
+      />
     </div>
   );
 }
