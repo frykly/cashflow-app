@@ -2,6 +2,8 @@ import { prisma } from "@/lib/db";
 import { decToNumber } from "@/lib/cashflow/money";
 import { ensureClosingCostPaymentIfFullySettled } from "@/lib/cashflow/invoice-auto-settlement";
 import { syncCostInvoiceStatus } from "@/lib/invoice-status-sync";
+import { resolveLegacyProjectFieldsFromAllocations } from "@/lib/project-allocations/persist";
+import type { KsefImportCostBody } from "@/lib/validation/ksef-import-schemas";
 import { inferVatRateFromAmounts } from "@/lib/vat-rate";
 import { findProbableCostDuplicate } from "./duplicate-match";
 import { ksefDocumentToPublicRow } from "./document-public-row";
@@ -9,7 +11,7 @@ import { ksefImportNotes } from "./ksef-import-marker";
 
 const ALREADY_IN_SYSTEM_MSG = "Ta faktura prawdopodobnie już istnieje w systemie";
 
-export async function importKsefDocumentAsCost(documentId: string) {
+export async function importKsefDocumentAsCost(documentId: string, options: KsefImportCostBody = {}) {
   const doc = await prisma.ksefDocument.findUnique({ where: { id: documentId } });
   if (!doc) throw new Error("Nie znaleziono dokumentu KSeF.");
   if (doc.documentDirection !== "PURCHASE") {
@@ -54,10 +56,15 @@ export async function importKsefDocumentAsCost(documentId: string) {
   const gross = decToNumber(doc.grossAmount);
   const vatRate = inferVatRateFromAmounts(net, vat);
   const documentDate = doc.issueDate;
-  const plannedPaymentDate = doc.paymentDueDate ?? doc.issueDate;
+  const paymentDueDate = doc.paymentDueDate ?? doc.issueDate;
+  const plannedPaymentDate = options.plannedPaymentDate
+    ? new Date(options.plannedPaymentDate)
+    : paymentDueDate;
   const now = new Date();
 
   const cost = await prisma.$transaction(async (tx) => {
+    const pf = await resolveLegacyProjectFieldsFromAllocations(tx, options.projectId ?? null, undefined);
+
     const created = await tx.costInvoice.create({
       data: {
         documentNumber: doc.invoiceNumber.trim(),
@@ -68,15 +75,15 @@ export async function importKsefDocumentAsCost(documentId: string) {
         vatAmount: vat,
         grossAmount: gross,
         documentDate,
-        paymentDueDate: plannedPaymentDate,
+        paymentDueDate,
         plannedPaymentDate,
-        status: "DO_ZAPLATY",
+        status: options.status ?? "DO_ZAPLATY",
         paid: false,
-        paymentSource: "MAIN",
-        notes: ksefImportNotes(doc.ksefId),
-        projectId: null,
-        projectName: null,
-        expenseCategoryId: null,
+        paymentSource: options.paymentSource ?? "MAIN",
+        notes: options.notes?.trim() || ksefImportNotes(doc.ksefId),
+        projectId: pf.projectId,
+        projectName: pf.projectName,
+        expenseCategoryId: options.expenseCategoryId ?? null,
       },
     });
 

@@ -1,17 +1,14 @@
 "use client";
 
-import Link from "next/link";
 import { useCallback, useEffect, useState, type MouseEvent } from "react";
 import { AlertCircle, FileCheck, FileText, RefreshCw } from "lucide-react";
 import { Alert, Badge, Button, Field, Input, Select, Spinner } from "@/components/ui";
 import { KsefDocumentDrawer } from "@/components/KsefDocumentDrawer";
+import { KsefLinkedInvoiceModal } from "@/components/KsefLinkedInvoiceModal";
 import { readApiResponse } from "@/lib/api-client";
-import {
-  costInvoiceListEditHref,
-  incomeInvoiceListEditHref,
-} from "@/lib/navigation/invoice-deep-links";
 import type { KsefInvoicePreview } from "@/lib/ksef/invoice-preview";
 import type { KsefPaymentStatus } from "@/lib/ksef/payment-status";
+import type { KsefImportCostBody, KsefImportRevenueBody } from "@/lib/validation/ksef-import-schemas";
 import type { KsefStatusResponse } from "@/lib/ksef/diagnostics";
 import type { KsefDocumentDirection, KsefWorkflowStatus } from "@/lib/ksef/types";
 
@@ -115,13 +112,22 @@ function paymentBadge(status: KsefPaymentStatus, label: string) {
   return <Badge variant="default">{label}</Badge>;
 }
 
+type DocActionOpts = {
+  forceXml?: boolean;
+  importBody?: KsefImportCostBody | KsefImportRevenueBody;
+};
+
 function QuickActionCell({
   row,
   acting,
+  onOpenForImport,
+  onOpenLinkedInvoice,
   onAction,
 }: {
   row: Row;
   acting: boolean;
+  onOpenForImport: (id: string) => void;
+  onOpenLinkedInvoice: (kind: "cost" | "income", invoiceId: string) => void;
   onAction: (action: DocAction) => void;
 }) {
   const stop = (e: MouseEvent) => e.stopPropagation();
@@ -135,10 +141,10 @@ function QuickActionCell({
         disabled={acting}
         onClick={(e) => {
           stop(e);
-          onAction("import-cost");
+          onOpenForImport(row.id);
         }}
       >
-        Importuj koszt
+        Obrób koszt
       </Button>
     );
   }
@@ -151,45 +157,49 @@ function QuickActionCell({
         disabled={acting}
         onClick={(e) => {
           stop(e);
-          onAction("import-revenue");
+          onOpenForImport(row.id);
         }}
       >
-        Importuj przychód
+        Obrób przychód
       </Button>
     );
   }
   if (row.workflowStatus === "IMPORTED") {
-    const href = row.importedAsCostInvoiceId
-      ? costInvoiceListEditHref(row.importedAsCostInvoiceId)
-      : row.importedAsRevenueInvoiceId
-        ? incomeInvoiceListEditHref(row.importedAsRevenueInvoiceId)
-        : null;
-    if (!href) return <span className="text-xs text-zinc-400">—</span>;
+    const costId = row.importedAsCostInvoiceId;
+    const incomeId = row.importedAsRevenueInvoiceId;
+    if (!costId && !incomeId) return <span className="text-xs text-zinc-400">—</span>;
     return (
-      <Link
-        href={href}
-        className="text-xs text-blue-600 underline dark:text-blue-400"
-        onClick={stop}
+      <Button
+        type="button"
+        variant="secondary"
+        className="whitespace-nowrap px-2 py-1 text-xs"
+        onClick={(e) => {
+          stop(e);
+          if (costId) onOpenLinkedInvoice("cost", costId);
+          else if (incomeId) onOpenLinkedInvoice("income", incomeId);
+        }}
       >
         Otwórz fakturę
-      </Link>
+      </Button>
     );
   }
   if (row.workflowStatus === "PROBABLE_DUPLICATE") {
-    const href = row.linkedCostInvoiceId
-      ? costInvoiceListEditHref(row.linkedCostInvoiceId)
-      : row.linkedIncomeInvoiceId
-        ? incomeInvoiceListEditHref(row.linkedIncomeInvoiceId)
-        : null;
-    if (href) {
+    const costId = row.linkedCostInvoiceId;
+    const incomeId = row.linkedIncomeInvoiceId;
+    if (costId || incomeId) {
       return (
-        <Link
-          href={href}
-          className="text-xs text-amber-800 underline dark:text-amber-300"
-          onClick={stop}
+        <Button
+          type="button"
+          variant="secondary"
+          className="whitespace-nowrap px-2 py-1 text-xs"
+          onClick={(e) => {
+            stop(e);
+            if (costId) onOpenLinkedInvoice("cost", costId);
+            else if (incomeId) onOpenLinkedInvoice("income", incomeId);
+          }}
         >
           Otwórz powiązaną
-        </Link>
+        </Button>
       );
     }
     return (
@@ -307,6 +317,11 @@ export function KsefInboxClient() {
   const [syncFrom, setSyncFrom] = useState("");
   const [manualRangeFrom, setManualRangeFrom] = useState("2026-01-01");
   const [manualRangeTo, setManualRangeTo] = useState("");
+  const [focusImportSection, setFocusImportSection] = useState(false);
+  const [linkedInvoiceEdit, setLinkedInvoiceEdit] = useState<{
+    kind: "cost" | "income";
+    id: string;
+  } | null>(null);
 
   const needsInitialSyncFrom = status?.needsInitialSyncFrom ?? false;
   const isStubMode = status?.configuredDataSource === "STUB";
@@ -457,7 +472,7 @@ export function KsefInboxClient() {
     });
   }
 
-  async function runAction(id: string, action: DocAction, opts?: { forceXml?: boolean }) {
+  async function runAction(id: string, action: DocAction, opts?: DocActionOpts) {
     setActingId(id);
     setMsg(null);
     try {
@@ -465,6 +480,9 @@ export function KsefInboxClient() {
       if (action === "fetch-xml") {
         init.headers = { "Content-Type": "application/json" };
         init.body = JSON.stringify({ force: opts?.forceXml === true });
+      } else if (action === "import-cost" || action === "import-revenue") {
+        init.headers = { "Content-Type": "application/json" };
+        init.body = JSON.stringify(opts?.importBody ?? {});
       }
       const res = await fetch(`/api/ksef/documents/${id}/${action}`, init);
       const parsed = await readApiResponse(res);
@@ -480,11 +498,15 @@ export function KsefInboxClient() {
       const okText =
         action === "fetch-xml"
           ? "Odświeżono XML faktury."
-          : action === "undo-import"
-            ? "Import cofnięty."
-            : action === "mark-duplicate"
-              ? "Oznaczono jako już w systemie."
-              : "Akcja wykonana.";
+          : action === "import-cost"
+            ? "Zapisano jako faktura kosztowa."
+            : action === "import-revenue"
+              ? "Zapisano jako faktura przychodowa."
+              : action === "undo-import"
+                ? "Import cofnięty."
+                : action === "mark-duplicate"
+                  ? "Oznaczono jako już w systemie."
+                  : "Akcja wykonana.";
       if (action !== "fetch-xml" || opts?.forceXml) {
         setMsg({ type: "ok", text: okText });
       }
@@ -524,6 +546,24 @@ export function KsefInboxClient() {
       status?.ksefEnabled &&
       detail?.document.xmlFetchStatus === "OK",
   );
+
+  function openForImport(id: string) {
+    setSelectedId(id);
+    setFocusImportSection(true);
+  }
+
+  function openLinkedInvoice(kind: "cost" | "income", id: string) {
+    setLinkedInvoiceEdit({ kind, id });
+  }
+
+  async function refreshAfterLinkedInvoiceSave() {
+    await load();
+    if (selectedId) {
+      const refreshed = await fetchDocumentDetail(selectedId);
+      if (refreshed) setDetail(refreshed);
+    }
+    setLinkedInvoiceEdit(null);
+  }
 
   return (
     <div className="mx-auto w-full max-w-[1600px] space-y-4 p-4">
@@ -730,7 +770,10 @@ export function KsefInboxClient() {
                       ? "bg-zinc-100 dark:bg-zinc-800/60"
                       : "hover:bg-zinc-50 dark:hover:bg-zinc-900/50"
                   }`}
-                  onClick={() => setSelectedId(r.id)}
+                    onClick={() => {
+                      setFocusImportSection(false);
+                      setSelectedId(r.id);
+                    }}
                 >
                   <td className="p-2 whitespace-nowrap">{r.issueDate?.slice(0, 10) ?? "—"}</td>
                   <td className="p-2 font-mono text-xs">{r.invoiceNumber || "—"}</td>
@@ -752,6 +795,8 @@ export function KsefInboxClient() {
                     <QuickActionCell
                       row={r}
                       acting={actingId === r.id}
+                      onOpenForImport={openForImport}
+                      onOpenLinkedInvoice={openLinkedInvoice}
                       onAction={(action) => void runAction(r.id, action)}
                     />
                   </td>
@@ -806,20 +851,41 @@ export function KsefInboxClient() {
                 canUndoImport: Boolean(canUndoImport),
                 importBlockedReason,
                 onAction: (action, opts) => void runAction(selected.id, action, opts),
+                focusImportSection,
+                onImportFocusHandled: () => setFocusImportSection(false),
+                onImportCostSubmit: (body) => void runAction(selected.id, "import-cost", { importBody: body }),
+                onImportRevenueSubmit: (body) =>
+                  void runAction(selected.id, "import-revenue", { importBody: body }),
+                onOpenLinkedInvoice: openLinkedInvoice,
               }
             : null
         }
-        onClose={() => setSelectedId(null)}
+        onClose={() => {
+          setSelectedId(null);
+          setFocusImportSection(false);
+        }}
         onPrevious={() => {
-          if (selectedIndex > 0) setSelectedId(rows[selectedIndex - 1]!.id);
+          if (selectedIndex > 0) {
+            setFocusImportSection(false);
+            setSelectedId(rows[selectedIndex - 1]!.id);
+          }
         }}
         onNext={() => {
           if (selectedIndex >= 0 && selectedIndex < rows.length - 1) {
+            setFocusImportSection(false);
             setSelectedId(rows[selectedIndex + 1]!.id);
           }
         }}
         canPrevious={selectedIndex > 0}
         canNext={selectedIndex >= 0 && selectedIndex < rows.length - 1}
+      />
+
+      <KsefLinkedInvoiceModal
+        kind={linkedInvoiceEdit?.kind ?? null}
+        invoiceId={linkedInvoiceEdit?.id ?? null}
+        open={Boolean(linkedInvoiceEdit)}
+        onClose={() => setLinkedInvoiceEdit(null)}
+        onSaved={() => void refreshAfterLinkedInvoiceSave()}
       />
     </div>
   );

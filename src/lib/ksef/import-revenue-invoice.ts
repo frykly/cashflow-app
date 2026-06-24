@@ -2,13 +2,15 @@ import { prisma } from "@/lib/db";
 import { decToNumber } from "@/lib/cashflow/money";
 import { ensureClosingIncomePaymentIfFullySettled } from "@/lib/cashflow/invoice-auto-settlement";
 import { syncIncomeInvoiceStatus } from "@/lib/invoice-status-sync";
+import { resolveLegacyProjectFieldsFromAllocations } from "@/lib/project-allocations/persist";
+import type { KsefImportRevenueBody } from "@/lib/validation/ksef-import-schemas";
 import { inferVatRateFromAmounts } from "@/lib/vat-rate";
 import { findProbableIncomeDuplicate } from "./duplicate-match";
 import { ksefImportNotes } from "./ksef-import-marker";
 
 const ALREADY_IN_SYSTEM_MSG = "Ta faktura prawdopodobnie już istnieje w systemie";
 
-export async function importKsefDocumentAsRevenue(documentId: string) {
+export async function importKsefDocumentAsRevenue(documentId: string, options: KsefImportRevenueBody = {}) {
   const doc = await prisma.ksefDocument.findUnique({ where: { id: documentId } });
   if (!doc) throw new Error("Nie znaleziono dokumentu KSeF.");
   if (doc.documentDirection !== "SALE") {
@@ -57,10 +59,14 @@ export async function importKsefDocumentAsRevenue(documentId: string) {
   const vatRate = inferVatRateFromAmounts(net, vat);
   const issueDate = doc.issueDate;
   const paymentDueDate = doc.paymentDueDate ?? doc.issueDate;
-  const plannedIncomeDate = doc.paymentDueDate ?? doc.issueDate;
+  const plannedIncomeDate = options.plannedIncomeDate
+    ? new Date(options.plannedIncomeDate)
+    : paymentDueDate;
   const now = new Date();
 
   const income = await prisma.$transaction(async (tx) => {
+    const pf = await resolveLegacyProjectFieldsFromAllocations(tx, options.projectId ?? null, undefined);
+
     const created = await tx.incomeInvoice.create({
       data: {
         invoiceNumber: doc.invoiceNumber.trim(),
@@ -73,13 +79,13 @@ export async function importKsefDocumentAsRevenue(documentId: string) {
         issueDate,
         paymentDueDate,
         plannedIncomeDate,
-        status: "WYSTAWIONA",
-        vatDestination: "MAIN",
+        status: options.status ?? "WYSTAWIONA",
+        vatDestination: options.vatDestination ?? "MAIN",
         confirmedIncome: false,
-        notes: ksefImportNotes(doc.ksefId),
-        projectId: null,
-        projectName: null,
-        incomeCategoryId: null,
+        notes: options.notes?.trim() || ksefImportNotes(doc.ksefId),
+        projectId: pf.projectId,
+        projectName: pf.projectName,
+        incomeCategoryId: options.incomeCategoryId ?? null,
       },
     });
 

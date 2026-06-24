@@ -1,14 +1,11 @@
 "use client";
 
-import Link from "next/link";
 import { useState, type ReactNode } from "react";
 import { Badge, Button } from "@/components/ui";
-import {
-  costInvoiceListEditHref,
-  incomeInvoiceListEditHref,
-} from "@/lib/navigation/invoice-deep-links";
 import type { KsefInvoicePreview } from "@/lib/ksef/invoice-preview";
 import type { KsefWorkflowStatus } from "@/lib/ksef/types";
+import type { KsefImportCostBody, KsefImportRevenueBody } from "@/lib/validation/ksef-import-schemas";
+import { KsefImportForm } from "@/components/KsefImportForm";
 
 type DuplicateCost = {
   id: string;
@@ -56,6 +53,11 @@ export type KsefDocumentDetailPanelProps = {
   importBlockedReason: string | null;
   onAction: (action: DocAction, opts?: { forceXml?: boolean }) => void;
   hideActions?: boolean;
+  focusImportSection?: boolean;
+  onImportFocusHandled?: () => void;
+  onImportCostSubmit?: (body: KsefImportCostBody) => void;
+  onImportRevenueSubmit?: (body: KsefImportRevenueBody) => void;
+  onOpenLinkedInvoice?: (kind: "cost" | "income", invoiceId: string) => void;
 };
 
 export type KsefDocumentDetailActionsProps = Pick<
@@ -64,8 +66,6 @@ export type KsefDocumentDetailActionsProps = Pick<
   | "importedAsCostInvoiceId"
   | "importedAsRevenueInvoiceId"
   | "acting"
-  | "canImportCost"
-  | "canImportRevenue"
   | "canUndoImport"
   | "importBlockedReason"
   | "onAction"
@@ -73,10 +73,8 @@ export type KsefDocumentDetailActionsProps = Pick<
   duplicateCostId: string | null;
   duplicateIncomeId: string | null;
   compact?: boolean;
+  onOpenLinkedInvoice?: (kind: "cost" | "income", invoiceId: string) => void;
 };
-
-const linkBtnClass =
-  "inline-flex items-center justify-center gap-2 rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm font-medium text-zinc-900 transition hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-600 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800";
 
 export function KsefDocumentDetailActions({
   workflowStatus: ws,
@@ -85,38 +83,17 @@ export function KsefDocumentDetailActions({
   duplicateCostId,
   duplicateIncomeId,
   acting,
-  canImportCost,
-  canImportRevenue,
   canUndoImport,
   importBlockedReason,
   onAction,
   compact = false,
+  onOpenLinkedInvoice,
 }: KsefDocumentDetailActionsProps) {
   const btnClass = compact ? "text-xs px-2 py-1" : "";
   return (
     <div className={`flex flex-wrap gap-2 ${compact ? "" : "flex-col"}`}>
-      {canImportCost ? (
-        <Button
-          type="button"
-          disabled={acting}
-          className={btnClass}
-          onClick={() => onAction("import-cost")}
-        >
-          Importuj jako koszt
-        </Button>
-      ) : null}
       {importBlockedReason ? (
         <p className="text-xs text-zinc-500">{importBlockedReason}</p>
-      ) : null}
-      {canImportRevenue ? (
-        <Button
-          type="button"
-          disabled={acting}
-          className={btnClass}
-          onClick={() => onAction("import-revenue")}
-        >
-          Importuj jako przychód
-        </Button>
       ) : null}
       {ws === "PROBABLE_DUPLICATE" ? (
         <Button type="button" variant="secondary" disabled className={btnClass}>
@@ -146,24 +123,44 @@ export function KsefDocumentDetailActions({
         </Button>
       ) : null}
       {ws === "IMPORTED" && importedAsCostInvoiceId ? (
-        <Link href={costInvoiceListEditHref(importedAsCostInvoiceId)} className={`${linkBtnClass} ${btnClass}`}>
-          Otwórz fakturę kosztową
-        </Link>
+        <Button
+          type="button"
+          variant="secondary"
+          className={btnClass}
+          onClick={() => onOpenLinkedInvoice?.("cost", importedAsCostInvoiceId)}
+        >
+          Otwórz fakturę
+        </Button>
       ) : null}
       {ws === "IMPORTED" && importedAsRevenueInvoiceId ? (
-        <Link href={incomeInvoiceListEditHref(importedAsRevenueInvoiceId)} className={`${linkBtnClass} ${btnClass}`}>
-          Otwórz fakturę przychodową
-        </Link>
+        <Button
+          type="button"
+          variant="secondary"
+          className={btnClass}
+          onClick={() => onOpenLinkedInvoice?.("income", importedAsRevenueInvoiceId)}
+        >
+          Otwórz fakturę
+        </Button>
       ) : null}
       {duplicateCostId ? (
-        <Link href={costInvoiceListEditHref(duplicateCostId)} className={`${linkBtnClass} ${btnClass}`}>
-          Otwórz powiązaną kosztową
-        </Link>
+        <Button
+          type="button"
+          variant="secondary"
+          className={btnClass}
+          onClick={() => onOpenLinkedInvoice?.("cost", duplicateCostId)}
+        >
+          Otwórz powiązaną
+        </Button>
       ) : null}
       {duplicateIncomeId ? (
-        <Link href={incomeInvoiceListEditHref(duplicateIncomeId)} className={`${linkBtnClass} ${btnClass}`}>
-          Otwórz powiązaną przychodową
-        </Link>
+        <Button
+          type="button"
+          variant="secondary"
+          className={btnClass}
+          onClick={() => onOpenLinkedInvoice?.("income", duplicateIncomeId)}
+        >
+          Otwórz powiązaną
+        </Button>
       ) : null}
       {canUndoImport ? (
         <Button
@@ -355,6 +352,11 @@ export function KsefDocumentDetailPanel({
   importBlockedReason,
   onAction,
   hideActions = false,
+  focusImportSection = false,
+  onImportFocusHandled,
+  onImportCostSubmit,
+  onImportRevenueSubmit,
+  onOpenLinkedInvoice,
 }: KsefDocumentDetailPanelProps) {
   const [showTechnical, setShowTechnical] = useState(false);
   const [showMetadata, setShowMetadata] = useState(false);
@@ -454,32 +456,35 @@ export function KsefDocumentDetailPanel({
         <SectionTitle>Powiązania</SectionTitle>
         {workflowStatus === "IMPORTED" && importedAsCostInvoiceId ? (
           <p>
-            <Link
-              href={costInvoiceListEditHref(importedAsCostInvoiceId)}
+            <button
+              type="button"
               className="text-blue-600 underline dark:text-blue-400"
+              onClick={() => onOpenLinkedInvoice?.("cost", importedAsCostInvoiceId)}
             >
-              Otwórz zaimportowaną fakturę kosztową
-            </Link>
+              Otwórz fakturę
+            </button>
           </p>
         ) : null}
         {workflowStatus === "IMPORTED" && importedAsRevenueInvoiceId ? (
           <p>
-            <Link
-              href={incomeInvoiceListEditHref(importedAsRevenueInvoiceId)}
+            <button
+              type="button"
               className="text-blue-600 underline dark:text-blue-400"
+              onClick={() => onOpenLinkedInvoice?.("income", importedAsRevenueInvoiceId)}
             >
-              Otwórz zaimportowaną fakturę przychodową
-            </Link>
+              Otwórz fakturę
+            </button>
           </p>
         ) : null}
         {duplicateCostId ? (
           <p>
-            <Link
-              href={costInvoiceListEditHref(duplicateCostId)}
+            <button
+              type="button"
               className="text-amber-800 underline dark:text-amber-300"
+              onClick={() => onOpenLinkedInvoice?.("cost", duplicateCostId)}
             >
-              Już w systemie — faktura kosztowa
-            </Link>
+              Już w systemie — otwórz fakturę kosztową
+            </button>
             {duplicateCost ? (
               <span className="mt-0.5 block text-xs text-zinc-500">
                 {duplicateCost.documentNumber} · {duplicateCost.supplier}
@@ -489,12 +494,13 @@ export function KsefDocumentDetailPanel({
         ) : null}
         {duplicateIncomeId ? (
           <p>
-            <Link
-              href={incomeInvoiceListEditHref(duplicateIncomeId)}
+            <button
+              type="button"
               className="text-amber-800 underline dark:text-amber-300"
+              onClick={() => onOpenLinkedInvoice?.("income", duplicateIncomeId)}
             >
-              Już w systemie — faktura przychodowa
-            </Link>
+              Już w systemie — otwórz fakturę przychodową
+            </button>
             {duplicateIncome ? (
               <span className="mt-0.5 block text-xs text-zinc-500">
                 {duplicateIncome.invoiceNumber} · {duplicateIncome.contractor}
@@ -523,11 +529,35 @@ export function KsefDocumentDetailPanel({
           duplicateCostId={duplicateCostId}
           duplicateIncomeId={duplicateIncomeId}
           acting={acting}
-          canImportCost={canImportCost}
-          canImportRevenue={canImportRevenue}
           canUndoImport={canUndoImport}
           importBlockedReason={importBlockedReason}
           onAction={onAction}
+          onOpenLinkedInvoice={onOpenLinkedInvoice}
+        />
+      ) : null}
+
+      {canImportCost && onImportCostSubmit ? (
+        <KsefImportForm
+          direction="PURCHASE"
+          ksefId={preview.ksefId}
+          defaultPlannedDate={preview.paymentDueDate ?? preview.issueDate}
+          acting={acting}
+          focusSection={focusImportSection}
+          onFocusHandled={onImportFocusHandled}
+          onSubmitCost={onImportCostSubmit}
+          onSubmitRevenue={() => {}}
+        />
+      ) : null}
+      {canImportRevenue && onImportRevenueSubmit ? (
+        <KsefImportForm
+          direction="SALE"
+          ksefId={preview.ksefId}
+          defaultPlannedDate={preview.paymentDueDate ?? preview.issueDate}
+          acting={acting}
+          focusSection={focusImportSection}
+          onFocusHandled={onImportFocusHandled}
+          onSubmitCost={() => {}}
+          onSubmitRevenue={onImportRevenueSubmit}
         />
       ) : null}
 

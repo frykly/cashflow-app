@@ -118,17 +118,21 @@ export function Modal({
   onClose,
   children,
   size = "md",
+  overlayZIndexClass = "z-50",
 }: {
   open: boolean;
   title: string;
   onClose: () => void;
   children: React.ReactNode;
   size?: "md" | "lg";
+  overlayZIndexClass?: string;
 }) {
   if (!open) return null;
   const max = size === "lg" ? "max-w-2xl" : "max-w-lg";
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/40 p-4 pt-12 sm:pt-16">
+    <div
+      className={`fixed inset-0 ${overlayZIndexClass} flex items-start justify-center overflow-y-auto bg-black/40 p-4 pt-12 sm:pt-16`}
+    >
       <button type="button" className="fixed inset-0 cursor-default" aria-label="Zamknij" onClick={onClose} />
       <div
         role="dialog"

@@ -369,7 +369,20 @@ function prefillPaymentProjectRows(editing: Draft, amountGrossStr: string) {
   return defaultProportionalPaymentAllocationRows(slices, amountGrossStr);
 }
 
-export function CostInvoicesClient({ initialQueryString = "" }: { initialQueryString?: string }) {
+export function CostInvoicesClient({
+  initialQueryString = "",
+  embeddedCostInvoiceId = null,
+  onEmbeddedClose,
+  onEmbeddedSaved,
+  overlayZIndexClass = "z-50",
+}: {
+  initialQueryString?: string;
+  embeddedCostInvoiceId?: string | null;
+  onEmbeddedClose?: () => void;
+  onEmbeddedSaved?: () => void;
+  overlayZIndexClass?: string;
+}) {
+  const embedded = Boolean(embeddedCostInvoiceId);
   const router = useRouter();
   const pathname = usePathname();
   const { queryString, setParam, setParams, merged } = useListQuery("cost", initialQueryString);
@@ -430,6 +443,7 @@ export function CostInvoicesClient({ initialQueryString = "" }: { initialQuerySt
   }, []);
 
   useEffect(() => {
+    if (embedded) return;
     if (restoredRef.current) return;
     restoredRef.current = true;
     if (initialQueryString.trim().length > 0) return;
@@ -503,8 +517,9 @@ export function CostInvoicesClient({ initialQueryString = "" }: { initialQuerySt
   }, [queryString]);
 
   useEffect(() => {
+    if (embedded) return;
     load();
-  }, [load]);
+  }, [embedded, load]);
 
   function applyFilters() {
     setParams({
@@ -613,6 +628,9 @@ export function CostInvoicesClient({ initialQueryString = "" }: { initialQuerySt
     postCreateReturnRef.current = { returnTo: null, sourceProjectId: null };
     setProjectAllocMode("simple");
     setProjectAllocRows([]);
+    if (embedded) {
+      onEmbeddedClose?.();
+    }
   }
 
   function openNew() {
@@ -752,6 +770,24 @@ export function CostInvoicesClient({ initialQueryString = "" }: { initialQuerySt
 
   const openEditRef = useRef(openEdit);
   openEditRef.current = openEdit;
+
+  useEffect(() => {
+    if (!embeddedCostInvoiceId) return;
+    let cancelled = false;
+    void (async () => {
+      const r = await fetch(`/api/cost-invoices/${embeddedCostInvoiceId}`);
+      const j = await r.json();
+      if (cancelled) return;
+      if (r.ok) {
+        openEditRef.current(j as Row);
+      } else {
+        onEmbeddedClose?.();
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [embeddedCostInvoiceId, onEmbeddedClose]);
 
   const stripCostDeepLinkParams = {
     editCost: null as string | null,
@@ -985,7 +1021,11 @@ export function CostInvoicesClient({ initialQueryString = "" }: { initialQuerySt
       setPayProjectRows([]);
       setPayProjectManual(false);
       await refreshPaymentsForInvoice(editing.id);
-      load();
+      if (embedded) {
+        onEmbeddedSaved?.();
+      } else {
+        load();
+      }
     } catch {
       setFormError("Błąd sieci");
     } finally {
@@ -1003,7 +1043,11 @@ export function CostInvoicesClient({ initialQueryString = "" }: { initialQuerySt
       return;
     }
     await refreshPaymentsForInvoice(editing.id);
-    load();
+    if (embedded) {
+      onEmbeddedSaved?.();
+    } else {
+      load();
+    }
   }
 
   async function onImportFile(e: React.ChangeEvent<HTMLInputElement>) {
@@ -1138,6 +1182,11 @@ export function CostInvoicesClient({ initialQueryString = "" }: { initialQuerySt
         setFormError(readApiErrorBody(j));
         return;
       }
+      if (embedded) {
+        onEmbeddedSaved?.();
+        closeModal();
+        return;
+      }
       const snap = postCreateReturnRef.current;
       closeModal();
       if (method === "POST") {
@@ -1181,8 +1230,13 @@ export function CostInvoicesClient({ initialQueryString = "" }: { initialQuerySt
     if (!editing.id) return;
     if (!confirm("Usunąć ten dokument kosztowy? Operacja jest nieodwracalna.")) return;
     if (await deleteCostInvoiceById(editing.id)) {
-      closeModal();
-      load();
+      if (embedded) {
+        onEmbeddedSaved?.();
+        closeModal();
+      } else {
+        closeModal();
+        load();
+      }
     }
   }
 
@@ -1190,7 +1244,9 @@ export function CostInvoicesClient({ initialQueryString = "" }: { initialQuerySt
   const quickAllActive = costListFiltersEmptyForQuickAll(merged);
 
   return (
-    <div className="space-y-6">
+    <div className={embedded ? "" : "space-y-6"}>
+      {!embedded ? (
+        <>
       <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <h1 className="text-2xl font-semibold text-zinc-900 dark:text-zinc-50">Faktury kosztowe</h1>
@@ -1637,12 +1693,15 @@ export function CostInvoicesClient({ initialQueryString = "" }: { initialQuerySt
         </table>
         </div>
       </div>
+        </>
+      ) : null}
 
       <Modal
         open={open}
         title={editing.id ? "Edycja faktury kosztowej" : "Nowa faktura kosztowa"}
         onClose={closeModal}
         size="lg"
+        overlayZIndexClass={overlayZIndexClass}
       >
         <form onSubmit={save} className="max-h-[75vh] space-y-3 overflow-y-auto pr-1">
           {formError && <Alert variant="error">{formError}</Alert>}
@@ -2336,7 +2395,12 @@ export function CostInvoicesClient({ initialQueryString = "" }: { initialQuerySt
         </form>
       </Modal>
 
-      <Modal open={payOpen} title="Nowa płatność" onClose={() => setPayOpen(false)}>
+      <Modal
+        open={payOpen}
+        title="Nowa płatność"
+        onClose={() => setPayOpen(false)}
+        overlayZIndexClass={overlayZIndexClass}
+      >
         <form onSubmit={submitPayment} className="space-y-3">
           {formError && payOpen ? <Alert variant="error">{formError}</Alert> : null}
           <Field label="Kwota brutto">

@@ -125,11 +125,10 @@ export function KsefDocumentDrawer({
               duplicateCostId={duplicateCostId}
               duplicateIncomeId={duplicateIncomeId}
               acting={detailProps.acting}
-              canImportCost={detailProps.canImportCost}
-              canImportRevenue={detailProps.canImportRevenue}
               canUndoImport={detailProps.canUndoImport}
               importBlockedReason={detailProps.importBlockedReason}
               onAction={detailProps.onAction}
+              onOpenLinkedInvoice={detailProps.onOpenLinkedInvoice}
               compact
             />
           </div>

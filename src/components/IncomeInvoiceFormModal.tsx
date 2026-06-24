@@ -232,6 +232,7 @@ type IncomeInvoiceFormModalProps = {
   incomeInvoiceMultiProject: (editing: Pick<DraftLike, "projectAllocations" | "projectId">) => boolean;
   deletePayment: (paymentId: string) => Promise<void>;
   deleteInvoice?: (invoiceId: string) => Promise<void>;
+  overlayZIndexClass?: string;
 };
 
 export function IncomeInvoiceFormModal({
@@ -280,6 +281,7 @@ export function IncomeInvoiceFormModal({
   incomeInvoiceMultiProject,
   deletePayment,
   deleteInvoice,
+  overlayZIndexClass = "z-50",
 }: IncomeInvoiceFormModalProps) {
   async function handleDeleteInvoice() {
     if (!editing.id || !deleteInvoice) return;
@@ -294,6 +296,7 @@ export function IncomeInvoiceFormModal({
         title={editing.id ? "Edycja faktury przychodowej" : "Nowa faktura przychodowa"}
         onClose={closeModal}
         size="lg"
+        overlayZIndexClass={overlayZIndexClass}
       >
         <form onSubmit={save} className="max-h-[75vh] space-y-3 overflow-y-auto pr-1">
           {formError && <Alert variant="error">{formError}</Alert>}
@@ -1052,7 +1055,12 @@ export function IncomeInvoiceFormModal({
         </form>
       </Modal>
 
-      <Modal open={payOpen} title="Nowa wpłata" onClose={() => setPayOpen(false)}>
+      <Modal
+        open={payOpen}
+        title="Nowa wpłata"
+        onClose={() => setPayOpen(false)}
+        overlayZIndexClass={overlayZIndexClass}
+      >
         <form onSubmit={submitPayment} className="space-y-3">
           {formError && payOpen ? <Alert variant="error">{formError}</Alert> : null}
           <Field label="Kwota brutto">
@@ -1206,6 +1214,7 @@ export function NewIncomeInvoiceFormModal({
   projectCode,
   onClose,
   onSaved,
+  overlayZIndexClass = "z-50",
 }: {
   open: boolean;
   contractorName: string;
@@ -1215,6 +1224,7 @@ export function NewIncomeInvoiceFormModal({
   projectCode?: string | null;
   onClose: () => void;
   onSaved: () => void;
+  overlayZIndexClass?: string;
 }) {
   const [editing, setEditing] = useState<DraftLike>(() =>
     createEmptyIncomeDraft(contractorName, projectId ?? null, projectName, projectCode),
@@ -1670,6 +1680,7 @@ export function NewIncomeInvoiceFormModal({
       incomeInvoiceMultiProject={incomeInvoiceMultiProject}
       deletePayment={deletePayment}
       deleteInvoice={deleteInvoice}
+      overlayZIndexClass={overlayZIndexClass}
     />
   );
 }
