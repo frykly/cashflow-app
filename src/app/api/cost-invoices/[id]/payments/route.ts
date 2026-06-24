@@ -3,6 +3,7 @@ import { jsonData } from "@/lib/api/json-response";
 import { jsonError, zodErrorResponse } from "@/lib/api/errors";
 import { costPaymentCreateSchema } from "@/lib/validation/schemas";
 import { syncCostInvoiceStatus } from "@/lib/invoice-status-sync";
+import { costEffectivePaymentGross } from "@/lib/cashflow/cost-payment-amount";
 import { decToNumber } from "@/lib/cashflow/money";
 import { PAY_EPS, sumCostPaymentsGross } from "@/lib/cashflow/settlement";
 import { ZodError } from "zod";
@@ -45,8 +46,8 @@ export async function POST(req: Request, ctx: Ctx) {
     if (!inv) return jsonError("Nie znaleziono", 404);
     const next = decToNumber(data.amountGross);
     const cur = sumCostPaymentsGross(inv.payments);
-    if (cur + next > decToNumber(inv.grossAmount) + PAY_EPS) {
-      return jsonError("Suma płatności przekroczyłaby kwotę brutto dokumentu.");
+    if (cur + next > costEffectivePaymentGross(inv) + PAY_EPS) {
+      return jsonError("Suma płatności przekroczyłaby kwotę do zapłaty dokumentu.");
     }
 
     const gNorm = normalizeDecimalInput(String(data.amountGross));

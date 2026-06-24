@@ -27,6 +27,11 @@ export type KsefInvoiceLinePreview = {
   grossAmount: string | null;
 };
 
+export type KsefSettlementLinePreview = {
+  description: string;
+  amount: string;
+};
+
 export type KsefInvoicePreview = {
   invoiceNumber: string;
   ksefId: string;
@@ -47,6 +52,15 @@ export type KsefInvoicePreview = {
   grossAmount: string;
   vatBreakdown: VatBreakdownLine[];
   lines: KsefInvoiceLinePreview[];
+  /** Kwota należności ogółem z faktury (P_15) — bez obciążeń rozliczenia */
+  invoiceGrossAmount: string;
+  settlementCharges: KsefSettlementLinePreview[];
+  settlementDeductions: KsefSettlementLinePreview[];
+  additionalChargesTotal: string | null;
+  deductionsTotal: string | null;
+  /** Kwota do zapłaty po rozliczeniu (DoZaplaty lub P_15 + obciążenia − odliczenia) */
+  amountToPay: string | null;
+  amountToSettle: string | null;
   /** metadata = tylko zapytanie metadata; xml = pełna faktura z cache XML */
   previewSource: "metadata" | "xml";
 };
@@ -317,6 +331,13 @@ export function buildKsefInvoicePreview(
     grossAmount: doc.grossAmount.toString(),
     vatBreakdown: extractVatBreakdownFromRawPayload(doc.rawPayload),
     lines: extractInvoiceLinesFromRawPayload(doc.rawPayload),
+    invoiceGrossAmount: doc.grossAmount.toString(),
+    settlementCharges: [],
+    settlementDeductions: [],
+    additionalChargesTotal: null,
+    deductionsTotal: null,
+    amountToPay: null,
+    amountToSettle: null,
     previewSource: "metadata",
   };
 
@@ -346,8 +367,15 @@ export function buildKsefInvoicePreview(
         netAmount: xml.netAmount ?? base.netAmount,
         vatAmount: xml.vatAmount ?? base.vatAmount,
         grossAmount: xml.grossAmount ?? base.grossAmount,
+        invoiceGrossAmount: xml.grossAmount ?? base.grossAmount,
         vatBreakdown: xml.vatBreakdown.length > 0 ? xml.vatBreakdown : base.vatBreakdown,
         lines: xml.lines.length > 0 ? xml.lines : base.lines,
+        settlementCharges: xml.settlementCharges,
+        settlementDeductions: xml.settlementDeductions,
+        additionalChargesTotal: xml.additionalChargesTotal,
+        deductionsTotal: xml.deductionsTotal,
+        amountToPay: xml.amountToPay,
+        amountToSettle: xml.amountToSettle,
       };
     } catch {
       return base;

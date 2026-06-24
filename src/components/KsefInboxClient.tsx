@@ -46,6 +46,10 @@ type Row = {
   linkedIncomeInvoiceId: string | null;
   paymentStatus: KsefPaymentStatus;
   paymentStatusLabel: string;
+  invoiceGrossAmount: string;
+  amountToPay: string;
+  additionalChargesTotal: string | null;
+  hasPaymentAmountSplit: boolean;
 };
 
 type DocDetail = {
@@ -784,7 +788,15 @@ export function KsefInboxClient() {
                     {directionLabel(r.documentDirection)}
                   </td>
                   <td className="p-2 text-right font-mono whitespace-nowrap">
-                    {r.grossAmount} {r.currency}
+                    <div>{r.amountToPay ?? r.grossAmount} {r.currency}</div>
+                    {r.hasPaymentAmountSplit ? (
+                      <div className="mt-0.5 text-[10px] font-sans text-zinc-500 dark:text-zinc-400">
+                        faktura {r.invoiceGrossAmount} {r.currency}
+                        {r.additionalChargesTotal
+                          ? ` + obciążenia ${r.additionalChargesTotal}`
+                          : ""}
+                      </div>
+                    ) : null}
                   </td>
                   <td className="p-2">{workflowBadge(r.workflowStatus)}</td>
                   <td className="p-2">{paymentBadge(r.paymentStatus, r.paymentStatusLabel)}</td>

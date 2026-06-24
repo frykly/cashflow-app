@@ -1,6 +1,7 @@
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { decToNumber, round2 } from "@/lib/cashflow/money";
+import { costEffectivePaymentGross } from "@/lib/cashflow/cost-payment-amount";
 import { projectLifecycleDisplay, projectSettlementDisplay } from "@/lib/project-status-labels";
 
 const TAKE = 50;
@@ -23,6 +24,16 @@ function sumPayments(payments: { amountGross: Prisma.Decimal }[]): number {
 
 function remainingGross(grossAmount: Prisma.Decimal, payments: { amountGross: Prisma.Decimal }[]): number {
   return Math.max(0, round2(decToNumber(grossAmount) - sumPayments(payments)));
+}
+
+function remainingPaymentGross(
+  grossAmount: Prisma.Decimal,
+  amountToPayGross: Prisma.Decimal | null | undefined,
+  payments: { amountGross: Prisma.Decimal }[],
+): number {
+  const effective =
+    amountToPayGross != null ? decToNumber(amountToPayGross) : decToNumber(grossAmount);
+  return Math.max(0, round2(effective - sumPayments(payments)));
 }
 
 export async function getContractorDetails(id: string) {
@@ -82,6 +93,7 @@ export async function getContractorDetails(id: string) {
         documentNumber: true,
         supplier: true,
         grossAmount: true,
+        amountToPayGross: true,
         documentDate: true,
         paymentDueDate: true,
         status: true,
@@ -153,6 +165,7 @@ export async function getContractorDetails(id: string) {
       where: costWhere,
       select: {
         grossAmount: true,
+        amountToPayGross: true,
         payments: { select: { amountGross: true } },
       },
     }),
@@ -175,7 +188,12 @@ export async function getContractorDetails(id: string) {
   const incomeRemaining = round2(incomeSummaryRows.reduce((sum, r) => sum + remainingGross(r.grossAmount, r.payments), 0));
   const costGross = round2(costSummaryRows.reduce((sum, r) => sum + decToNumber(r.grossAmount), 0));
   const costPaid = round2(costSummaryRows.reduce((sum, r) => sum + sumPayments(r.payments), 0));
-  const costRemaining = round2(costSummaryRows.reduce((sum, r) => sum + remainingGross(r.grossAmount, r.payments), 0));
+  const costRemaining = round2(
+    costSummaryRows.reduce(
+      (sum, r) => sum + remainingPaymentGross(r.grossAmount, r.amountToPayGross, r.payments),
+      0,
+    ),
+  );
   const bankIncome = round2(bankSummaryRows.reduce((sum, r) => sum + (r.amount > 0 ? r.amount / 100 : 0), 0));
   const bankExpenses = round2(bankSummaryRows.reduce((sum, r) => sum + (r.amount < 0 ? Math.abs(r.amount) / 100 : 0), 0));
   const contractorProjects = projectContractorLinks
@@ -216,12 +234,15 @@ export async function getContractorDetails(id: string) {
       })),
       costInvoices: costInvoices.map((r) => {
         const paidAmount = sumPayments(r.payments);
-        const remainingAmount = remainingGross(r.grossAmount, r.payments);
+        const remainingAmount = remainingPaymentGross(r.grossAmount, r.amountToPayGross, r.payments);
+        const paymentGross = costEffectivePaymentGross(r);
         return {
           id: r.id,
           documentNumber: r.documentNumber,
           supplier: r.supplier,
           grossAmount: r.grossAmount.toString(),
+          amountToPayGross: r.amountToPayGross?.toString() ?? null,
+          paymentGrossAmount: paymentGross.toFixed(2),
           paidAmount,
           remainingAmount,
           documentDate: r.documentDate.toISOString(),

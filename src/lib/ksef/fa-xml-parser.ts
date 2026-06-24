@@ -1,5 +1,5 @@
 import { XMLParser } from "fast-xml-parser";
-import type { KsefInvoiceLinePreview, KsefPartyPreview } from "./invoice-preview";
+import type { KsefInvoiceLinePreview, KsefPartyPreview, KsefSettlementLinePreview } from "./invoice-preview";
 import type { VatBreakdownLine } from "./raw-payload-display";
 
 export type FaXmlParsedInvoice = {
@@ -15,6 +15,12 @@ export type FaXmlParsedInvoice = {
   grossAmount: string | null;
   vatBreakdown: VatBreakdownLine[];
   lines: KsefInvoiceLinePreview[];
+  settlementCharges: KsefSettlementLinePreview[];
+  settlementDeductions: KsefSettlementLinePreview[];
+  additionalChargesTotal: string | null;
+  deductionsTotal: string | null;
+  amountToPay: string | null;
+  amountToSettle: string | null;
 };
 
 const xmlParser = new XMLParser({
@@ -200,6 +206,86 @@ function sumNetFromBreakdown(breakdown: VatBreakdownLine[]): string | null {
   return any ? total.toFixed(2) : null;
 }
 
+function sumSettlementLines(lines: KsefSettlementLinePreview[]): string | null {
+  let total = 0;
+  let any = false;
+  for (const line of lines) {
+    total += Number(line.amount);
+    any = true;
+  }
+  return any ? total.toFixed(2) : null;
+}
+
+function extractSettlementLines(
+  items: unknown,
+  defaultDescription: string,
+): KsefSettlementLinePreview[] {
+  const lines: KsefSettlementLinePreview[] = [];
+  for (const item of asArray(items)) {
+    const rec = asRecord(item);
+    if (!rec) continue;
+    const amount = fmtAmount(rec.Kwota);
+    if (!amount || Number(amount) === 0) continue;
+    lines.push({
+      description: textOf(rec.Powod) ?? defaultDescription,
+      amount,
+    });
+  }
+  return lines;
+}
+
+function extractSettlement(
+  fa: Record<string, unknown>,
+  grossAmount: string | null,
+): Pick<
+  FaXmlParsedInvoice,
+  | "settlementCharges"
+  | "settlementDeductions"
+  | "additionalChargesTotal"
+  | "deductionsTotal"
+  | "amountToPay"
+  | "amountToSettle"
+> {
+  const rozliczenie = asRecord(fa.Rozliczenie);
+  if (!rozliczenie) {
+    return {
+      settlementCharges: [],
+      settlementDeductions: [],
+      additionalChargesTotal: null,
+      deductionsTotal: null,
+      amountToPay: null,
+      amountToSettle: null,
+    };
+  }
+
+  const settlementCharges = extractSettlementLines(rozliczenie.Obciazenia, "Obciążenie");
+  const settlementDeductions = extractSettlementLines(rozliczenie.Odliczenia, "Odliczenie");
+  const additionalChargesTotal =
+    fmtAmount(rozliczenie.SumaObciazen) ?? sumSettlementLines(settlementCharges);
+  const deductionsTotal =
+    fmtAmount(rozliczenie.SumaOdliczen) ?? sumSettlementLines(settlementDeductions);
+  const amountToSettle = fmtAmount(rozliczenie.DoRozliczenia);
+
+  let amountToPay = fmtAmount(rozliczenie.DoZaplaty);
+  if (!amountToPay && grossAmount) {
+    const gross = Number(grossAmount);
+    const charges = additionalChargesTotal ? Number(additionalChargesTotal) : 0;
+    const deductions = deductionsTotal ? Number(deductionsTotal) : 0;
+    if (charges > 0 || deductions > 0) {
+      amountToPay = (gross + charges - deductions).toFixed(2);
+    }
+  }
+
+  return {
+    settlementCharges,
+    settlementDeductions,
+    additionalChargesTotal,
+    deductionsTotal,
+    amountToPay,
+    amountToSettle,
+  };
+}
+
 function findFakturaRoot(parsed: unknown): Record<string, unknown> | null {
   const rec = asRecord(parsed);
   if (!rec) return null;
@@ -236,6 +322,8 @@ export function parseFaInvoiceXml(xml: string): FaXmlParsedInvoice {
     textOf(faktura.P_2) ??
     textOf(asRecord(faktura.Naglowek)?.P_2);
 
+  const settlement = extractSettlement(fa, grossAmount);
+
   return {
     invoiceNumber,
     issueDate: fmtDate(fa.P_1),
@@ -249,5 +337,6 @@ export function parseFaInvoiceXml(xml: string): FaXmlParsedInvoice {
     grossAmount,
     vatBreakdown,
     lines: extractLines(fa),
+    ...settlement,
   };
 }

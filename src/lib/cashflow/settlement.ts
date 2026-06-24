@@ -4,6 +4,7 @@ import type {
   IncomeInvoice,
   IncomeInvoicePayment,
 } from "@prisma/client";
+import { costEffectivePaymentGross, type CostInvoicePaymentAmountPick } from "./cost-payment-amount";
 import { decToNumber, round2 } from "./money";
 
 export const PAY_EPS = 0.005;
@@ -24,10 +25,10 @@ export function incomeRemainingGross(
 }
 
 export function costRemainingGross(
-  inv: Pick<CostInvoice, "grossAmount">,
+  inv: CostInvoicePaymentAmountPick,
   payments: Pick<CostInvoicePayment, "amountGross">[],
 ): number {
-  return round2(decToNumber(inv.grossAmount) - sumCostPaymentsGross(payments));
+  return round2(costEffectivePaymentGross(inv) - sumCostPaymentsGross(payments));
 }
 
 export function isIncomeFullyPaid(inv: IncomeInvoice, payments: Pick<IncomeInvoicePayment, "amountGross">[]): boolean {

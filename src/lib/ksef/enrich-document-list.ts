@@ -1,5 +1,6 @@
 import type { KsefDocument } from "@prisma/client";
 import { ksefDocumentToPublicRow } from "@/lib/ksef/document-public-row";
+import { resolveKsefDocumentPaymentAmounts } from "@/lib/ksef/ksef-payment-amounts";
 import {
   loadInvoiceMapsForPaymentStatus,
   paymentFieldsForDocument,
@@ -20,8 +21,13 @@ export async function enrichKsefDocumentListRows(docs: KsefDocument[]) {
     [...incomeIds],
   );
 
-  return docs.map((doc) => ({
-    ...ksefDocumentToPublicRow(doc),
-    ...paymentFieldsForDocument(doc, costById, incomeById),
-  }));
+  return docs.map((doc) => {
+    const { costId, incomeId } = resolveLinkedInvoiceIds(doc);
+    const linkedCost = costId ? costById.get(costId) : null;
+    return {
+      ...ksefDocumentToPublicRow(doc),
+      ...paymentFieldsForDocument(doc, costById, incomeById),
+      ...resolveKsefDocumentPaymentAmounts(doc, linkedCost),
+    };
+  });
 }

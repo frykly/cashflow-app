@@ -33,6 +33,7 @@ type PaymentPick = { amountGross: Decimal };
 type CostInvoiceForStatus = {
   id: string;
   grossAmount: Decimal;
+  amountToPayGross: Decimal | null;
   paymentDueDate: Date;
   payments: PaymentPick[];
 };
@@ -81,7 +82,10 @@ export function contractorNameForDocument(doc: Pick<
 
 function computeCostPaymentStatus(inv: CostInvoiceForStatus): KsefPaymentStatus {
   const paidSum = sumCostPaymentsGross(inv.payments);
-  const rem = costRemainingGross({ grossAmount: inv.grossAmount }, inv.payments);
+  const rem = costRemainingGross(
+    { grossAmount: inv.grossAmount, amountToPayGross: inv.amountToPayGross },
+    inv.payments,
+  );
   if (rem <= KSEF_PAYMENT_EPS) return "PAID";
   if (paidSum > KSEF_PAYMENT_EPS) return "PARTIAL";
   if (isPastDue(inv.paymentDueDate)) return "OVERDUE";
@@ -125,6 +129,7 @@ export async function loadInvoiceMapsForPaymentStatus(costIds: string[], incomeI
           select: {
             id: true,
             grossAmount: true,
+            amountToPayGross: true,
             paymentDueDate: true,
             payments: { select: { amountGross: true } },
           },

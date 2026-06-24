@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { Button, Field, Input, Select, Spinner, Textarea } from "@/components/ui";
+import { formatMoney } from "@/lib/format";
 import { ProjectSearchPicker } from "@/components/ProjectSearchPicker";
 import { ksefImportNotes } from "@/lib/ksef/ksef-import-marker";
 import type { KsefDocumentDirection } from "@/lib/ksef/types";
@@ -18,6 +19,8 @@ export type KsefImportFormProps = {
   direction: Extract<KsefDocumentDirection, "PURCHASE" | "SALE">;
   ksefId: string;
   defaultPlannedDate: string | null;
+  invoiceGrossAmount?: string | null;
+  amountToPay?: string | null;
   acting: boolean;
   focusSection?: boolean;
   onFocusHandled?: () => void;
@@ -29,6 +32,8 @@ export function KsefImportForm({
   direction,
   ksefId,
   defaultPlannedDate,
+  invoiceGrossAmount,
+  amountToPay,
   acting,
   focusSection = false,
   onFocusHandled,
@@ -123,6 +128,11 @@ export function KsefImportForm({
 
   const title = direction === "PURCHASE" ? "Import kosztu" : "Import przychodu";
   const submitLabel = direction === "PURCHASE" ? "Zapisz jako koszt" : "Zapisz jako przychód";
+  const paymentMismatch =
+    direction === "PURCHASE" &&
+    amountToPay != null &&
+    invoiceGrossAmount != null &&
+    Math.abs(Number(amountToPay) - Number(invoiceGrossAmount)) > 0.02;
 
   return (
     <section
@@ -135,6 +145,14 @@ export function KsefImportForm({
       <p className="text-xs text-zinc-600 dark:text-zinc-400">
         Kwoty, kontrahent i numer pochodzą z dokumentu KSeF. Uzupełnij pola poniżej i zapisz.
       </p>
+
+      {paymentMismatch ? (
+        <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-900/50 dark:bg-amber-950/40 dark:text-amber-100">
+          Kwota faktury ({formatMoney(invoiceGrossAmount)}) różni się od kwoty do zapłaty (
+          {formatMoney(amountToPay)}). Przy imporcie zapiszemy obie wartości — płatności i cashflow będą
+          liczone od kwoty do zapłaty.
+        </div>
+      ) : null}
 
       {listsLoading ? (
         <div className="flex items-center gap-2 text-xs text-zinc-500">

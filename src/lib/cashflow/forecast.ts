@@ -10,6 +10,7 @@ import type {
 } from "@prisma/client";
 import { addDays, isBefore, startOfDay } from "date-fns";
 import { dayKey, parseDayKey } from "./dates";
+import { costEffectivePaymentGross } from "./cost-payment-amount";
 import { decToNumber, round2 } from "./money";
 import {
   costPaymentDeltas,
@@ -233,7 +234,7 @@ function appendCostMovements(inv: CostInvoice & { payments: CostInvoicePayment[]
 
   if (inv.payments.length === 0 && inv.paid) {
     const d = inv.actualPaymentDate ?? inv.plannedPaymentDate;
-    pushCostMovement(inv, decToNumber(inv.grossAmount), inv.id, label, d, out);
+    pushCostMovement(inv, costEffectivePaymentGross(inv), inv.id, label, d, out);
     return;
   }
 

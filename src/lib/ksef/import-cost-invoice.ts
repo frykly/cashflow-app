@@ -8,6 +8,7 @@ import { inferVatRateFromAmounts } from "@/lib/vat-rate";
 import { findProbableCostDuplicate } from "./duplicate-match";
 import { ksefDocumentToPublicRow } from "./document-public-row";
 import { ksefImportNotes } from "./ksef-import-marker";
+import { resolveAmountToPayGrossFromKsefXml } from "./ksef-payment-amounts";
 
 const ALREADY_IN_SYSTEM_MSG = "Ta faktura prawdopodobnie już istnieje w systemie";
 
@@ -54,6 +55,7 @@ export async function importKsefDocumentAsCost(documentId: string, options: Ksef
   const net = decToNumber(doc.netAmount);
   const vat = decToNumber(doc.vatAmount);
   const gross = decToNumber(doc.grossAmount);
+  const amountToPayGross = resolveAmountToPayGrossFromKsefXml(doc);
   const vatRate = inferVatRateFromAmounts(net, vat);
   const documentDate = doc.issueDate;
   const paymentDueDate = doc.paymentDueDate ?? doc.issueDate;
@@ -74,6 +76,7 @@ export async function importKsefDocumentAsCost(documentId: string, options: Ksef
         netAmount: net,
         vatAmount: vat,
         grossAmount: gross,
+        amountToPayGross: amountToPayGross ?? undefined,
         documentDate,
         paymentDueDate,
         plannedPaymentDate,

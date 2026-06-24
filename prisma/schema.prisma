@@ -374,6 +374,8 @@ model CostInvoice {
   netAmount                 Decimal
   vatAmount                 Decimal
   grossAmount               Decimal
+  /// Realna kwota do zapłaty (np. faktura + obciążenia KSeF). null = jak grossAmount.
+  amountToPayGross          Decimal?
   documentDate              DateTime
   paymentDueDate            DateTime
   plannedPaymentDate        DateTime

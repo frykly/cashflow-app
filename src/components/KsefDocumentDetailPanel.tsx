@@ -2,6 +2,7 @@
 
 import { useState, type ReactNode } from "react";
 import { Badge, Button } from "@/components/ui";
+import { formatDate, formatMoney } from "@/lib/format";
 import type { KsefInvoicePreview } from "@/lib/ksef/invoice-preview";
 import type { KsefWorkflowStatus } from "@/lib/ksef/types";
 import type { KsefImportCostBody, KsefImportRevenueBody } from "@/lib/validation/ksef-import-schemas";
@@ -232,6 +233,13 @@ function PartyBlock({ title, party }: { title: string; party: KsefInvoicePreview
 }
 
 function AmountTable({ preview }: { preview: KsefInvoicePreview }) {
+  const hasSettlement =
+    preview.settlementCharges.length > 0 ||
+    preview.settlementDeductions.length > 0 ||
+    preview.additionalChargesTotal != null ||
+    preview.deductionsTotal != null;
+  const grossLabel = hasSettlement ? "Kwota faktury (brutto)" : "Brutto";
+
   return (
     <div className="overflow-x-auto rounded border border-zinc-200 dark:border-zinc-700">
       <table className="w-full border-collapse text-xs">
@@ -254,13 +262,121 @@ function AmountTable({ preview }: { preview: KsefInvoicePreview }) {
             <td className="px-2 py-1.5">{preview.currency}</td>
           </tr>
           <tr>
-            <td className="px-2 py-1.5 font-semibold">Brutto</td>
-            <td className="px-2 py-1.5 text-right font-semibold">{preview.grossAmount}</td>
+            <td className="px-2 py-1.5 font-semibold">{grossLabel}</td>
+            <td className="px-2 py-1.5 text-right font-semibold">{preview.invoiceGrossAmount}</td>
             <td className="px-2 py-1.5 font-semibold">{preview.currency}</td>
           </tr>
         </tbody>
       </table>
     </div>
+  );
+}
+
+function SettlementSection({ preview }: { preview: KsefInvoicePreview }) {
+  const hasCharges = preview.settlementCharges.length > 0 || preview.additionalChargesTotal != null;
+  const hasDeductions = preview.settlementDeductions.length > 0 || preview.deductionsTotal != null;
+  if (!hasCharges && !hasDeductions && !preview.amountToPay) return null;
+
+  return (
+    <section className="space-y-2 border-t border-zinc-200 pt-3 dark:border-zinc-700">
+      <SectionTitle>Rozliczenie / obciążenia</SectionTitle>
+      {hasCharges ? (
+        <div className="overflow-x-auto rounded border border-zinc-200 dark:border-zinc-700">
+          <table className="w-full border-collapse text-xs">
+            <thead>
+              <tr className="border-b border-zinc-200 bg-zinc-50 text-left dark:border-zinc-700 dark:bg-zinc-900/60">
+                <th className="px-2 py-1.5 font-medium text-zinc-600">Obciążenie</th>
+                <th className="px-2 py-1.5 text-right font-medium text-zinc-600">Kwota</th>
+              </tr>
+            </thead>
+            <tbody>
+              {preview.settlementCharges.map((line, i) => (
+                <tr key={i} className="border-b border-zinc-100 last:border-0 dark:border-zinc-800">
+                  <td className="px-2 py-1.5">{line.description}</td>
+                  <td className="px-2 py-1.5 text-right font-mono">{line.amount}</td>
+                </tr>
+              ))}
+              {preview.additionalChargesTotal ? (
+                <tr className="bg-amber-50/80 font-semibold dark:bg-amber-950/30">
+                  <td className="px-2 py-1.5">Suma obciążeń</td>
+                  <td className="px-2 py-1.5 text-right font-mono">{preview.additionalChargesTotal}</td>
+                </tr>
+              ) : null}
+            </tbody>
+          </table>
+        </div>
+      ) : null}
+      {hasDeductions ? (
+        <div className="overflow-x-auto rounded border border-zinc-200 dark:border-zinc-700">
+          <table className="w-full border-collapse text-xs">
+            <thead>
+              <tr className="border-b border-zinc-200 bg-zinc-50 text-left dark:border-zinc-700 dark:bg-zinc-900/60">
+                <th className="px-2 py-1.5 font-medium text-zinc-600">Odliczenie</th>
+                <th className="px-2 py-1.5 text-right font-medium text-zinc-600">Kwota</th>
+              </tr>
+            </thead>
+            <tbody>
+              {preview.settlementDeductions.map((line, i) => (
+                <tr key={i} className="border-b border-zinc-100 last:border-0 dark:border-zinc-800">
+                  <td className="px-2 py-1.5">{line.description}</td>
+                  <td className="px-2 py-1.5 text-right font-mono">{line.amount}</td>
+                </tr>
+              ))}
+              {preview.deductionsTotal ? (
+                <tr className="bg-emerald-50/80 font-semibold dark:bg-emerald-950/30">
+                  <td className="px-2 py-1.5">Suma odliczeń</td>
+                  <td className="px-2 py-1.5 text-right font-mono">{preview.deductionsTotal}</td>
+                </tr>
+              ) : null}
+            </tbody>
+          </table>
+        </div>
+      ) : null}
+      {preview.amountToPay ? (
+        <div className="rounded-lg border-2 border-sky-300 bg-sky-50 px-3 py-3 dark:border-sky-800 dark:bg-sky-950/50">
+          <p className="text-xs font-medium uppercase tracking-wide text-sky-800 dark:text-sky-200">
+            Razem do zapłaty
+          </p>
+          <p className="mt-1 text-2xl font-bold tabular-nums text-sky-950 dark:text-sky-50">
+            {formatMoney(preview.amountToPay)}
+          </p>
+          <p className="mt-1 text-xs text-sky-900/80 dark:text-sky-200/80">
+            Kwota faktury: {formatMoney(preview.invoiceGrossAmount)}
+            {preview.additionalChargesTotal
+              ? ` · Obciążenia: ${formatMoney(preview.additionalChargesTotal)}`
+              : ""}
+            {preview.deductionsTotal ? ` · Odliczenia: ${formatMoney(preview.deductionsTotal)}` : ""}
+          </p>
+        </div>
+      ) : null}
+      {preview.amountToSettle ? (
+        <p className="text-xs text-zinc-600 dark:text-zinc-400">
+          Do rozliczenia (nadpłata): {formatMoney(preview.amountToSettle)}
+        </p>
+      ) : null}
+    </section>
+  );
+}
+
+function PaymentSection({ preview }: { preview: KsefInvoicePreview }) {
+  if (!preview.paymentDueDate && !preview.seller.bankAccount) return null;
+  return (
+    <section className="space-y-2 border-t border-zinc-200 pt-3 dark:border-zinc-700">
+      <SectionTitle>Płatność</SectionTitle>
+      <dl className="space-y-1 rounded border border-zinc-100 bg-zinc-50/80 p-2 dark:border-zinc-800 dark:bg-zinc-900/40">
+        <InfoRow label="Termin płatności" value={preview.paymentDueDate ? formatDate(preview.paymentDueDate) : "—"} />
+        <InfoRow
+          label="Rachunek bankowy"
+          value={
+            preview.seller.bankAccount ? (
+              <span className="font-mono break-all">{preview.seller.bankAccount}</span>
+            ) : (
+              "—"
+            )
+          }
+        />
+      </dl>
+    </section>
   );
 }
 
@@ -397,10 +513,13 @@ export function KsefDocumentDetailPanel({
       <PartyBlock title="Nabywca" party={preview.buyer} />
 
       <section className="space-y-2 border-t border-zinc-200 pt-3 dark:border-zinc-700">
-        <SectionTitle>Kwoty</SectionTitle>
+        <SectionTitle>Kwoty faktury</SectionTitle>
         <AmountTable preview={preview} />
         <VatBreakdownTable preview={preview} />
       </section>
+
+      <SettlementSection preview={preview} />
+      <PaymentSection preview={preview} />
 
       <section className="space-y-2 border-t border-zinc-200 pt-3 dark:border-zinc-700">
         <SectionTitle>Pozycje faktury</SectionTitle>
@@ -541,6 +660,8 @@ export function KsefDocumentDetailPanel({
           direction="PURCHASE"
           ksefId={preview.ksefId}
           defaultPlannedDate={preview.paymentDueDate ?? preview.issueDate}
+          invoiceGrossAmount={preview.invoiceGrossAmount}
+          amountToPay={preview.amountToPay}
           acting={acting}
           focusSection={focusImportSection}
           onFocusHandled={onImportFocusHandled}

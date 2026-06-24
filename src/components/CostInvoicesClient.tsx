@@ -16,6 +16,11 @@ import { useListQuery } from "@/hooks/useListQuery";
 import { isCalendarOverdue } from "@/lib/cashflow/overdue";
 import type { CostInvoice, CostInvoicePayment } from "@prisma/client";
 import { costRemainingGross, isCostFullyPaid, sumCostPaymentsGross } from "@/lib/cashflow/settlement";
+import {
+  costAdditionalChargesGross,
+  costEffectivePaymentGross,
+  costHasPaymentAmountSplit,
+} from "@/lib/cashflow/cost-payment-amount";
 import { DueDateOffsetControls } from "@/components/DueDateOffsetControls";
 import { normalizeDecimalInput } from "@/lib/decimal-input";
 import { isStoredVatOnlyCost } from "@/lib/validation/is-vat-only-cost";
@@ -57,6 +62,7 @@ type Row = {
   netAmount: string;
   vatAmount: string;
   grossAmount: string;
+  amountToPayGross?: string | null;
   documentDate?: string | null;
   paymentDueDate?: string | null;
   plannedPaymentDate?: string | null;
@@ -171,6 +177,25 @@ function costRowOverdue(r: Row): boolean {
   return (
     isCalendarOverdue(new Date(r.plannedPaymentDate), now) ||
     isCalendarOverdue(new Date(r.paymentDueDate), now)
+  );
+}
+
+function CostPaymentAmountHint({
+  grossAmount,
+  amountToPayGross,
+}: {
+  grossAmount: string;
+  amountToPayGross?: string | null;
+}) {
+  const inv = { grossAmount, amountToPayGross: amountToPayGross ?? null };
+  if (!costHasPaymentAmountSplit(inv)) return null;
+  const charges = costAdditionalChargesGross(inv);
+  return (
+    <div className="rounded-lg border border-amber-200 bg-amber-50/80 px-3 py-2 text-sm text-amber-950 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-100">
+      <p>Kwota faktury: {formatMoney(grossAmount)}</p>
+      {charges != null ? <p>Dodatkowe obciążenia: {formatMoney(charges)}</p> : null}
+      <p className="font-semibold">Do zapłaty: {formatMoney(costEffectivePaymentGross(inv))}</p>
+    </div>
   );
 }
 
@@ -1653,7 +1678,26 @@ export function CostInvoicesClient({
                       {formatMoney(Number(r.netAmount))}
                     </td>
                     <td className="px-1 py-2.5 text-right text-sm tabular-nums text-zinc-800 dark:text-zinc-200">
-                      {formatMoney(Number(r.grossAmount))}
+                      {(() => {
+                        const invPick = {
+                          grossAmount: String(r.grossAmount),
+                          amountToPayGross: r.amountToPayGross ?? null,
+                        };
+                        const paymentGross = costEffectivePaymentGross(invPick);
+                        const split = costHasPaymentAmountSplit(invPick);
+                        return (
+                          <div>
+                            <div className="font-medium text-zinc-900 dark:text-zinc-100">
+                              {formatMoney(paymentGross)}
+                            </div>
+                            {split ? (
+                              <div className="text-[10px] text-zinc-500 dark:text-zinc-400">
+                                faktura {formatMoney(r.grossAmount)}
+                              </div>
+                            ) : null}
+                          </div>
+                        );
+                      })()}
                     </td>
                     <td className="min-w-0 px-1 py-2.5 text-sm font-medium tabular-nums text-zinc-900 dark:text-zinc-100">
                       {r.plannedPaymentDate ? formatDate(r.plannedPaymentDate) : "—"}
@@ -1705,6 +1749,10 @@ export function CostInvoicesClient({
       >
         <form onSubmit={save} className="max-h-[75vh] space-y-3 overflow-y-auto pr-1">
           {formError && <Alert variant="error">{formError}</Alert>}
+          <CostPaymentAmountHint
+            grossAmount={editing.grossAmount}
+            amountToPayGross={editing.amountToPayGross}
+          />
           {pdfDraftNote ? (
             <Alert variant="info">
               <p className="whitespace-pre-wrap text-sm">{pdfDraftNote}</p>

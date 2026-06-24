@@ -1,4 +1,5 @@
 import { Decimal } from "@prisma/client/runtime/library";
+import { costEffectivePaymentGross } from "@/lib/cashflow/cost-payment-amount";
 import { decToNumber } from "@/lib/cashflow/money";
 import { PAY_EPS, sumCostPaymentsGross, sumIncomePaymentsGross } from "@/lib/cashflow/settlement";
 import type { CostInvoice, CostInvoicePayment, IncomeInvoice, IncomeInvoicePayment } from "@prisma/client";
@@ -28,10 +29,12 @@ export function assertIncomePaymentFits(
 }
 
 export function assertCostPaymentFits(
-  inv: Pick<CostInvoice, "grossAmount"> & { payments: Pick<CostInvoicePayment, "amountGross">[] },
+  inv: Pick<CostInvoice, "grossAmount" | "amountToPayGross"> & {
+    payments: Pick<CostInvoicePayment, "amountGross">[];
+  },
   nextGross: Decimal,
 ): void {
   const cur = sumCostPaymentsGross(inv.payments);
   const next = decToNumber(nextGross);
-  if (cur + next > decToNumber(inv.grossAmount) + PAY_EPS) throw new Error("COST_PAYMENT_EXCEEDS_GROSS");
+  if (cur + next > costEffectivePaymentGross(inv) + PAY_EPS) throw new Error("COST_PAYMENT_EXCEEDS_GROSS");
 }

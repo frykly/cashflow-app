@@ -19,6 +19,8 @@ export type ContractorCostInvoiceRow = {
   documentNumber: string;
   supplier: string;
   grossAmount: string;
+  amountToPayGross: string | null;
+  paymentGrossAmount: string;
   paidAmount: number;
   remainingAmount: number;
   documentDate: string;
@@ -59,9 +61,11 @@ export function ContractorCostPaymentBatch({
   );
 
   const totals = useMemo(() => {
-    const grossSum = round2(selectedInvoices.reduce((s, inv) => s + decToNumber(inv.grossAmount), 0));
+    const paymentSum = round2(
+      selectedInvoices.reduce((s, inv) => s + decToNumber(inv.paymentGrossAmount), 0),
+    );
     const remainingSum = round2(selectedInvoices.reduce((s, inv) => s + inv.remainingAmount, 0));
-    return { grossSum, remainingSum };
+    return { paymentSum, remainingSum };
   }, [selectedInvoices]);
 
   function toggleInvoice(id: string) {
@@ -110,7 +114,7 @@ export function ContractorCostPaymentBatch({
               <span className="font-medium">Zaznaczono: {selectedInvoices.length}</span>
               <span className="mx-2 text-zinc-300 dark:text-zinc-600">·</span>
               <span>
-                Brutto: <span className="font-medium tabular-nums">{formatMoney(totals.grossSum)}</span>
+                Do zapłaty: <span className="font-medium tabular-nums">{formatMoney(totals.paymentSum)}</span>
               </span>
               <span className="mx-2 text-zinc-300 dark:text-zinc-600">·</span>
               <span>
@@ -144,8 +148,11 @@ export function ContractorCostPaymentBatch({
         {invoices.map((r) => {
           const selectable = payableIds.has(r.id);
           const selected = selectedIds.has(r.id);
-          const showRemaining =
-            selectable && r.remainingAmount < decToNumber(r.grossAmount) - 0.02;
+          const paymentGross = decToNumber(r.paymentGrossAmount);
+          const hasPaymentSplit =
+            r.amountToPayGross != null &&
+            Math.abs(decToNumber(r.amountToPayGross) - decToNumber(r.grossAmount)) > 0.02;
+          const showPartialPaid = selectable && r.remainingAmount < paymentGross - 0.02;
 
           return (
             <div key={r.id} className="flex items-stretch gap-2">
@@ -174,19 +181,24 @@ export function ContractorCostPaymentBatch({
                       <span className="mx-1.5 text-zinc-300 dark:text-zinc-600">·</span>
                       <span>{formatDate(r.documentDate)}</span>
                     </p>
-                    {showRemaining ? (
+                    {showPartialPaid ? (
                       <p className="mt-1 text-xs font-medium text-amber-800 dark:text-amber-200">
                         Pozostało: {formatMoney(r.remainingAmount)}
+                      </p>
+                    ) : null}
+                    {hasPaymentSplit ? (
+                      <p className="mt-1 text-[11px] text-zinc-500 dark:text-zinc-400">
+                        Kwota faktury: {formatMoney(r.grossAmount)}
                       </p>
                     ) : null}
                   </div>
                   <div className="shrink-0 text-right">
                     <span className="text-sm font-semibold tabular-nums text-zinc-900 dark:text-zinc-100">
-                      {formatMoney(r.grossAmount)}
+                      {formatMoney(r.paymentGrossAmount)}
                     </span>
-                    {showRemaining ? (
+                    {hasPaymentSplit ? (
                       <p className="mt-0.5 text-[11px] tabular-nums text-zinc-500 dark:text-zinc-400">
-                        brutto
+                        do zapłaty
                       </p>
                     ) : null}
                   </div>
