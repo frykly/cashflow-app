@@ -83,7 +83,9 @@ export async function getContractorDetails(id: string) {
         supplier: true,
         grossAmount: true,
         documentDate: true,
+        paymentDueDate: true,
         status: true,
+        payments: { select: { amountGross: true } },
       },
     }),
     prisma.project.findMany({
@@ -212,11 +214,21 @@ export async function getContractorDetails(id: string) {
         grossAmount: r.grossAmount.toString(),
         issueDate: r.issueDate.toISOString(),
       })),
-      costInvoices: costInvoices.map((r) => ({
-        ...r,
-        grossAmount: r.grossAmount.toString(),
-        documentDate: r.documentDate.toISOString(),
-      })),
+      costInvoices: costInvoices.map((r) => {
+        const paidAmount = sumPayments(r.payments);
+        const remainingAmount = remainingGross(r.grossAmount, r.payments);
+        return {
+          id: r.id,
+          documentNumber: r.documentNumber,
+          supplier: r.supplier,
+          grossAmount: r.grossAmount.toString(),
+          paidAmount,
+          remainingAmount,
+          documentDate: r.documentDate.toISOString(),
+          paymentDueDate: r.paymentDueDate?.toISOString() ?? null,
+          status: r.status,
+        };
+      }),
       projects: projects.map((r) => ({
         ...r,
         updatedAt: r.updatedAt.toISOString(),

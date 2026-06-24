@@ -7,9 +7,9 @@ import { Alert, Badge, Button, Spinner, Textarea } from "@/components/ui";
 import { readApiErrorBody } from "@/lib/api-client";
 import { formatDate, formatMoney } from "@/lib/format";
 import type { ContractorDetailsResult } from "@/lib/contractors/getContractorDetails";
-import { costInvoiceListEditHref } from "@/lib/navigation/invoice-deep-links";
 import { bankTransactionStatusLabel } from "@/lib/bank-import/bank-transaction-status-label";
 import { NewIncomeInvoiceFormModal } from "@/components/IncomeInvoiceFormModal";
+import { ContractorCostPaymentBatch } from "@/components/ContractorCostPaymentBatch";
 import {
   lifecycleBadgeVariant,
   settlementBadgeVariant,
@@ -30,13 +30,6 @@ function incomeStatusBadge(status: string) {
   if (status === "OPLACONA") return <Badge variant="success">Opłacona</Badge>;
   if (status === "PARTIALLY_RECEIVED") return <Badge variant="warning">Częściowo opłacona</Badge>;
   if (status === "WYSTAWIONA") return <Badge variant="warning">Wystawiona</Badge>;
-  return <Badge variant="muted">Planowana</Badge>;
-}
-
-function costStatusBadge(status: string) {
-  if (status === "ZAPLACONA") return <Badge variant="success">Zapłacona</Badge>;
-  if (status === "PARTIALLY_PAID") return <Badge variant="warning">Częściowo zapłacona</Badge>;
-  if (status === "DO_ZAPLATY") return <Badge variant="warning">Do zapłaty</Badge>;
   return <Badge variant="muted">Planowana</Badge>;
 }
 
@@ -352,32 +345,10 @@ export function ContractorDetailClient({ data }: { data: ContractorDetailsResult
 
             <div className="space-y-3">
               <ActivitySectionTitle title="Faktury kosztowe" />
-              {related.costInvoices.length === 0 ? (
-                <ActivityEmpty />
-              ) : (
-                <div className="flex flex-col gap-2">
-                  {related.costInvoices.map((r) => (
-                    <Link key={r.id} href={costInvoiceListEditHref(r.id)} className={cardInvoice}>
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="min-w-0 flex-1">
-                          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                            <span className="font-semibold text-zinc-900 dark:text-zinc-50">{r.documentNumber}</span>
-                            {costStatusBadge(r.status)}
-                          </div>
-                          <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
-                            <span className="line-clamp-1">{r.supplier}</span>
-                            <span className="mx-1.5 text-zinc-300 dark:text-zinc-600">·</span>
-                            <span>{formatDate(r.documentDate)}</span>
-                          </p>
-                        </div>
-                        <span className="shrink-0 text-sm font-semibold tabular-nums text-zinc-900 dark:text-zinc-100">
-                          {formatMoney(r.grossAmount)}
-                        </span>
-                      </div>
-                    </Link>
-                  ))}
-                </div>
-              )}
+              <ContractorCostPaymentBatch
+                contractorName={contractor.displayName}
+                invoices={related.costInvoices}
+              />
             </div>
           </div>
 
