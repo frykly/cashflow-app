@@ -28,9 +28,9 @@ export function assertIncomeStatusAllowedForPayments(
   }
 }
 
-/** Blokuje obniżenie statusu / paid, gdy płatności zamykają brutto. */
+/** Blokuje obniżenie statusu / paid, gdy płatności zamykają kwotę do zapłaty. */
 export function assertCostStatusAllowedForPayments(
-  inv: Pick<CostInvoice, "grossAmount">,
+  inv: Pick<CostInvoice, "grossAmount" | "amountToPayGross">,
   payments: CostPayGross[],
   requestedStatus: string,
   requestedPaid: boolean,
@@ -38,7 +38,7 @@ export function assertCostStatusAllowedForPayments(
   const rem = costRemainingGross(inv, payments);
   if (rem <= PAY_EPS && (requestedStatus !== "ZAPLACONA" || !requestedPaid)) {
     throw new Error(
-      "Płatności pokrywają całe brutto — usuń lub zmniejsz płatności albo ustaw status „Zapłacona” i zaznacz zapłacone.",
+      "Płatności pokrywają kwotę do zapłaty — usuń lub zmniejsz płatności albo ustaw status „Zapłacona” i zaznacz zapłacone.",
     );
   }
 }

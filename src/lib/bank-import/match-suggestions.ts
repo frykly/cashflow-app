@@ -6,6 +6,11 @@ import type {
   PlannedFinancialEvent,
 } from "@prisma/client";
 import { decToNumber } from "@/lib/cashflow/money";
+import {
+  costAdditionalChargesGross,
+  costEffectivePaymentGross,
+  costHasPaymentAmountSplit,
+} from "@/lib/cashflow/cost-payment-amount";
 import { costRemainingGross, incomeRemainingGross, PAY_EPS } from "@/lib/cashflow/settlement";
 import { round2 } from "@/lib/cashflow/money";
 import { documentGrossSlicesFromInvoice } from "@/lib/payment-project-allocation/distribute-read";
@@ -120,9 +125,13 @@ export type CostSuggestion = {
   documentNumber: string;
   supplier: string;
   grossAmount: string;
+  invoiceGrossAmount: string;
+  paymentGross: string;
+  additionalChargesGross: string | null;
+  hasPaymentAmountSplit: boolean;
   documentDate: string;
   score: number;
-  /** Brutto pozostałe do zapłaty (dokument − wpłaty). */
+  /** Pozostałe do zapłaty (kwota operacyjna − wpłaty). */
   remainingGross: string;
   /** Czy da się przypisać całą kwotę transakcji bankowej (ujemnej) jako jedną płatność. */
   canFitFullPayment: boolean;
@@ -161,10 +170,13 @@ export type PlannedExpenseSuggestion = {
 
 export function scoreCostMatch(
   tx: { amount: number; bookingDate: Date; description: string },
-  inv: Pick<CostInvoice, "grossAmount" | "documentDate" | "documentNumber" | "supplier" | "description">,
+  inv: Pick<
+    CostInvoice,
+    "grossAmount" | "amountToPayGross" | "documentDate" | "documentNumber" | "supplier" | "description"
+  >,
 ): number {
   const ag = Math.abs(tx.amount);
-  const ig = grossToGrosze(inv.grossAmount);
+  const ig = grossToGrosze(costEffectivePaymentGross(inv));
   let score = 0;
   if (Math.abs(ag - ig) <= GROSZ_EPS) score += 6;
   else if (Math.abs(ag - ig) <= 100) score += 2;
@@ -232,11 +244,11 @@ export function rankCosts(
   const scored = list
     .map((inv) => {
       const rem = costRemainingGross(inv, inv.payments ?? []);
-      const gross = decToNumber(inv.grossAmount);
+      const paymentGross = costEffectivePaymentGross(inv);
       const amountFlags = amountBadges({
         bankRemainingPln: payChunk,
         invoiceRemainingPln: rem,
-        invoiceGrossPln: gross,
+        invoiceGrossPln: paymentGross,
       });
       const docInTitle = docNumberInText(tx.description, inv.documentNumber);
       const rawScore =
@@ -248,6 +260,10 @@ export function rankCosts(
         documentNumber: inv.documentNumber,
         supplier: inv.supplier,
         grossAmount: inv.grossAmount.toString(),
+        invoiceGrossAmount: inv.grossAmount.toString(),
+        paymentGross: paymentGross.toFixed(2),
+        additionalChargesGross: costAdditionalChargesGross(inv)?.toFixed(2) ?? null,
+        hasPaymentAmountSplit: costHasPaymentAmountSplit(inv),
         documentDate: inv.documentDate.toISOString(),
         score: Math.round(rawScore * mul * 100) / 100,
         remainingGross: rem.toFixed(2),

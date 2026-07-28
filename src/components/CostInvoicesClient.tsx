@@ -746,6 +746,7 @@ export function CostInvoicesClient({
       netAmount: String(r.netAmount),
       vatAmount: String(r.vatAmount),
       grossAmount: String(r.grossAmount),
+      amountToPayGross: r.amountToPayGross != null ? String(r.amountToPayGross) : null,
     });
     const pa = r.projectAllocations;
     if (pa && pa.length > 0) {
@@ -958,6 +959,7 @@ export function CostInvoicesClient({
         netAmount: String(j.netAmount),
         vatAmount: String(j.vatAmount),
         grossAmount: String(j.grossAmount),
+        amountToPayGross: j.amountToPayGross != null ? String(j.amountToPayGross) : null,
       };
     });
   }
@@ -2327,11 +2329,15 @@ export function CostInvoicesClient({
                   className="!py-1.5 !text-xs"
                   onClick={() => {
                     setFormError(null);
-                    const inv = editing as unknown as CostInvoice;
+                    const invPick = {
+                      grossAmount: editing.grossAmount,
+                      amountToPayGross: editing.amountToPayGross ?? null,
+                    };
                     const pays = (editing.payments ?? []) as unknown as PayPick[];
-                    const remaining = costRemainingGross(inv, pays);
+                    const paymentGross = costEffectivePaymentGross(invPick);
+                    const remaining = costRemainingGross(invPick, pays);
                     const amt =
-                      remaining > 0 ? String(remaining) : (Number(editing.grossAmount) > 0 ? String(editing.grossAmount) : "");
+                      remaining > 0 ? String(remaining) : paymentGross > 0 ? String(paymentGross) : "";
                     setPayProjectManual(false);
                     setPayDraft({
                       amountGross: amt,
@@ -2353,20 +2359,32 @@ export function CostInvoicesClient({
                 „Zapłacona”: brakująca kwota zapisze się tu automatycznie (data z faktycznej zapłaty lub planowanej).
               </p>
               {(() => {
-                const inv = editing as unknown as CostInvoice;
+                const invPick = {
+                  grossAmount: editing.grossAmount,
+                  amountToPayGross: editing.amountToPayGross ?? null,
+                };
                 const pays = (editing.payments ?? []) as unknown as PayPick[];
-                const g = Number(editing.grossAmount) || 0;
+                const paymentGross = costEffectivePaymentGross(invPick);
+                const invoiceGross = Number(editing.grossAmount) || 0;
                 const settled = sumCostPaymentsGross(pays);
-                const remaining = costRemainingGross(inv, pays);
-                const pct = g > 0 ? Math.round((settled / g) * 1000) / 10 : 0;
+                const remaining = costRemainingGross(invPick, pays);
+                const pct = paymentGross > 0 ? Math.round((settled / paymentGross) * 1000) / 10 : 0;
+                const split = costHasPaymentAmountSplit(invPick);
+                const charges = costAdditionalChargesGross(invPick);
                 return (
                   <div className="mb-2 space-y-1 text-xs text-zinc-600 dark:text-zinc-400">
                     <div>
-                      Rozliczono: {formatMoney(settled)} / brutto {formatMoney(g)} · Pozostało: {formatMoney(remaining)} ·{" "}
-                      {pct}% dokumentu
+                      Rozliczono: {formatMoney(settled)} / do zapłaty {formatMoney(paymentGross)} · Pozostało:{" "}
+                      {formatMoney(remaining)} · {pct}% do zapłaty
                     </div>
+                    {split ? (
+                      <div className="text-[11px] text-zinc-500 dark:text-zinc-400">
+                        Kwota faktury {formatMoney(invoiceGross)}
+                        {charges != null ? ` + obciążenia ${formatMoney(charges)}` : ""}
+                      </div>
+                    ) : null}
                     <div>
-                      Status: {statusBadge(editing.status)} · Kwota dokumentu: {formatMoney(g)}
+                      Status: {statusBadge(editing.status)} · Kwota faktury: {formatMoney(invoiceGross)}
                     </div>
                   </div>
                 );

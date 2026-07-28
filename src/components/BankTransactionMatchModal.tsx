@@ -21,6 +21,10 @@ type CostS = Suggestion & {
   documentNumber: string;
   supplier: string;
   documentDate: string;
+  invoiceGrossAmount: string;
+  paymentGross: string;
+  additionalChargesGross: string | null;
+  hasPaymentAmountSplit: boolean;
   remainingGross: string;
   canFitFullPayment: boolean;
   matchBadges?: string[];
@@ -702,8 +706,20 @@ export function BankTransactionMatchModal({
                 >
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <span className="min-w-0 text-zinc-700 dark:text-zinc-300">
-                      {c.documentNumber} · {c.supplier} · {safeFormatDate(c.documentDate)} · brutto{" "}
-                      {formatMoney(c.grossAmount)} · pozostało {formatMoney(c.remainingGross)}
+                      {c.documentNumber} · {c.supplier} · {safeFormatDate(c.documentDate)}
+                      {c.hasPaymentAmountSplit ? (
+                        <>
+                          {" "}
+                          · kwota faktury {formatMoney(c.invoiceGrossAmount)}
+                          {c.additionalChargesGross ?
+                            ` + obciążenia ${formatMoney(c.additionalChargesGross)}`
+                          : ""}{" "}
+                          · do zapłaty {formatMoney(c.paymentGross)}
+                        </>
+                      ) : (
+                        <> · brutto {formatMoney(c.grossAmount)}</>
+                      )}{" "}
+                      · pozostało {formatMoney(c.remainingGross)}
                       <span className="ml-1 text-xs text-zinc-400" title={scoreHint}>
                         (dopasowanie {c.score})
                       </span>
@@ -843,13 +859,21 @@ export function BankTransactionMatchModal({
             <p className="mb-3 text-sm text-zinc-600 dark:text-zinc-300">
               <span className="font-medium">{costOverpay.documentNumber}</span> · {costOverpay.supplier}
               <br />
-              Pozostało na dokumencie: {Number(costOverpay.remainingGross).toFixed(2)} PLN · pozostało na linii banku:{" "}
+              {costOverpay.hasPaymentAmountSplit ? (
+                <>
+                  Kwota faktury: {formatMoney(costOverpay.invoiceGrossAmount)} · Do zapłaty:{" "}
+                  {formatMoney(costOverpay.paymentGross)}
+                  <br />
+                </>
+              ) : null}
+              Pozostało do zapłaty: {Number(costOverpay.remainingGross).toFixed(2)} PLN · pozostało na linii banku:{" "}
               {costBankRemainingPln.toFixed(2)} PLN
               <br />
-              Ta płatność przekracza pozostałą kwotę dokumentu o {costOverpayAmountPln.toFixed(2)} PLN.
+              Ta płatność przekracza pozostałą kwotę do zapłaty o {costOverpayAmountPln.toFixed(2)} PLN.
             </p>
             <p className="mb-3 text-xs text-zinc-500 dark:text-zinc-400">
-              Wybierz świadomie: pełna płatność zwiększy kwotę tylko tego dokumentu; częściowa zostawi resztę na linii bankowej.
+              Wybierz świadomie: pełna płatność zwiększy kwotę do zapłaty (nie kwotę faktury księgowej); częściowa zostawi
+              resztę na linii bankowej.
             </p>
             <div className="flex flex-col gap-2">
               <button
@@ -858,9 +882,9 @@ export function BankTransactionMatchModal({
                 onClick={() => void linkCost(costOverpay.id, "ADJUST_DOCUMENT")}
                 className="rounded border border-emerald-600 bg-emerald-50 px-3 py-2 text-left text-sm text-emerald-950 hover:bg-emerald-100 disabled:opacity-50 dark:border-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-100 dark:hover:bg-emerald-950/60"
               >
-                <strong className="block">Zwiększ dokument i przypisz całość</strong>
+                <strong className="block">Zwiększ kwotę do zapłaty i przypisz całość</strong>
                 <span className="text-xs opacity-90">
-                  Zwiększ kwotę tego kosztu do sumy płatności i rozdziel całą pozostałą kwotę z linii bankowej.
+                  Zwiększ kwotę operacyjną do zapłaty do sumy płatności i rozdziel całą pozostałą kwotę z linii bankowej.
                 </span>
               </button>
               <button

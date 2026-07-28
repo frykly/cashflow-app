@@ -12,6 +12,7 @@ import {
   bankGroszeToAmountGross,
   BANK_LINK_PAYMENT_NOTE,
 } from "@/lib/bank-import/payment-from-bank";
+import { costEffectivePaymentGross } from "@/lib/cashflow/cost-payment-amount";
 import { PAY_EPS, sumCostPaymentsGross, sumIncomePaymentsGross } from "@/lib/cashflow/settlement";
 import { normalizeDecimalInput } from "@/lib/decimal-input";
 import { finalizeNewCostPaymentAllocations, finalizeNewIncomePaymentAllocations } from "@/lib/payment-project-allocation/finalize";
@@ -126,12 +127,12 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
 
     const currentInvoicePaid = sumCostPaymentsGross(inv.payments);
     const targetInvoiceGrossAfterPayment = round2(currentInvoicePaid + payNum);
-    const invoiceGrossBefore = decToNumber(inv.grossAmount);
-    const costWouldOverpay = targetInvoiceGrossAfterPayment > invoiceGrossBefore + PAY_EPS;
+    const invoicePaymentCap = costEffectivePaymentGross(inv);
+    const costWouldOverpay = targetInvoiceGrossAfterPayment > invoicePaymentCap + PAY_EPS;
 
     if (costWouldOverpay && !parsed.data.adjustCostInvoiceToPayment) {
       return jsonError(
-        `Płatność przekracza pozostałą kwotę faktury o ${round2(targetInvoiceGrossAfterPayment - invoiceGrossBefore).toFixed(2)} PLN. Potwierdź zwiększenie dokumentu albo przypisz tylko pozostałą kwotę.`,
+        `Płatność przekracza pozostałą kwotę do zapłaty o ${round2(targetInvoiceGrossAfterPayment - invoicePaymentCap).toFixed(2)} PLN. Potwierdź zwiększenie kwoty do zapłaty albo przypisz tylko pozostałą kwotę.`,
         409,
       );
     }
@@ -139,7 +140,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
       try {
         assertCostPaymentFits(inv, paymentGrossDec);
       } catch {
-        return jsonError("Suma płatności przekroczyłaby kwotę brutto faktury kosztowej.", 400);
+        return jsonError("Suma płatności przekroczyłaby kwotę do zapłaty dokumentu.", 400);
       }
     }
 
@@ -148,27 +149,39 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
 
     const updated = await prisma.$transaction(async (trx) => {
       if (costWouldOverpay) {
-        const ratio = invoiceGrossBefore > PAY_EPS ? targetInvoiceGrossAfterPayment / invoiceGrossBefore : 1;
-        const nextGross = new Prisma.Decimal(targetInvoiceGrossAfterPayment.toFixed(2));
-        const nextNet = new Prisma.Decimal(round2(decToNumber(inv.netAmount) * ratio).toFixed(2));
-        const nextVat = new Prisma.Decimal(round2(targetInvoiceGrossAfterPayment - decToNumber(nextNet)).toFixed(2));
-        await trx.costInvoice.update({
-          where: { id: inv.id },
-          data: {
-            grossAmount: nextGross,
-            netAmount: nextNet,
-            vatAmount: nextVat,
-            isRecurringDetached: inv.isGeneratedFromRecurring ? true : inv.isRecurringDetached,
-          },
-        });
-        for (const alloc of inv.projectAllocations) {
-          await trx.costInvoiceProjectAllocation.update({
-            where: { id: alloc.id },
+        const nextPaymentGross = new Prisma.Decimal(targetInvoiceGrossAfterPayment.toFixed(2));
+        if (inv.amountToPayGross != null) {
+          await trx.costInvoice.update({
+            where: { id: inv.id },
             data: {
-              netAmount: new Prisma.Decimal(round2(decToNumber(alloc.netAmount) * ratio).toFixed(2)),
-              grossAmount: new Prisma.Decimal(round2(decToNumber(alloc.grossAmount) * ratio).toFixed(2)),
+              amountToPayGross: nextPaymentGross,
+              isRecurringDetached: inv.isGeneratedFromRecurring ? true : inv.isRecurringDetached,
             },
           });
+        } else {
+          const invoiceGrossBefore = decToNumber(inv.grossAmount);
+          const ratio = invoiceGrossBefore > PAY_EPS ? targetInvoiceGrossAfterPayment / invoiceGrossBefore : 1;
+          const nextGross = new Prisma.Decimal(targetInvoiceGrossAfterPayment.toFixed(2));
+          const nextNet = new Prisma.Decimal(round2(decToNumber(inv.netAmount) * ratio).toFixed(2));
+          const nextVat = new Prisma.Decimal(round2(targetInvoiceGrossAfterPayment - decToNumber(nextNet)).toFixed(2));
+          await trx.costInvoice.update({
+            where: { id: inv.id },
+            data: {
+              grossAmount: nextGross,
+              netAmount: nextNet,
+              vatAmount: nextVat,
+              isRecurringDetached: inv.isGeneratedFromRecurring ? true : inv.isRecurringDetached,
+            },
+          });
+          for (const alloc of inv.projectAllocations) {
+            await trx.costInvoiceProjectAllocation.update({
+              where: { id: alloc.id },
+              data: {
+                netAmount: new Prisma.Decimal(round2(decToNumber(alloc.netAmount) * ratio).toFixed(2)),
+                grossAmount: new Prisma.Decimal(round2(decToNumber(alloc.grossAmount) * ratio).toFixed(2)),
+              },
+            });
+          }
         }
       }
       const payment = await trx.costInvoicePayment.create({

@@ -9,6 +9,7 @@ import {
   assertCostStatusAllowedForPayments,
   ensureClosingCostPaymentIfFullySettled,
 } from "@/lib/cashflow/invoice-auto-settlement";
+import { costEffectivePaymentGross } from "@/lib/cashflow/cost-payment-amount";
 import { decToNumber } from "@/lib/cashflow/money";
 import { PAY_EPS, sumCostPaymentsGross } from "@/lib/cashflow/settlement";
 import { NextResponse } from "next/server";
@@ -122,14 +123,23 @@ export async function PATCH(req: Request, ctx: Ctx) {
       if (err) return jsonError(err, 400);
     }
 
-    if (sumCostPaymentsGross(existing.payments) > decToNumber(gross) + PAY_EPS) {
-      return jsonError("Suma płatności przekracza nową kwotę brutto — usuń lub zmień płatności.");
+    const paymentCap = costEffectivePaymentGross({
+      grossAmount: gross,
+      amountToPayGross: existing.amountToPayGross,
+    });
+    if (sumCostPaymentsGross(existing.payments) > paymentCap + PAY_EPS) {
+      return jsonError("Suma płatności przekracza kwotę do zapłaty — usuń lub zmień płatności.");
     }
 
     const mergedStatus = data.status ?? existing.status;
     const mergedPaid = data.paid ?? existing.paid;
     try {
-      assertCostStatusAllowedForPayments({ grossAmount: gross }, existing.payments, mergedStatus, mergedPaid);
+      assertCostStatusAllowedForPayments(
+        { grossAmount: gross, amountToPayGross: existing.amountToPayGross },
+        existing.payments,
+        mergedStatus,
+        mergedPaid,
+      );
     } catch (e) {
       return jsonError(e instanceof Error ? e.message : "Niedozwolona zmiana statusu", 400);
     }
