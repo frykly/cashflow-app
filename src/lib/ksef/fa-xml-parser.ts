@@ -111,11 +111,20 @@ function extractPaymentDue(platnosc: unknown): string | null {
   for (const p of asArray(platnosc)) {
     const rec = asRecord(p);
     if (!rec) continue;
-    const termin = fmtDate(rec.TerminPlatnosci ?? rec.Termin);
-    if (termin) return termin;
+
+    const directTermin = fmtDate(rec.Termin);
+    if (directTermin) return directTermin;
+
     for (const tp of asArray(rec.TerminPlatnosci)) {
       const row = asRecord(tp);
-      const d = fmtDate(row?.Termin ?? row?.TerminPlatnosci);
+      if (!row) continue;
+      const d = fmtDate(row.Termin ?? row.TerminPlatnosci ?? row.Data);
+      if (d) return d;
+    }
+
+    const nested = asRecord(rec.TerminPlatnosci);
+    if (nested) {
+      const d = fmtDate(nested.Termin ?? nested.TerminPlatnosci ?? nested.Data);
       if (d) return d;
     }
   }

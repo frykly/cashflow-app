@@ -41,6 +41,7 @@ export function KsefImportForm({
   onSubmitRevenue,
 }: KsefImportFormProps) {
   const sectionRef = useRef<HTMLElement>(null);
+  const plannedDateTouchedRef = useRef(false);
   const [projectId, setProjectId] = useState<string | null>(null);
   const [expenseCategoryId, setExpenseCategoryId] = useState("");
   const [incomeCategoryId, setIncomeCategoryId] = useState("");
@@ -55,9 +56,18 @@ export function KsefImportForm({
   const [listsLoading, setListsLoading] = useState(true);
 
   useEffect(() => {
+    plannedDateTouchedRef.current = false;
     setPlannedDate(toDateInputValue(defaultPlannedDate));
     setNotes(ksefImportNotes(ksefId));
-  }, [defaultPlannedDate, ksefId]);
+    // Reset tylko przy zmianie dokumentu; defaultPlannedDate celowo poza deps.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ksefId]);
+
+  useEffect(() => {
+    if (!plannedDateTouchedRef.current) {
+      setPlannedDate(toDateInputValue(defaultPlannedDate));
+    }
+  }, [defaultPlannedDate]);
 
   useEffect(() => {
     let cancelled = false;
@@ -220,7 +230,10 @@ export function KsefImportForm({
               <Input
                 type="date"
                 value={plannedDate}
-                onChange={(e) => setPlannedDate(e.target.value)}
+                onChange={(e) => {
+                  plannedDateTouchedRef.current = true;
+                  setPlannedDate(e.target.value);
+                }}
                 disabled={acting}
               />
             </Field>
@@ -271,7 +284,10 @@ export function KsefImportForm({
               <Input
                 type="date"
                 value={plannedDate}
-                onChange={(e) => setPlannedDate(e.target.value)}
+                onChange={(e) => {
+                  plannedDateTouchedRef.current = true;
+                  setPlannedDate(e.target.value);
+                }}
                 disabled={acting}
               />
             </Field>

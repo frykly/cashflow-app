@@ -9,6 +9,7 @@ import { findProbableCostDuplicate } from "./duplicate-match";
 import { ksefDocumentToPublicRow } from "./document-public-row";
 import { ksefImportNotes } from "./ksef-import-marker";
 import { resolveAmountToPayGrossFromKsefXml } from "./ksef-payment-amounts";
+import { resolveKsefDefaultPlannedDate, resolveKsefPaymentDueDate } from "./ksef-payment-dates";
 
 const ALREADY_IN_SYSTEM_MSG = "Ta faktura prawdopodobnie już istnieje w systemie";
 
@@ -58,10 +59,8 @@ export async function importKsefDocumentAsCost(documentId: string, options: Ksef
   const amountToPayGross = resolveAmountToPayGrossFromKsefXml(doc);
   const vatRate = inferVatRateFromAmounts(net, vat);
   const documentDate = doc.issueDate;
-  const paymentDueDate = doc.paymentDueDate ?? doc.issueDate;
-  const plannedPaymentDate = options.plannedPaymentDate
-    ? new Date(options.plannedPaymentDate)
-    : paymentDueDate;
+  const paymentDueDate = resolveKsefPaymentDueDate(doc);
+  const plannedPaymentDate = resolveKsefDefaultPlannedDate(doc, options.plannedPaymentDate);
   const now = new Date();
 
   const cost = await prisma.$transaction(async (tx) => {
