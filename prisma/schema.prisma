@@ -382,7 +382,8 @@ model CostInvoice {
   status                    String // PLANOWANA | DO_ZAPLATY | PARTIALLY_PAID | ZAPLACONA
   paid                      Boolean                        @default(false)
   actualPaymentDate         DateTime?
-  paymentSource             String // MAIN | VAT | VAT_THEN_MAIN
+  /// Planowane źródło: MAIN | VAT | VAT_THEN_MAIN | CASH
+  paymentSource             String // MAIN | VAT | VAT_THEN_MAIN | CASH
   notes                     String                         @default("")
   projectName               String?
   projectId                 String?
@@ -412,12 +413,15 @@ model CostInvoicePayment {
   amountGross        Decimal
   paymentDate        DateTime
   notes              String                                @default("")
+  /// Faktyczna metoda: ACCOUNT (konto MAIN/VAT wg faktury) | CASH (gotówka — bez ruchu bankowego)
+  paymentMethod      String                                @default("ACCOUNT")
   /// Wiele płatności może dzielić jedną linię banku — suma ≤ kwota transakcji
   bankTransactionId  String?
   createdAt          DateTime                              @default(now())
   projectAllocations CostInvoicePaymentProjectAllocation[]
 
   @@index([bankTransactionId])
+  @@index([paymentMethod])
 }
 
 /// Rozbicie kwoty brutto płatności kosztu na projekty — pierwszeństwo przy raportowaniu „zapłacono”; brak wierszy = fallback wg alokacji dokumentu.
