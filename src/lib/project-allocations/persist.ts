@@ -1,4 +1,5 @@
 import type { Prisma, PrismaClient } from "@prisma/client";
+import { account5FromProjectCode } from "@/lib/accounting/account-codes";
 import { resolveProjectFields } from "@/lib/project-persist";
 
 export type CostAllocInput = {
@@ -24,6 +25,12 @@ export async function replaceCostInvoiceAllocations(
 ): Promise<void> {
   await tx.costInvoiceProjectAllocation.deleteMany({ where: { costInvoiceId } });
   if (rows.length === 0) return;
+  const projectIds = [...new Set(rows.map((r) => r.projectId))];
+  const projects = await tx.project.findMany({
+    where: { id: { in: projectIds } },
+    select: { id: true, code: true },
+  });
+  const codeById = new Map(projects.map((p) => [p.id, p.code]));
   await tx.costInvoiceProjectAllocation.createMany({
     data: rows.map((r) => ({
       costInvoiceId,
@@ -31,6 +38,7 @@ export async function replaceCostInvoiceAllocations(
       netAmount: r.netAmount,
       grossAmount: r.grossAmount,
       description: r.description?.trim() ?? "",
+      account5Code: account5FromProjectCode(codeById.get(r.projectId) ?? null),
     })),
   });
 }

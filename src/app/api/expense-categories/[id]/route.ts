@@ -7,6 +7,8 @@ import { ZodError, z } from "zod";
 const patchSchema = z.object({
   name: z.string().trim().min(1).max(120).optional(),
   isActive: z.boolean().optional(),
+  accountingCode: z.string().trim().max(32).optional().nullable(),
+  accountingName: z.string().trim().max(120).optional().nullable(),
 });
 
 async function usageCounts(id: string) {
@@ -36,7 +38,12 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
   }
   try {
     const data = patchSchema.parse(body);
-    if (data.name === undefined && data.isActive === undefined) {
+    if (
+      data.name === undefined &&
+      data.isActive === undefined &&
+      data.accountingCode === undefined &&
+      data.accountingName === undefined
+    ) {
       return jsonError("Brak pól do aktualizacji", 400);
     }
     const row = await prisma.expenseCategory.update({
@@ -44,6 +51,12 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
       data: {
         ...(data.name !== undefined ? { name: data.name.trim() } : {}),
         ...(data.isActive !== undefined ? { isActive: data.isActive } : {}),
+        ...(data.accountingCode !== undefined
+          ? { accountingCode: data.accountingCode?.trim() || null }
+          : {}),
+        ...(data.accountingName !== undefined
+          ? { accountingName: data.accountingName?.trim() || null }
+          : {}),
       },
     });
     return jsonData(row);

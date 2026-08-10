@@ -137,6 +137,59 @@ export function buildCostWhere(sp: URLSearchParams): Prisma.CostInvoiceWhereInpu
   if (recurringSource === "manual") filters.push({ isGeneratedFromRecurring: false });
   if (recurringSource === "generated") filters.push({ isGeneratedFromRecurring: true });
 
+  const paymentSource = sp.get("paymentSource")?.trim();
+  if (paymentSource) filters.push({ paymentSource });
+
+  const costPlaceKind = sp.get("costPlaceKind")?.trim();
+  if (costPlaceKind) filters.push({ costPlaceKind });
+
+  const vehicleId = sp.get("vehicleId")?.trim();
+  if (vehicleId) filters.push({ vehicleId });
+
+  const account4 = sp.get("account4")?.trim();
+  if (account4) {
+    filters.push({
+      expenseCategory: {
+        OR: [
+          { accountingCode: { contains: account4 } },
+          { name: { contains: account4 } },
+          { accountingName: { contains: account4 } },
+        ],
+      },
+    });
+  }
+
+  if (q) {
+    const idx = filters.findIndex(
+      (f) => f.OR && Array.isArray(f.OR) && f.OR.some((x) => "documentNumber" in (x as object)),
+    );
+    if (idx >= 0) {
+      filters[idx] = {
+        OR: [
+          { documentNumber: { contains: q } },
+          { supplier: { contains: q } },
+          { description: { contains: q } },
+          { projectName: { contains: q } },
+          { project: { name: { contains: q } } },
+          { project: { code: { contains: q } } },
+          { project: { clientName: { contains: q } } },
+          { account5Code: { contains: q } },
+          { accountingNote: { contains: q } },
+          { expenseCategory: { name: { contains: q } } },
+          { expenseCategory: { accountingCode: { contains: q } } },
+          { expenseCategory: { accountingName: { contains: q } } },
+          { vehicle: { registrationNumber: { contains: q } } },
+          { vehicle: { make: { contains: q } } },
+          { vehicle: { model: { contains: q } } },
+          { vehicle: { name: { contains: q } } },
+          { projectAllocations: { some: { account5Code: { contains: q } } } },
+          { projectAllocations: { some: { project: { code: { contains: q } } } } },
+          { projectAllocations: { some: { project: { name: { contains: q } } } } },
+        ],
+      };
+    }
+  }
+
   return filters.length ? { AND: filters } : {};
 }
 

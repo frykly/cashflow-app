@@ -144,12 +144,15 @@ export const costInvoiceCreateSchema = z.object({
   status: z.enum(["PLANOWANA", "DO_ZAPLATY", "PARTIALLY_PAID", "ZAPLACONA"]),
   paid: z.boolean().optional().default(false),
   actualPaymentDate: optionalIsoNullable(),
-  paymentSource: z.enum(["MAIN", "VAT", "VAT_THEN_MAIN"]),
+  paymentSource: z.enum(["MAIN", "VAT", "VAT_THEN_MAIN", "CASH"]),
   expenseCategoryId: optionalId,
   projectId: optionalId,
   /** Po utworzeniu faktury — oznacza zdarzenie planowane jako CONVERTED (tylko PLANNED + typ EXPENSE). */
   sourcePlannedEventId: optionalId,
   notes: z.string().optional().default(""),
+  costPlaceKind: z.enum(["UNCLASSIFIED", "PROJECT", "GENERAL_502", "MANAGEMENT_550"]).optional(),
+  accountingNote: z.string().optional().default(""),
+  vehicleId: optionalId,
 })
   .extend({
     projectAllocations: z.array(invoiceProjectAllocationRowSchema).optional(),

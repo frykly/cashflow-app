@@ -1,6 +1,6 @@
 import { prisma } from "@/lib/db";
 import { jsonData } from "@/lib/api/json-response";
-import { jsonError, zodErrorResponse } from "@/lib/api/errors";
+import { jsonError, routeErrorResponse, zodErrorResponse } from "@/lib/api/errors";
 import { resolveCostInvoiceAmounts } from "@/lib/validation/cost-invoice-amounts";
 import { costInvoiceCreateSchema } from "@/lib/validation/schemas";
 import { buildCostWhere } from "@/lib/prisma-list-filters";
@@ -10,6 +10,7 @@ import { syncCostInvoiceStatus } from "@/lib/invoice-status-sync";
 import { finalizePlannedToCostConversion } from "@/lib/planned-event-conversion";
 import { replaceCostInvoiceAllocations, resolveLegacyProjectFieldsFromAllocations } from "@/lib/project-allocations/persist";
 import { validateCostOrIncomeAllocationSums } from "@/lib/project-allocations/validate";
+import { inferCostPlaceKind, resolveCostInvoiceAccount5Fields } from "@/lib/accounting/resolve-cost-account5";
 import { ZodError } from "zod";
 
 const sortable = new Set([
@@ -25,37 +26,42 @@ const sortable = new Set([
 ]);
 
 export async function GET(req: Request) {
-  const { searchParams } = new URL(req.url);
-  const sort = sortable.has(searchParams.get("sort") ?? "")
-    ? (searchParams.get("sort") as
-        | "plannedPaymentDate"
-        | "documentDate"
-        | "createdAt"
-        | "paymentDueDate"
-        | "documentNumber"
-        | "supplier"
-        | "netAmount"
-        | "grossAmount"
-        | "status")
-    : "plannedPaymentDate";
-  const order = searchParams.get("order") === "desc" ? "desc" : "asc";
+  try {
+    const { searchParams } = new URL(req.url);
+    const sort = sortable.has(searchParams.get("sort") ?? "")
+      ? (searchParams.get("sort") as
+          | "plannedPaymentDate"
+          | "documentDate"
+          | "createdAt"
+          | "paymentDueDate"
+          | "documentNumber"
+          | "supplier"
+          | "netAmount"
+          | "grossAmount"
+          | "status")
+      : "plannedPaymentDate";
+    const order = searchParams.get("order") === "desc" ? "desc" : "asc";
 
-  const where = buildCostWhere(searchParams);
+    const where = buildCostWhere(searchParams);
 
-  const rows = await prisma.costInvoice.findMany({
-    where,
-    orderBy: { [sort]: order },
-    include: {
-      expenseCategory: true,
-      project: true,
-      payments: {
-        orderBy: { paymentDate: "asc" },
-        include: { projectAllocations: { include: { project: { select: { id: true, name: true } } } } },
+    const rows = await prisma.costInvoice.findMany({
+      where,
+      orderBy: { [sort]: order },
+      include: {
+        expenseCategory: true,
+        project: true,
+        vehicle: true,
+        payments: {
+          orderBy: { paymentDate: "asc" },
+          include: { projectAllocations: { include: { project: { select: { id: true, name: true } } } } },
+        },
+        projectAllocations: { include: { project: { select: { id: true, name: true, code: true } } } },
       },
-      projectAllocations: { include: { project: { select: { id: true, name: true, code: true } } } },
-    },
-  });
-  return jsonData(rows);
+    });
+    return jsonData(rows);
+  } catch (e) {
+    return routeErrorResponse(e, "GET /api/cost-invoices");
+  }
 }
 
 export async function POST(req: Request) {
@@ -87,6 +93,15 @@ export async function POST(req: Request) {
     } catch {
       return jsonError("Nieprawidłowy projekt", 400);
     }
+    const placeKind = inferCostPlaceKind({
+      costPlaceKind: data.costPlaceKind,
+      projectId: pf.projectId,
+      allocationCount: allocs?.length ?? 0,
+    });
+    if (data.vehicleId) {
+      const v = await prisma.vehicle.findUnique({ where: { id: data.vehicleId } });
+      if (!v) return jsonError("Nieprawidłowy pojazd", 400);
+    }
     const row = await prisma.$transaction(async (tx) => {
       const created = await tx.costInvoice.create({
         data: {
@@ -105,13 +120,39 @@ export async function POST(req: Request) {
           actualPaymentDate: data.actualPaymentDate ? new Date(data.actualPaymentDate) : null,
           paymentSource: data.paymentSource,
           notes: data.notes ?? "",
+          accountingNote: data.accountingNote ?? "",
+          costPlaceKind: placeKind,
+          account5Code: null,
           projectId: pf.projectId,
           projectName: pf.projectName,
           expenseCategoryId: data.expenseCategoryId ?? null,
+          vehicleId: data.vehicleId ?? null,
         },
-        include: { expenseCategory: true, project: true, payments: true },
+        include: { expenseCategory: true, project: true, vehicle: true, payments: true },
       });
       await replaceCostInvoiceAllocations(tx, created.id, allocs ?? []);
+      const allocRows = await tx.costInvoiceProjectAllocation.findMany({
+        where: { costInvoiceId: created.id },
+        select: { account5Code: true },
+      });
+      const projectCode = created.projectId
+        ? (
+            await tx.project.findUnique({
+              where: { id: created.projectId },
+              select: { code: true },
+            })
+          )?.code ?? null
+        : null;
+      const acc = await resolveCostInvoiceAccount5Fields({
+        costPlaceKind: placeKind,
+        projectId: created.projectId,
+        allocationAccount5Codes: allocRows.map((a) => a.account5Code),
+        fetchProjectCode: async () => projectCode,
+      });
+      await tx.costInvoice.update({
+        where: { id: created.id },
+        data: { costPlaceKind: acc.costPlaceKind, account5Code: acc.account5Code },
+      });
       if (data.sourcePlannedEventId) {
         try {
           await finalizePlannedToCostConversion(tx, data.sourcePlannedEventId, created.id);
@@ -133,6 +174,7 @@ export async function POST(req: Request) {
       include: {
         expenseCategory: true,
         project: true,
+        vehicle: true,
         payments: {
         orderBy: { paymentDate: "asc" },
         include: { projectAllocations: { include: { project: { select: { id: true, name: true } } } } },

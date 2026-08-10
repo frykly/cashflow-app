@@ -3,8 +3,16 @@
 import { useCallback, useEffect, useState } from "react";
 import { Alert, Button, Field, Input, Modal, Select, Spinner } from "@/components/ui";
 import { readApiErrorBody } from "@/lib/api-client";
+import { formatAccount4Display } from "@/lib/accounting/account-codes";
 
-type Cat = { id: string; name: string; slug: string; isActive: boolean };
+type Cat = {
+  id: string;
+  name: string;
+  slug: string;
+  isActive: boolean;
+  accountingCode?: string | null;
+  accountingName?: string | null;
+};
 
 type Usage = { invoices: number; planned: number; recurring: number; total: number };
 
@@ -12,10 +20,14 @@ export function ExpenseCategoriesSettings() {
   const [rows, setRows] = useState<Cat[]>([]);
   const [loading, setLoading] = useState(true);
   const [newName, setNewName] = useState("");
+  const [newAccountingCode, setNewAccountingCode] = useState("");
+  const [newAccountingName, setNewAccountingName] = useState("");
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editName, setEditName] = useState("");
+  const [editAccountingCode, setEditAccountingCode] = useState("");
+  const [editAccountingName, setEditAccountingName] = useState("");
 
   const [blockOpen, setBlockOpen] = useState(false);
   const [blockCat, setBlockCat] = useState<Cat | null>(null);
@@ -52,7 +64,11 @@ export function ExpenseCategoriesSettings() {
       const r = await fetch("/api/expense-categories", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: n }),
+        body: JSON.stringify({
+          name: n,
+          accountingCode: newAccountingCode.trim() || null,
+          accountingName: newAccountingName.trim() || null,
+        }),
       });
       const j = await r.json();
       if (!r.ok) {
@@ -60,6 +76,8 @@ export function ExpenseCategoriesSettings() {
         return;
       }
       setNewName("");
+      setNewAccountingCode("");
+      setNewAccountingName("");
       await load();
     } catch {
       setErr("Błąd sieci");
@@ -77,7 +95,11 @@ export function ExpenseCategoriesSettings() {
       const r = await fetch(`/api/expense-categories/${id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: n }),
+        body: JSON.stringify({
+          name: n,
+          accountingCode: editAccountingCode.trim() || null,
+          accountingName: editAccountingName.trim() || null,
+        }),
       });
       const j = await r.json();
       if (!r.ok) {
@@ -179,14 +201,34 @@ export function ExpenseCategoriesSettings() {
       {err ? <Alert variant="error">{err}</Alert> : null}
 
       <form onSubmit={addCategory} className="flex flex-wrap items-end gap-2">
-        <div className="min-w-[200px] flex-1">
+        <div className="min-w-[160px] flex-1">
           <Field label="Nowa kategoria kosztowa">
             <Input
-            value={newName}
-            onChange={(e) => setNewName(e.target.value)}
-            placeholder="np. Tankowanie pojazdów"
-            disabled={saving}
-          />
+              value={newName}
+              onChange={(e) => setNewName(e.target.value)}
+              placeholder="np. Tankowanie pojazdów"
+              disabled={saving}
+            />
+          </Field>
+        </div>
+        <div className="min-w-[100px]">
+          <Field label="Konto 4 (kod)">
+            <Input
+              value={newAccountingCode}
+              onChange={(e) => setNewAccountingCode(e.target.value)}
+              placeholder="np. 401"
+              disabled={saving}
+            />
+          </Field>
+        </div>
+        <div className="min-w-[140px] flex-1">
+          <Field label="Konto 4 (nazwa)">
+            <Input
+              value={newAccountingName}
+              onChange={(e) => setNewAccountingName(e.target.value)}
+              placeholder="np. Paliwo"
+              disabled={saving}
+            />
           </Field>
         </div>
         <Button type="submit" disabled={saving || !newName.trim()}>
@@ -195,10 +237,11 @@ export function ExpenseCategoriesSettings() {
       </form>
 
       <div className="overflow-x-auto rounded-lg border border-zinc-200 dark:border-zinc-800">
-        <table className="w-full min-w-[520px] text-left text-sm">
+        <table className="w-full min-w-[640px] text-left text-sm">
           <thead className="border-b border-zinc-200 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900/80">
             <tr>
               <th className="px-3 py-2 font-medium">Nazwa</th>
+              <th className="px-3 py-2 font-medium">Konto 4</th>
               <th className="px-3 py-2 font-medium">Slug</th>
               <th className="px-3 py-2 font-medium">Stan</th>
               <th className="px-3 py-2 font-medium text-right">Akcje</th>
@@ -209,32 +252,59 @@ export function ExpenseCategoriesSettings() {
               <tr key={c.id} className="border-b border-zinc-100 dark:border-zinc-800/80">
                 <td className="px-3 py-2">
                   {editingId === c.id ? (
-                    <div className="flex flex-wrap items-center gap-2">
+                    <div className="space-y-2">
                       <Input
                         className="max-w-xs"
                         value={editName}
                         onChange={(e) => setEditName(e.target.value)}
                         disabled={saving}
                       />
-                      <Button type="button" className="!py-1 !text-xs" onClick={() => saveEdit(c.id)} disabled={saving}>
-                        Zapisz
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="secondary"
-                        className="!py-1 !text-xs"
-                        onClick={() => setEditingId(null)}
-                        disabled={saving}
-                      >
-                        Anuluj
-                      </Button>
+                      <div className="flex flex-wrap gap-2">
+                        <Input
+                          className="max-w-[7rem]"
+                          value={editAccountingCode}
+                          onChange={(e) => setEditAccountingCode(e.target.value)}
+                          placeholder="Kod konta 4"
+                          disabled={saving}
+                        />
+                        <Input
+                          className="max-w-xs flex-1"
+                          value={editAccountingName}
+                          onChange={(e) => setEditAccountingName(e.target.value)}
+                          placeholder="Nazwa konta 4"
+                          disabled={saving}
+                        />
+                      </div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Button type="button" className="!py-1 !text-xs" onClick={() => saveEdit(c.id)} disabled={saving}>
+                          Zapisz
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          className="!py-1 !text-xs"
+                          onClick={() => setEditingId(null)}
+                          disabled={saving}
+                        >
+                          Anuluj
+                        </Button>
+                      </div>
                     </div>
                   ) : (
                     <span className={!c.isActive ? "text-zinc-500 line-through" : ""}>{c.name}</span>
                   )}
                 </td>
+                <td className="px-3 py-2 font-mono text-xs text-zinc-600 dark:text-zinc-400">
+                  {formatAccount4Display(c) ?? "—"}
+                </td>
                 <td className="px-3 py-2 font-mono text-xs text-zinc-500">{c.slug}</td>
-                <td className="px-3 py-2">{c.isActive ? <span className="text-emerald-700 dark:text-emerald-400">Aktywna</span> : <span className="text-zinc-500">Zarchiwizowana</span>}</td>
+                <td className="px-3 py-2">
+                  {c.isActive ? (
+                    <span className="text-emerald-700 dark:text-emerald-400">Aktywna</span>
+                  ) : (
+                    <span className="text-zinc-500">Zarchiwizowana</span>
+                  )}
+                </td>
                 <td className="px-3 py-2 text-right whitespace-nowrap">
                   {editingId !== c.id ? (
                     <>
@@ -245,6 +315,8 @@ export function ExpenseCategoriesSettings() {
                         onClick={() => {
                           setEditingId(c.id);
                           setEditName(c.name);
+                          setEditAccountingCode(c.accountingCode ?? "");
+                          setEditAccountingName(c.accountingName ?? "");
                         }}
                         disabled={saving}
                       >
@@ -290,7 +362,10 @@ export function ExpenseCategoriesSettings() {
               <strong>{blockUsage.invoices}</strong> kosztów, <strong>{blockUsage.planned}</strong> zdarzeń planowanych,{" "}
               <strong>{blockUsage.recurring}</strong> szablonów cyklicznych.
             </p>
-            <p className="text-zinc-600 dark:text-zinc-400">Możesz zamknąć okno i zarchiwizować kategorię albo przenieść wszystkie przypisania do innej kategorii — wtedy ta kategoria zostanie usunięta.</p>
+            <p className="text-zinc-600 dark:text-zinc-400">
+              Możesz zamknąć okno i zarchiwizować kategorię albo przenieść wszystkie przypisania do innej kategorii — wtedy
+              ta kategoria zostanie usunięta.
+            </p>
             <Field label="Przenieś wszystkie przypisania do">
               <Select value={replaceTargetId} onChange={(e) => setReplaceTargetId(e.target.value)} disabled={replaceBusy}>
                 <option value="">— wybierz kategorię —</option>

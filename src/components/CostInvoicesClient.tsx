@@ -4,6 +4,17 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ProjectSearchPicker } from "@/components/ProjectSearchPicker";
+import { VehicleSearchPicker } from "@/components/VehicleSearchPicker";
+import {
+  account5FromPlaceKind,
+  account5FromProjectCode,
+  COST_PLACE_KINDS,
+  costPlaceKindLabel,
+  formatAccount4Display,
+  formatAccount5Display,
+  type CostPlaceKind,
+} from "@/lib/accounting/account-codes";
+import { formatVehicleLabel } from "@/lib/accounting/vehicle-label";
 import { ContractorNameLink } from "@/components/ContractorNameLink";
 import { Alert, Badge, Button, Field, Input, Modal, Select, Spinner, Textarea } from "@/components/ui";
 import { CrudToolbar } from "@/components/CrudToolbar";
@@ -11,7 +22,7 @@ import { formatDate, formatMoney, toIsoOrNull } from "@/lib/format";
 import { isoToDateInputValue } from "@/lib/date-input";
 import { amountsFromNetRate, inferVatRateFromAmounts, type VatRatePct } from "@/lib/vat-rate";
 import { ContractorAutocomplete } from "@/components/ContractorAutocomplete";
-import { readApiErrorBody } from "@/lib/api-client";
+import { readApiErrorBody, readApiResponse } from "@/lib/api-client";
 import { useListQuery } from "@/hooks/useListQuery";
 import { isCalendarOverdue } from "@/lib/cashflow/overdue";
 import type { CostInvoice, CostInvoicePayment } from "@prisma/client";
@@ -24,7 +35,6 @@ import {
 import { DueDateOffsetControls } from "@/components/DueDateOffsetControls";
 import { normalizeDecimalInput } from "@/lib/decimal-input";
 import { isStoredVatOnlyCost } from "@/lib/validation/is-vat-only-cost";
-import { projectAllocationListLinks } from "@/lib/project-display";
 import { documentGrossSlicesFromInvoice } from "@/lib/payment-project-allocation/distribute-read";
 import { defaultProportionalPaymentAllocationRows } from "@/lib/payment-project-allocation/default-rows";
 import {
@@ -53,6 +63,15 @@ type PayPick = Pick<CostInvoicePayment, "amountGross">;
 
 type ProjectOption = { id: string; name: string; isActive: boolean; code?: string | null };
 
+type VehicleOption = {
+  id: string;
+  registrationNumber: string;
+  make?: string | null;
+  model?: string | null;
+  name?: string | null;
+  isActive?: boolean;
+};
+
 type Row = {
   id: string;
   documentNumber: string;
@@ -71,8 +90,25 @@ type Row = {
   actualPaymentDate: string | null;
   paymentSource: string;
   notes: string;
+  costPlaceKind?: string;
+  account5Code?: string | null;
+  accountingNote?: string;
+  vehicleId?: string | null;
+  vehicle?: {
+    id: string;
+    registrationNumber: string;
+    make?: string | null;
+    model?: string | null;
+    name?: string | null;
+  } | null;
   expenseCategoryId?: string | null;
-  expenseCategory?: { id: string; name: string; slug: string } | null;
+  expenseCategory?: {
+    id: string;
+    name: string;
+    slug: string;
+    accountingCode?: string | null;
+    accountingName?: string | null;
+  } | null;
   payments?: {
     id: string;
     amountGross: string;
@@ -84,7 +120,7 @@ type Row = {
   isGeneratedFromRecurring?: boolean;
   isRecurringDetached?: boolean;
   projectId?: string | null;
-  project?: { id: string; name: string } | null;
+  project?: { id: string; name: string; code?: string | null } | null;
   projectName?: string | null;
   projectAllocations?: {
     id: string;
@@ -92,7 +128,8 @@ type Row = {
     netAmount: unknown;
     grossAmount: unknown;
     description: string;
-    project?: { id: string; name: string } | null;
+    account5Code?: string | null;
+    project?: { id: string; name: string; code?: string | null } | null;
   }[];
 };
 
@@ -133,6 +170,9 @@ function emptyDraft(): Draft {
     notes: "",
     expenseCategoryId: null,
     projectId: null,
+    costPlaceKind: "UNCLASSIFIED",
+    accountingNote: "",
+    vehicleId: null,
   };
 }
 
@@ -285,12 +325,102 @@ function costListFiltersEmptyForQuickAll(m: URLSearchParams): boolean {
     m.get("overdue") !== "1" &&
     !m.get("recurringSource")?.trim() &&
     !m.get("projectId")?.trim() &&
+    !m.get("vehicleId")?.trim() &&
+    !m.get("costPlaceKind")?.trim() &&
+    !m.get("paymentSource")?.trim() &&
+    !m.get("account4")?.trim() &&
     !m.get("dateFrom")?.trim() &&
     !m.get("dateTo")?.trim()
   );
 }
 
-type Cat = { id: string; name: string; slug: string; isActive?: boolean };
+function costListPlaceCell(r: Row) {
+  const kind = r.costPlaceKind;
+  if (kind === "GENERAL_502") {
+    return <span className="font-mono text-xs text-zinc-800 dark:text-zinc-200">502-01</span>;
+  }
+  if (kind === "MANAGEMENT_550") {
+    return <span className="font-mono text-xs text-zinc-800 dark:text-zinc-200">550-01</span>;
+  }
+  const allocs = r.projectAllocations ?? [];
+  if (allocs.length > 1) {
+    const lines = allocs.map((a) => {
+      const code = a.account5Code?.trim() || account5FromProjectCode(a.project?.code) || "—";
+      const name = a.project?.name?.trim() || "—";
+      return `${code} · ${name}`;
+    });
+    return (
+      <span className="font-mono text-xs text-zinc-800 dark:text-zinc-200" title={lines.join("\n")}>
+        {allocs.length} projektów
+      </span>
+    );
+  }
+  if (allocs.length === 1) {
+    const a = allocs[0];
+    const code = a.account5Code?.trim() || account5FromProjectCode(a.project?.code);
+    const name = a.project?.name?.trim();
+    const label = code ?? name ?? "—";
+    const title = code && name ? `${code} · ${name}` : label;
+    return (
+      <span className="font-mono text-xs text-zinc-800 dark:text-zinc-200" title={title}>
+        {label}
+      </span>
+    );
+  }
+  const code = r.account5Code?.trim() || account5FromProjectCode(r.project?.code);
+  if (code) {
+    const name = r.project?.name?.trim();
+    return (
+      <span className="font-mono text-xs text-zinc-800 dark:text-zinc-200" title={name ? `${code} · ${name}` : code}>
+        {code}
+      </span>
+    );
+  }
+  return <span className="text-zinc-500 dark:text-zinc-400">—</span>;
+}
+
+function costListClassificationCell(r: Row) {
+  const account5 = r.account5Code?.trim() || null;
+  const account4 = r.expenseCategory?.accountingCode?.trim() || null;
+  const note = r.accountingNote?.trim() || "";
+  const vehicleReg = r.vehicle ? formatVehicleLabel(r.vehicle) : null;
+  if (!account5 && !account4 && !note && !vehicleReg) {
+    return <span className="text-zinc-500 dark:text-zinc-400">—</span>;
+  }
+  return (
+    <div className="space-y-0.5 text-[11px] leading-snug text-zinc-700 dark:text-zinc-300">
+      {account5 ? (
+        <p className="font-mono font-medium text-zinc-900 dark:text-zinc-100" title="Konto 5">
+          5: {account5}
+        </p>
+      ) : null}
+      {account4 ? (
+        <p className="font-mono text-zinc-600 dark:text-zinc-400" title="Konto 4">
+          4: {account4}
+        </p>
+      ) : null}
+      {note ? (
+        <p className="line-clamp-2 break-words text-zinc-500 dark:text-zinc-400" title={note}>
+          {note}
+        </p>
+      ) : null}
+      {vehicleReg ? (
+        <p className="truncate text-emerald-800 dark:text-emerald-300" title={`Pojazd: ${vehicleReg}`}>
+          {vehicleReg}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+type Cat = {
+  id: string;
+  name: string;
+  slug: string;
+  isActive?: boolean;
+  accountingCode?: string | null;
+  accountingName?: string | null;
+};
 
 function costInvoiceMultiProject(editing: Pick<Draft, "projectAllocations" | "projectId">): boolean {
   return (editing.projectAllocations?.length ?? 0) > 1;
@@ -427,6 +557,8 @@ export function CostInvoicesClient({
   const [paySaving, setPaySaving] = useState(false);
   const [importMsg, setImportMsg] = useState<string | null>(null);
   const [projects, setProjects] = useState<ProjectOption[]>([]);
+  const [vehicles, setVehicles] = useState<VehicleOption[]>([]);
+  const [vehicleApplies, setVehicleApplies] = useState(false);
   const plannedPaymentManualRef = useRef(false);
   const sourcePlannedEventIdRef = useRef<string | null>(null);
   const postCreateReturnRef = useRef<PostCreateReturnCapture>({ returnTo: null, sourceProjectId: null });
@@ -453,6 +585,10 @@ export function CostInvoicesClient({
     uncategorizedOnly: false,
     recurringSource: "",
     projectId: "",
+    vehicleId: "",
+    costPlaceKind: "",
+    paymentSource: "",
+    account4: "",
     dateFrom: "",
     dateTo: "",
     dateField: "plannedPaymentDate",
@@ -496,6 +632,10 @@ export function CostInvoicesClient({
       uncategorizedOnly: m.get("uncategorized") === "1",
       recurringSource: m.get("recurringSource") ?? "",
       projectId: m.get("projectId") ?? "",
+      vehicleId: m.get("vehicleId") ?? "",
+      costPlaceKind: m.get("costPlaceKind") ?? "",
+      paymentSource: m.get("paymentSource") ?? "",
+      account4: m.get("account4") ?? "",
       dateFrom: m.get("dateFrom") ?? "",
       dateTo: m.get("dateTo") ?? "",
       dateField: m.get("dateField") || "plannedPaymentDate",
@@ -525,14 +665,21 @@ export function CostInvoicesClient({
       .catch(() => setProjects([]));
   }, []);
 
+  useEffect(() => {
+    fetch("/api/vehicles?activeOnly=1")
+      .then((r) => r.json())
+      .then((j: VehicleOption[]) => setVehicles(Array.isArray(j) ? j : []))
+      .catch(() => setVehicles([]));
+  }, []);
+
   const load = useCallback(async () => {
     setListLoading(true);
     setLoadError(null);
     try {
       const r = await fetch(`/api/cost-invoices?${queryString}`);
-      const j = await r.json();
-      if (!r.ok) throw new Error(readApiErrorBody(j));
-      setRows(j);
+      const parsed = await readApiResponse(r);
+      if (!parsed.ok) throw new Error(parsed.errorText);
+      setRows(Array.isArray(parsed.data) ? (parsed.data as Row[]) : []);
     } catch (e) {
       setRows([]);
       setLoadError(e instanceof Error ? e.message : "Nie udało się wczytać listy");
@@ -559,6 +706,10 @@ export function CostInvoicesClient({
       uncategorized: filterDraft.uncategorizedOnly ? "1" : null,
       recurringSource: filterDraft.recurringSource || null,
       projectId: filterDraft.projectId || null,
+      vehicleId: filterDraft.vehicleId || null,
+      costPlaceKind: filterDraft.costPlaceKind || null,
+      paymentSource: filterDraft.paymentSource || null,
+      account4: filterDraft.account4.trim() || null,
       dateFrom: filterDraft.dateFrom || null,
       dateTo: filterDraft.dateTo || null,
       dateField: filterDraft.dateField,
@@ -575,6 +726,10 @@ export function CostInvoicesClient({
       uncategorized: null,
       recurringSource: null,
       projectId: null,
+      vehicleId: null,
+      costPlaceKind: null,
+      paymentSource: null,
+      account4: null,
       dateFrom: null,
       dateTo: null,
       dateField: null,
@@ -620,6 +775,35 @@ export function CostInvoicesClient({
     return categories.filter((c) => c.isActive !== false || c.id === sel);
   }, [categories, editing.expenseCategoryId]);
 
+  const editCostPlaceKind = (editing.costPlaceKind ?? "UNCLASSIFIED") as CostPlaceKind;
+
+  const editAccount5Preview = useMemo(() => {
+    if (editing.account5Code?.trim()) return editing.account5Code.trim();
+    const fixed = account5FromPlaceKind(editCostPlaceKind);
+    if (fixed) return fixed;
+    if (editCostPlaceKind === "PROJECT") {
+      if (projectAllocMode === "multi") {
+        for (const row of projectAllocRows) {
+          const p = projects.find((x) => x.id === row.projectId);
+          const c = account5FromProjectCode(p?.code);
+          if (c) return c;
+        }
+        return null;
+      }
+      const p = projects.find((x) => x.id === editing.projectId) ?? editing.project;
+      return account5FromProjectCode(p?.code);
+    }
+    return null;
+  }, [
+    editing.account5Code,
+    editing.project,
+    editing.projectId,
+    editCostPlaceKind,
+    projectAllocMode,
+    projectAllocRows,
+    projects,
+  ]);
+
   const sort = merged.get("sort") ?? "plannedPaymentDate";
   const order = (merged.get("order") === "desc" ? "desc" : "asc") as "asc" | "desc";
 
@@ -653,6 +837,7 @@ export function CostInvoicesClient({
     postCreateReturnRef.current = { returnTo: null, sourceProjectId: null };
     setProjectAllocMode("simple");
     setProjectAllocRows([]);
+    setVehicleApplies(false);
     if (embedded) {
       onEmbeddedClose?.();
     }
@@ -667,6 +852,7 @@ export function CostInvoicesClient({
     setVatOnlyPayment(false);
     setProjectAllocMode("simple");
     setProjectAllocRows([]);
+    setVehicleApplies(false);
     setEditing(emptyDraft());
     setFormError(null);
     setPdfDraftNote(null);
@@ -739,6 +925,11 @@ export function CostInvoicesClient({
       isRecurringDetached: !!r.isRecurringDetached,
       vatRate: rate,
       expenseCategoryId: r.expenseCategoryId ?? null,
+      costPlaceKind: r.costPlaceKind ?? "UNCLASSIFIED",
+      account5Code: r.account5Code ?? null,
+      accountingNote: r.accountingNote ?? "",
+      vehicleId: r.vehicleId ?? null,
+      vehicle: r.vehicle ?? null,
       documentDate: isoToDateInputValue(r.documentDate),
       paymentDueDate: isoToDateInputValue(r.paymentDueDate),
       plannedPaymentDate: isoToDateInputValue(r.plannedPaymentDate),
@@ -791,6 +982,7 @@ export function CostInvoicesClient({
     }
     setFormError(null);
     setPdfDraftNote(null);
+    setVehicleApplies(!!r.vehicleId);
     setOpen(true);
   }
 
@@ -943,6 +1135,7 @@ export function CostInvoicesClient({
     setEditing((prev) => {
       if (prev.id !== id) return prev;
       setVatOnlyPayment(isStoredVatOnlyCost(j.netAmount, j.vatAmount));
+      setVehicleApplies(!!j.vehicleId);
       plannedPaymentManualRef.current =
         isoToDateInputValue(j.plannedPaymentDate) !== isoToDateInputValue(j.paymentDueDate);
       return {
@@ -951,6 +1144,11 @@ export function CostInvoicesClient({
         isGeneratedFromRecurring: !!j.isGeneratedFromRecurring,
         isRecurringDetached: !!j.isRecurringDetached,
         expenseCategoryId: j.expenseCategoryId ?? null,
+        costPlaceKind: j.costPlaceKind ?? prev.costPlaceKind ?? "UNCLASSIFIED",
+        account5Code: j.account5Code ?? null,
+        accountingNote: j.accountingNote ?? "",
+        vehicleId: j.vehicleId ?? null,
+        vehicle: j.vehicle ?? null,
         vatRate: j.vatRate ?? prev.vatRate,
         documentDate: isoToDateInputValue(j.documentDate),
         paymentDueDate: isoToDateInputValue(j.paymentDueDate),
@@ -1116,7 +1314,7 @@ export function CostInvoicesClient({
         : {};
     const projectIdPayload = editing.projectId?.trim() || null;
 
-    if (projectAllocMode === "multi") {
+    if (editCostPlaceKind === "PROJECT" && projectAllocMode === "multi") {
       const ok = projectAllocRows.filter((row) => row.projectId.trim());
       if (ok.length === 0) {
         setFormError("Tryb kilku projektów: dodaj co najmniej jeden wiersz z wybranym projektem.");
@@ -1126,6 +1324,9 @@ export function CostInvoicesClient({
     }
 
     const allocPart: Record<string, unknown> = (() => {
+      if (editCostPlaceKind !== "PROJECT") {
+        return editing.id ? { projectAllocations: [] as never[] } : {};
+      }
       if (projectAllocMode === "multi") {
         const ok = projectAllocRows.filter((row) => row.projectId.trim());
         return {
@@ -1142,7 +1343,9 @@ export function CostInvoicesClient({
     })();
 
     const projectField =
-      projectAllocMode === "multi" ? { projectId: null } : { projectId: projectIdPayload };
+      editCostPlaceKind !== "PROJECT" || projectAllocMode === "multi"
+        ? { projectId: null }
+        : { projectId: projectIdPayload };
 
     const url = editing.id ? `/api/cost-invoices/${editing.id}` : "/api/cost-invoices";
     const method = editing.id ? "PATCH" : "POST";
@@ -1150,6 +1353,12 @@ export function CostInvoicesClient({
       method === "POST" && sourcePlannedEventIdRef.current
         ? { sourcePlannedEventId: sourcePlannedEventIdRef.current }
         : {};
+
+    const accountingFields = {
+      costPlaceKind: editing.costPlaceKind ?? "UNCLASSIFIED",
+      accountingNote: editing.accountingNote ?? "",
+      vehicleId: vehicleApplies ? editing.vehicleId ?? null : null,
+    };
 
     const body = vatOnlyPayment
       ? {
@@ -1171,6 +1380,7 @@ export function CostInvoicesClient({
           notes: editing.notes,
           ...projectField,
           expenseCategoryId: editing.expenseCategoryId || null,
+          ...accountingFields,
           ...recurringPatch,
           ...postExtra,
           ...allocPart,
@@ -1194,6 +1404,7 @@ export function CostInvoicesClient({
           notes: editing.notes,
           ...projectField,
           expenseCategoryId: editing.expenseCategoryId || null,
+          ...accountingFields,
           ...recurringPatch,
           ...postExtra,
           ...allocPart,
@@ -1388,12 +1599,12 @@ export function CostInvoicesClient({
           </div>
         </div>
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-6">
-          <Field label="Szukaj (nr, dostawca, opis, projekt)">
+          <Field label="Szukaj (nr, dostawca, opis, konto, pojazd)">
             <Input
               className="w-full min-w-0"
               value={filterDraft.q}
               onChange={(e) => setFilterDraft((d) => ({ ...d, q: e.target.value }))}
-              placeholder="np. FV/1, dostawca lub projekt"
+              placeholder="np. FV/1, 501-12, rejestracja"
               disabled={listLoading}
             />
           </Field>
@@ -1413,6 +1624,57 @@ export function CostInvoicesClient({
                     {!p.isActive ? " (nieaktywny)" : ""}
                   </option>
                 ))}
+            </Select>
+          </Field>
+          <Field label="Miejsce kosztu">
+            <Select
+              value={filterDraft.costPlaceKind}
+              onChange={(e) => setFilterDraft((d) => ({ ...d, costPlaceKind: e.target.value }))}
+              disabled={listLoading}
+            >
+              <option value="">(wszystkie)</option>
+              {COST_PLACE_KINDS.map((k) => (
+                <option key={k} value={k}>
+                  {costPlaceKindLabel(k)}
+                </option>
+              ))}
+            </Select>
+          </Field>
+          <Field label="Pojazd">
+            <Select
+              value={filterDraft.vehicleId}
+              onChange={(e) => setFilterDraft((d) => ({ ...d, vehicleId: e.target.value }))}
+              disabled={listLoading}
+            >
+              <option value="">(wszystkie)</option>
+              {vehicles
+                .slice()
+                .sort((a, b) => a.registrationNumber.localeCompare(b.registrationNumber, "pl"))
+                .map((v) => (
+                  <option key={v.id} value={v.id}>
+                    {formatVehicleLabel(v)}
+                  </option>
+                ))}
+            </Select>
+          </Field>
+          <Field label="Konto 4">
+            <Input
+              value={filterDraft.account4}
+              onChange={(e) => setFilterDraft((d) => ({ ...d, account4: e.target.value }))}
+              placeholder="kod lub nazwa"
+              disabled={listLoading}
+            />
+          </Field>
+          <Field label="Źródło płatności">
+            <Select
+              value={filterDraft.paymentSource}
+              onChange={(e) => setFilterDraft((d) => ({ ...d, paymentSource: e.target.value }))}
+              disabled={listLoading}
+            >
+              <option value="">(wszystkie)</option>
+              <option value="MAIN">MAIN</option>
+              <option value="VAT">VAT</option>
+              <option value="VAT_THEN_MAIN">VAT → MAIN</option>
             </Select>
           </Field>
           <Field label="Status">
@@ -1561,14 +1823,14 @@ export function CostInvoicesClient({
                 <th className="sticky top-0 z-20 w-[19%] border-b border-zinc-200 bg-zinc-50 px-1 py-2 dark:border-zinc-800 dark:bg-zinc-900">
                   {costSortTh("Dostawca", "supplier")}
                 </th>
+                <th className="sticky top-0 z-20 w-[12%] border-b border-zinc-200 bg-zinc-50 px-1 py-2 text-xs font-semibold uppercase tracking-wide text-zinc-600 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400">
+                  Miejsce (konto 5)
+                </th>
                 <th className="sticky top-0 z-20 w-[14%] border-b border-zinc-200 bg-zinc-50 px-1 py-2 text-xs font-semibold uppercase tracking-wide text-zinc-600 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400">
-                  Projekt
+                  Klasyfikacja
                 </th>
-                <th className="sticky top-0 z-20 w-[9%] border-b border-zinc-200 bg-zinc-50 px-1 py-2 dark:border-zinc-800 dark:bg-zinc-900">
-                  {costSortTh("Netto", "netAmount", "right")}
-                </th>
-                <th className="sticky top-0 z-20 w-[9%] border-b border-zinc-200 bg-zinc-50 px-1 py-2 dark:border-zinc-800 dark:bg-zinc-900">
-                  {costSortTh("Brutto", "grossAmount", "right")}
+                <th className="sticky top-0 z-20 w-[10%] border-b border-zinc-200 bg-zinc-50 px-1 py-2 dark:border-zinc-800 dark:bg-zinc-900">
+                  {costSortTh("Do zapłaty", "grossAmount", "right")}
                 </th>
                 <th className="sticky top-0 z-20 w-[11%] border-b border-zinc-200 bg-zinc-50 px-1 py-2 dark:border-zinc-800 dark:bg-zinc-900">
                   {costSortTh("Plan", "plannedPaymentDate")}
@@ -1630,55 +1892,8 @@ export function CostInvoicesClient({
                         <ContractorNameLink name={r.supplier} />
                       </span>
                     </td>
-                    <td className="min-w-0 max-w-[220px] px-1 py-2.5 text-xs align-top">
-                      {(() => {
-                        const items = projectAllocationListLinks(r);
-                        if (items.length === 0) {
-                          return <span className="text-zinc-500 dark:text-zinc-400">—</span>;
-                        }
-                        const multi = items.length > 1;
-                        return (
-                          <div
-                            className={
-                              multi
-                                ? "rounded-md border border-emerald-200/90 bg-emerald-50/60 px-1.5 py-1 dark:border-emerald-900/60 dark:bg-emerald-950/30"
-                                : ""
-                            }
-                          >
-                            {multi ? (
-                              <p className="mb-1 text-[10px] font-semibold uppercase leading-tight tracking-wide text-emerald-900 dark:text-emerald-300">
-                                Wiele projektów
-                              </p>
-                            ) : null}
-                            <ul className="list-none space-y-1">
-                              {items.map((it, idx) => (
-                                <li key={`${it.projectId || "x"}-${idx}`}>
-                                  {it.projectId ? (
-                                    <Link
-                                      href={`/projects/${it.projectId}`}
-                                      className="break-words font-medium text-emerald-800 underline decoration-emerald-300 underline-offset-2 hover:decoration-emerald-600 dark:text-emerald-300 dark:decoration-emerald-700 dark:hover:decoration-emerald-400"
-                                      onClick={(e) => e.stopPropagation()}
-                                    >
-                                      {it.label}
-                                    </Link>
-                                  ) : (
-                                    <span
-                                      className="break-words text-amber-800 dark:text-amber-300"
-                                      title="Wybierz projekt z listy przy edycji, aby dodać link"
-                                    >
-                                      {it.label}
-                                    </span>
-                                  )}
-                                </li>
-                              ))}
-                            </ul>
-                          </div>
-                        );
-                      })()}
-                    </td>
-                    <td className="px-1 py-2.5 text-right text-sm tabular-nums font-medium text-zinc-900 dark:text-zinc-100">
-                      {formatMoney(Number(r.netAmount))}
-                    </td>
+                    <td className="min-w-0 px-1 py-2.5 text-xs align-top">{costListPlaceCell(r)}</td>
+                    <td className="min-w-0 px-1 py-2.5 align-top">{costListClassificationCell(r)}</td>
                     <td className="px-1 py-2.5 text-right text-sm tabular-nums text-zinc-800 dark:text-zinc-200">
                       {(() => {
                         const invPick = {
@@ -1780,21 +1995,93 @@ export function CostInvoicesClient({
               />
             </Field>
           </div>
-          <Field label="Kategoria kosztu">
-            <Select
-              value={editing.expenseCategoryId ?? ""}
-              onChange={(e) => setEditing({ ...editing, expenseCategoryId: e.target.value || null })}
-              disabled={saving}
-            >
-              <option value="">(brak)</option>
-              {categoriesForForm.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name}
-                  {c.isActive === false ? " (zarchiwizowana)" : ""}
-                </option>
-              ))}
-            </Select>
-          </Field>
+          <div className="rounded-lg border border-zinc-200 p-3 dark:border-zinc-700">
+            <p className="mb-3 text-sm font-semibold text-zinc-900 dark:text-zinc-100">Klasyfikacja księgowa</p>
+            <div className="space-y-3">
+              <Field label="Miejsce kosztu (konto 5)">
+                <Select
+                  value={editCostPlaceKind}
+                  onChange={(e) =>
+                    setEditing({
+                      ...editing,
+                      costPlaceKind: e.target.value,
+                    })
+                  }
+                  disabled={saving}
+                >
+                  {COST_PLACE_KINDS.map((k) => (
+                    <option key={k} value={k}>
+                      {costPlaceKindLabel(k)}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+              {editCostPlaceKind === "UNCLASSIFIED" ? (
+                <p className="text-xs text-amber-800 dark:text-amber-300">
+                  Wybierz miejsce kosztu: projekt (501), koszty ogólne (502-01) lub koszty zarządu (550-01).
+                </p>
+              ) : null}
+              {editCostPlaceKind === "GENERAL_502" || editCostPlaceKind === "MANAGEMENT_550" ? (
+                <p className="rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2 font-mono text-sm text-zinc-800 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200">
+                  Konto 5: {account5FromPlaceKind(editCostPlaceKind)}
+                </p>
+              ) : null}
+              <Field label="Kategoria kosztu (konto 4)">
+                <Select
+                  value={editing.expenseCategoryId ?? ""}
+                  onChange={(e) => setEditing({ ...editing, expenseCategoryId: e.target.value || null })}
+                  disabled={saving}
+                >
+                  <option value="">(brak)</option>
+                  {categoriesForForm.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {formatAccount4Display(c) ?? c.name}
+                      {c.isActive === false ? " (zarchiwizowana)" : ""}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+              <Field label="Notatka księgowa">
+                <Input
+                  value={editing.accountingNote ?? ""}
+                  onChange={(e) => setEditing({ ...editing, accountingNote: e.target.value })}
+                  placeholder="np. uzasadnienie klasyfikacji"
+                  disabled={saving}
+                />
+              </Field>
+              <label className="flex cursor-pointer items-center gap-2 text-sm text-zinc-700 dark:text-zinc-300">
+                <input
+                  type="checkbox"
+                  className="size-4 rounded border-zinc-300"
+                  checked={vehicleApplies}
+                  onChange={(e) => {
+                    const on = e.target.checked;
+                    setVehicleApplies(on);
+                    if (!on) setEditing({ ...editing, vehicleId: null, vehicle: null });
+                  }}
+                  disabled={saving}
+                />
+                Koszt dotyczy pojazdu
+              </label>
+              {vehicleApplies ? (
+                <Field label="Pojazd">
+                  <VehicleSearchPicker
+                    value={editing.vehicleId ?? null}
+                    onChange={(id) => setEditing({ ...editing, vehicleId: id })}
+                    disabled={saving}
+                  />
+                </Field>
+              ) : null}
+              {editAccount5Preview ? (
+                <p className="rounded-md border border-emerald-200 bg-emerald-50/70 px-3 py-2 text-sm text-emerald-950 dark:border-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-100">
+                  Podgląd konta 5:{" "}
+                  <span className="font-mono font-semibold">
+                    {formatAccount5Display(editAccount5Preview) ?? editAccount5Preview}
+                  </span>
+                </p>
+              ) : null}
+            </div>
+          </div>
           <Field label="Opis">
             <Textarea
               rows={2}
@@ -1804,6 +2091,8 @@ export function CostInvoicesClient({
             />
           </Field>
           <div className="rounded-lg border border-zinc-200 p-3 dark:border-zinc-700">
+            {editCostPlaceKind === "PROJECT" ? (
+              <>
             <label className="flex cursor-pointer items-center gap-2 text-sm font-medium text-zinc-800 dark:text-zinc-200">
               <input
                 type="checkbox"
@@ -1845,7 +2134,7 @@ export function CostInvoicesClient({
               Alokacja na kilka projektów (suma netto i brutto = dokument)
             </label>
             {projectAllocMode === "multi" ? (
-              <div className="mt-3 space-y-2">
+              <div className="mt-3 w-full space-y-2">
                 <div
                   className={`rounded-md border p-2 text-xs ${
                     projectAllocationTotals.netOver || projectAllocationTotals.grossOver
@@ -1882,7 +2171,7 @@ export function CostInvoicesClient({
                 {projectAllocRows.map((row, idx) => (
                   <div
                     key={idx}
-                    className="grid gap-2 rounded-md border border-zinc-100 p-2 dark:border-zinc-800 sm:grid-cols-2 xl:grid-cols-6"
+                    className="grid w-full gap-2 rounded-md border border-zinc-100 p-2 dark:border-zinc-800 grid-cols-1 sm:grid-cols-2 xl:grid-cols-6"
                   >
                     <Field label="Projekt">
                       <ProjectSearchPicker
@@ -1895,6 +2184,13 @@ export function CostInvoicesClient({
                         listSort="code"
                         disabled={saving}
                       />
+                      {(() => {
+                        const p = projects.find((x) => x.id === row.projectId);
+                        const a5 = account5FromProjectCode(p?.code);
+                        return a5 ? (
+                          <p className="mt-1 font-mono text-[11px] text-zinc-500 dark:text-zinc-400">Konto 5: {a5}</p>
+                        ) : null;
+                      })()}
                     </Field>
                     <Field label="Stawka VAT">
                       <Select
@@ -2036,12 +2332,25 @@ export function CostInvoicesClient({
                   onChange={(id) => setEditing({ ...editing, projectId: id })}
                   disabled={saving}
                 />
+                {(() => {
+                  const p = projects.find((x) => x.id === editing.projectId) ?? editing.project;
+                  const a5 = account5FromProjectCode(p?.code);
+                  return a5 ? (
+                    <p className="mt-1 font-mono text-[11px] text-zinc-500 dark:text-zinc-400">Konto 5: {a5}</p>
+                  ) : null;
+                })()}
                 {!editing.projectId && (editing.projectName ?? "").trim() ? (
                   <p className="mt-1 text-xs text-amber-700 dark:text-amber-400">
                     Legacy: „{(editing.projectName ?? "").trim()}” — wybierz projekt z listy, aby powiązać rekord.
                   </p>
                 ) : null}
               </Field>
+            )}
+              </>
+            ) : (
+              <p className="text-xs text-zinc-500 dark:text-zinc-400">
+                Alokacja projektowa dostępna po wyborze miejsca kosztu „Projekt / zlecenie (501)”.
+              </p>
             )}
           </div>
           <label className="flex cursor-pointer items-center gap-2 text-sm text-zinc-700 dark:text-zinc-300">

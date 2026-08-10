@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Input, Spinner } from "@/components/ui";
 import { formatProjectPickerLabel } from "@/lib/project-picker-label";
+import { account5FromProjectCode } from "@/lib/accounting/account-codes";
 
 export type ProjectPickerRow = {
   id: string;
@@ -110,18 +111,29 @@ export function ProjectSearchPicker({
   const selected = rows.find((r) => r.id === value) ?? (value && labelRow?.id === value ? labelRow : null);
 
   return (
-    <div ref={rootRef} className="relative">
+    <div ref={rootRef} className="relative w-full min-w-0">
       <button
         type="button"
         disabled={disabled}
         onClick={() => !disabled && setOpen((o) => !o)}
-        className="flex w-full items-center justify-between gap-2 rounded-lg border border-zinc-300 bg-white px-3 py-2 text-left text-sm text-zinc-900 dark:border-zinc-600 dark:bg-zinc-950 dark:text-zinc-100"
+        className="flex w-full min-w-0 items-center justify-between gap-2 rounded-lg border border-zinc-300 bg-white px-3 py-2 text-left text-sm text-zinc-900 dark:border-zinc-600 dark:bg-zinc-950 dark:text-zinc-100"
       >
-        <span className={selected ? "truncate" : "truncate text-zinc-500"}>
+        <span className={`min-w-0 ${selected ? "" : "text-zinc-500"}`}>
           {labelLoading && value ? (
             <span className="text-zinc-400">Ładowanie…</span>
           ) : selected ? (
-            formatProjectPickerLabel(selected)
+            <span className="block min-w-0">
+              <span className="block truncate">{formatProjectPickerLabel(selected)}</span>
+              {account5FromProjectCode(selected.code) ? (
+                <span className="mt-0.5 block text-[11px] text-zinc-500">
+                  konto 5: {account5FromProjectCode(selected.code)}
+                </span>
+              ) : (
+                <span className="mt-0.5 block text-[11px] text-amber-700 dark:text-amber-400">
+                  brak numeru zlecenia → brak 501
+                </span>
+              )}
+            </span>
           ) : value ? (
             <span className="text-amber-700 dark:text-amber-400">Projekt (id) — otwórz listę</span>
           ) : (
@@ -131,7 +143,7 @@ export function ProjectSearchPicker({
         <span className="shrink-0 text-zinc-400">{open ? "▲" : "▼"}</span>
       </button>
       {open && !disabled ? (
-        <div className="absolute z-40 mt-1 max-h-72 w-full overflow-auto rounded-lg border border-zinc-200 bg-white py-1 shadow-lg dark:border-zinc-700 dark:bg-zinc-900">
+        <div className="absolute z-40 mt-1 max-h-72 w-full min-w-[min(100%,20rem)] overflow-auto rounded-lg border border-zinc-200 bg-white py-1 shadow-lg dark:border-zinc-700 dark:bg-zinc-900 sm:min-w-[24rem]">
           <div className="sticky top-0 border-b border-zinc-100 bg-white p-2 dark:border-zinc-800 dark:bg-zinc-900">
             <Input
               autoFocus
@@ -168,7 +180,12 @@ export function ProjectSearchPicker({
                 setQ("");
               }}
             >
-              {formatProjectPickerLabel(r)}
+              <span className="block truncate">{formatProjectPickerLabel(r)}</span>
+              <span className="mt-0.5 block text-[11px] text-zinc-500">
+                {account5FromProjectCode(r.code)
+                  ? `konto 5: ${account5FromProjectCode(r.code)}`
+                  : "brak numeru zlecenia"}
+              </span>
             </button>
           ))}
           {!loading && rows.length === 0 ? (

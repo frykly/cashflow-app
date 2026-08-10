@@ -8,6 +8,7 @@ import { readApiErrorBody } from "@/lib/api-client";
 import { normalizeDecimalInput } from "@/lib/decimal-input";
 import { ExpenseCategoriesSettings } from "@/components/ExpenseCategoriesSettings";
 import { ProjectDictionarySettings } from "@/components/ProjectDictionarySettings";
+import { VehiclesSettings } from "@/components/VehiclesSettings";
 
 type Row = {
   mainOpeningBalance: string;
@@ -198,11 +199,14 @@ export function SettingsClient() {
         <h2 className="text-lg font-semibold text-zinc-900 dark:text-zinc-50">Kategorie kosztów</h2>
         <p className="mt-1 text-sm text-zinc-500">
           Lista używana przy fakturach kosztowych, imporcie bankowym i (tam gdzie dotyczy) w planie oraz cyklicznych.
+          Uzupełnij kod 4xx (Saldeo), np. 429-07.
         </p>
         <div className="mt-4">
           <ExpenseCategoriesSettings />
         </div>
       </section>
+
+      <VehiclesSettings />
     </div>
   );
 }
