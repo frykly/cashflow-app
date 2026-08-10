@@ -6,6 +6,8 @@ import { ZodError, z } from "zod";
 
 const createSchema = z.object({
   name: z.string().trim().min(1, "Podaj nazwę").max(120),
+  accountingCode: z.string().trim().max(32).optional().nullable(),
+  accountingName: z.string().trim().max(120).optional().nullable(),
 });
 
 export async function GET() {
@@ -24,7 +26,13 @@ export async function POST(req: Request) {
     const data = createSchema.parse(body);
     const slug = `${slugifyBase(data.name)}-${Date.now().toString(36)}`;
     const row = await prisma.expenseCategory.create({
-      data: { name: data.name.trim(), slug, isActive: true },
+      data: {
+        name: data.name.trim(),
+        slug,
+        isActive: true,
+        accountingCode: data.accountingCode?.trim() || null,
+        accountingName: data.accountingName?.trim() || null,
+      },
     });
     return jsonData(row, { status: 201 });
   } catch (e) {

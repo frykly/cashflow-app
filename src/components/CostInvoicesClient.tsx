@@ -4,15 +4,40 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ProjectSearchPicker } from "@/components/ProjectSearchPicker";
+import { ExpenseCategorySearchPicker } from "@/components/ExpenseCategorySearchPicker";
+import { VehicleSearchPicker } from "@/components/VehicleSearchPicker";
+import {
+  account5FromPlaceKind,
+  account5FromProjectCode,
+  COST_PLACE_KINDS,
+  costPlaceKindLabel,
+  formatAccount5Display,
+  type CostPlaceKind,
+} from "@/lib/accounting/account-codes";
+import { formatVehicleLabel } from "@/lib/accounting/vehicle-label";
 import { ContractorNameLink } from "@/components/ContractorNameLink";
 import { Alert, Badge, Button, Field, Input, Modal, Select, Spinner, Textarea } from "@/components/ui";
-import { CrudToolbar } from "@/components/CrudToolbar";
+import { CostInvoicesListToolbar } from "@/components/CostInvoicesListToolbar";
+import {
+  Account5MultiCopyActions,
+  Account5SingleCopyLine,
+  CostListAccount5Cell,
+} from "@/components/Account5CopyActions";
+import { buildAccount5AllocationsFromFormRows } from "@/lib/accounting/account5-clipboard";
+import {
+  datesForCostDatePreset,
+  inferCostDatePreset,
+  normalizeCostDateField,
+  COST_DEFAULT_DATE_FIELD,
+  type CostDateField,
+  type CostDatePreset,
+} from "@/lib/cost-list-date-filter";
 import { formatDate, formatMoney, toIsoOrNull } from "@/lib/format";
 import { isoToDateInputValue } from "@/lib/date-input";
 import { amountsFromNetRate, inferVatRateFromAmounts, type VatRatePct } from "@/lib/vat-rate";
 import { ContractorAutocomplete } from "@/components/ContractorAutocomplete";
-import { readApiErrorBody } from "@/lib/api-client";
-import { useListQuery } from "@/hooks/useListQuery";
+import { readApiErrorBody, readApiResponse } from "@/lib/api-client";
+import { usePersistentListState } from "@/hooks/usePersistentListState";
 import { isCalendarOverdue } from "@/lib/cashflow/overdue";
 import type { CostInvoice, CostInvoicePayment } from "@prisma/client";
 import { costRemainingGross, isCostFullyPaid, sumCostPaymentsGross } from "@/lib/cashflow/settlement";
@@ -24,15 +49,13 @@ import {
 import { DueDateOffsetControls } from "@/components/DueDateOffsetControls";
 import { normalizeDecimalInput } from "@/lib/decimal-input";
 import { isStoredVatOnlyCost } from "@/lib/validation/is-vat-only-cost";
-import { projectAllocationListLinks } from "@/lib/project-display";
 import { documentGrossSlicesFromInvoice } from "@/lib/payment-project-allocation/distribute-read";
 import { defaultProportionalPaymentAllocationRows } from "@/lib/payment-project-allocation/default-rows";
 import {
   addSavedCostListView,
-  loadLastCostListQuery,
+  COST_LIST_PERSISTENCE_CONFIG,
   loadSavedCostListViews,
   removeSavedCostListView,
-  saveLastCostListQuery,
   type SavedCostListView,
 } from "@/lib/cost-invoices-list-storage";
 import { InvoicePdfDraftSection } from "@/components/InvoicePdfDraftSection";
@@ -53,6 +76,15 @@ type PayPick = Pick<CostInvoicePayment, "amountGross">;
 
 type ProjectOption = { id: string; name: string; isActive: boolean; code?: string | null };
 
+type VehicleOption = {
+  id: string;
+  registrationNumber: string;
+  make?: string | null;
+  model?: string | null;
+  name?: string | null;
+  isActive?: boolean;
+};
+
 type Row = {
   id: string;
   documentNumber: string;
@@ -71,8 +103,25 @@ type Row = {
   actualPaymentDate: string | null;
   paymentSource: string;
   notes: string;
+  costPlaceKind?: string;
+  account5Code?: string | null;
+  accountingNote?: string;
+  vehicleId?: string | null;
+  vehicle?: {
+    id: string;
+    registrationNumber: string;
+    make?: string | null;
+    model?: string | null;
+    name?: string | null;
+  } | null;
   expenseCategoryId?: string | null;
-  expenseCategory?: { id: string; name: string; slug: string } | null;
+  expenseCategory?: {
+    id: string;
+    name: string;
+    slug: string;
+    accountingCode?: string | null;
+    accountingName?: string | null;
+  } | null;
   payments?: {
     id: string;
     amountGross: string;
@@ -84,7 +133,7 @@ type Row = {
   isGeneratedFromRecurring?: boolean;
   isRecurringDetached?: boolean;
   projectId?: string | null;
-  project?: { id: string; name: string } | null;
+  project?: { id: string; name: string; code?: string | null } | null;
   projectName?: string | null;
   projectAllocations?: {
     id: string;
@@ -92,7 +141,8 @@ type Row = {
     netAmount: unknown;
     grossAmount: unknown;
     description: string;
-    project?: { id: string; name: string } | null;
+    account5Code?: string | null;
+    project?: { id: string; name: string; code?: string | null } | null;
   }[];
 };
 
@@ -133,6 +183,9 @@ function emptyDraft(): Draft {
     notes: "",
     expenseCategoryId: null,
     projectId: null,
+    costPlaceKind: "UNCLASSIFIED",
+    accountingNote: "",
+    vehicleId: null,
   };
 }
 
@@ -262,35 +315,48 @@ const SORT_OPTIONS = [
   { value: "createdAt", label: "Data utworzenia" },
 ];
 
-const DATE_FIELD_OPTIONS = [
-  { value: "plannedPaymentDate", label: "Plan. zapłata" },
-  { value: "paymentDueDate", label: "Termin płatności" },
-  { value: "documentDate", label: "Data dokumentu" },
-];
-
-/** Tylko obiektywne presety (bez heurystyk kategorii). */
-const COST_QUICK_PRESETS = [
-  { id: "all" as const, label: "Wszystkie" },
-  { id: "uncategorized" as const, label: "Bez kategorii" },
-  { id: "overdue" as const, label: "Po terminie" },
-];
-
-function costListFiltersEmptyForQuickAll(m: URLSearchParams): boolean {
+function costListClassificationCell(r: Row) {
+  const account5 = r.account5Code?.trim() || null;
+  const account4 = r.expenseCategory?.accountingCode?.trim() || null;
+  const note = r.accountingNote?.trim() || "";
+  const vehicleReg = r.vehicle ? formatVehicleLabel(r.vehicle) : null;
+  if (!account5 && !account4 && !note && !vehicleReg) {
+    return <span className="text-zinc-500 dark:text-zinc-400">—</span>;
+  }
   return (
-    !m.get("q")?.trim() &&
-    !m.get("status")?.trim() &&
-    !m.get("categories")?.trim() &&
-    !m.get("categoryId")?.trim() &&
-    m.get("uncategorized") !== "1" &&
-    m.get("overdue") !== "1" &&
-    !m.get("recurringSource")?.trim() &&
-    !m.get("projectId")?.trim() &&
-    !m.get("dateFrom")?.trim() &&
-    !m.get("dateTo")?.trim()
+    <div className="space-y-0.5 text-[11px] leading-snug text-zinc-700 dark:text-zinc-300">
+      {account5 ? (
+        <p className="font-mono font-medium text-zinc-900 dark:text-zinc-100" title="Konto 5">
+          5: {account5}
+        </p>
+      ) : null}
+      {account4 ? (
+        <p className="font-mono text-zinc-600 dark:text-zinc-400" title="Konto 4">
+          4: {account4}
+        </p>
+      ) : null}
+      {note ? (
+        <p className="line-clamp-2 break-words text-zinc-500 dark:text-zinc-400" title={note}>
+          {note}
+        </p>
+      ) : null}
+      {vehicleReg ? (
+        <p className="truncate text-emerald-800 dark:text-emerald-300" title={`Pojazd: ${vehicleReg}`}>
+          {vehicleReg}
+        </p>
+      ) : null}
+    </div>
   );
 }
 
-type Cat = { id: string; name: string; slug: string; isActive?: boolean };
+type Cat = {
+  id: string;
+  name: string;
+  slug: string;
+  isActive?: boolean;
+  accountingCode?: string | null;
+  accountingName?: string | null;
+};
 
 function costInvoiceMultiProject(editing: Pick<Draft, "projectAllocations" | "projectId">): boolean {
   return (editing.projectAllocations?.length ?? 0) > 1;
@@ -410,7 +476,10 @@ export function CostInvoicesClient({
   const embedded = Boolean(embeddedCostInvoiceId);
   const router = useRouter();
   const pathname = usePathname();
-  const { queryString, setParam, setParams, merged } = useListQuery("cost", initialQueryString);
+  const { queryString, setParam, setParams, merged, clearPersisted, replaceQuery } = usePersistentListState(
+    initialQueryString,
+    COST_LIST_PERSISTENCE_CONFIG,
+  );
   const [rows, setRows] = useState<Row[]>([]);
   const [listLoading, setListLoading] = useState(true);
   const [open, setOpen] = useState(false);
@@ -427,6 +496,8 @@ export function CostInvoicesClient({
   const [paySaving, setPaySaving] = useState(false);
   const [importMsg, setImportMsg] = useState<string | null>(null);
   const [projects, setProjects] = useState<ProjectOption[]>([]);
+  const [vehicles, setVehicles] = useState<VehicleOption[]>([]);
+  const [vehicleApplies, setVehicleApplies] = useState(false);
   const plannedPaymentManualRef = useRef(false);
   const sourcePlannedEventIdRef = useRef<string | null>(null);
   const postCreateReturnRef = useRef<PostCreateReturnCapture>({ returnTo: null, sourceProjectId: null });
@@ -449,33 +520,26 @@ export function CostInvoicesClient({
   const [filterDraft, setFilterDraft] = useState({
     q: "",
     status: "",
+    datePreset: "all" as CostDatePreset,
     categoryIds: [] as string[],
     uncategorizedOnly: false,
     recurringSource: "",
     projectId: "",
+    vehicleId: "",
+    costPlaceKind: "",
+    paymentSource: "",
+    account4: "",
     dateFrom: "",
     dateTo: "",
-    dateField: "plannedPaymentDate",
+    dateField: COST_DEFAULT_DATE_FIELD as CostDateField,
     overdueOnly: false,
   });
 
   const [savedViews, setSavedViews] = useState<SavedCostListView[]>([]);
-  const persistReadyRef = useRef(false);
-  const restoredRef = useRef(false);
 
   useEffect(() => {
     setSavedViews(loadSavedCostListViews());
   }, []);
-
-  useEffect(() => {
-    if (embedded) return;
-    if (restoredRef.current) return;
-    restoredRef.current = true;
-    if (initialQueryString.trim().length > 0) return;
-    const last = loadLastCostListQuery();
-    if (!last?.trim()) return;
-    router.replace(`${pathname}?${last}`);
-  }, [initialQueryString, pathname, router]);
 
   useEffect(() => {
     const m = new URLSearchParams(queryString);
@@ -492,23 +556,20 @@ export function CostInvoicesClient({
     setFilterDraft({
       q: m.get("q") ?? "",
       status: m.get("status") ?? "",
+      datePreset: inferCostDatePreset(m.get("dateFrom") ?? "", m.get("dateTo") ?? ""),
       categoryIds,
       uncategorizedOnly: m.get("uncategorized") === "1",
       recurringSource: m.get("recurringSource") ?? "",
       projectId: m.get("projectId") ?? "",
+      vehicleId: m.get("vehicleId") ?? "",
+      costPlaceKind: m.get("costPlaceKind") ?? "",
+      paymentSource: m.get("paymentSource") ?? "",
+      account4: m.get("account4") ?? "",
       dateFrom: m.get("dateFrom") ?? "",
       dateTo: m.get("dateTo") ?? "",
-      dateField: m.get("dateField") || "plannedPaymentDate",
+      dateField: normalizeCostDateField(m.get("dateField")),
       overdueOnly: m.get("overdue") === "1",
     });
-  }, [queryString]);
-
-  useEffect(() => {
-    if (!persistReadyRef.current) {
-      persistReadyRef.current = true;
-      return;
-    }
-    saveLastCostListQuery(queryString);
   }, [queryString]);
 
   useEffect(() => {
@@ -525,14 +586,21 @@ export function CostInvoicesClient({
       .catch(() => setProjects([]));
   }, []);
 
+  useEffect(() => {
+    fetch("/api/vehicles?activeOnly=1")
+      .then((r) => r.json())
+      .then((j: VehicleOption[]) => setVehicles(Array.isArray(j) ? j : []))
+      .catch(() => setVehicles([]));
+  }, []);
+
   const load = useCallback(async () => {
     setListLoading(true);
     setLoadError(null);
     try {
       const r = await fetch(`/api/cost-invoices?${queryString}`);
-      const j = await r.json();
-      if (!r.ok) throw new Error(readApiErrorBody(j));
-      setRows(j);
+      const parsed = await readApiResponse(r);
+      if (!parsed.ok) throw new Error(parsed.errorText);
+      setRows(Array.isArray(parsed.data) ? (parsed.data as Row[]) : []);
     } catch (e) {
       setRows([]);
       setLoadError(e instanceof Error ? e.message : "Nie udało się wczytać listy");
@@ -546,10 +614,55 @@ export function CostInvoicesClient({
     load();
   }, [embedded, load]);
 
-  function applyFilters() {
+  function mainDateParams(d = filterDraft) {
+    const dates = datesForCostDatePreset(d.datePreset, { from: d.dateFrom, to: d.dateTo });
+    const hasDates = Boolean(dates.dateFrom || dates.dateTo);
+    const dateField = normalizeCostDateField(d.dateField);
+    return {
+      dateFrom: dates.dateFrom,
+      dateTo: dates.dateTo,
+      dateField: hasDates ? dateField : null,
+    };
+  }
+
+  function applyMainFilters() {
+    const dates = mainDateParams();
     setParams({
       q: filterDraft.q.trim() || null,
       status: filterDraft.status || null,
+      ...dates,
+    });
+  }
+
+  function handleStatusChange(status: string) {
+    setFilterDraft((d) => ({ ...d, status }));
+    setParam("status", status || null);
+  }
+
+  function handleDatePresetChange(preset: CostDatePreset) {
+    const dates = datesForCostDatePreset(preset, { from: filterDraft.dateFrom, to: filterDraft.dateTo });
+    const nextDraft = {
+      ...filterDraft,
+      datePreset: preset,
+      dateFrom: dates.dateFrom ?? "",
+      dateTo: dates.dateTo ?? "",
+    };
+    setFilterDraft(nextDraft);
+    setParams(mainDateParams(nextDraft));
+  }
+
+  function handleDateFieldChange(dateField: CostDateField) {
+    setFilterDraft((d) => ({ ...d, dateField }));
+    const hasDates =
+      filterDraft.datePreset !== "all" ||
+      Boolean(filterDraft.dateFrom.trim() || filterDraft.dateTo.trim());
+    if (hasDates) {
+      setParams(mainDateParams({ ...filterDraft, dateField }));
+    }
+  }
+
+  function applyAdvancedFilters() {
+    setParams({
       categories:
         filterDraft.uncategorizedOnly ? null
         : filterDraft.categoryIds.length > 0 ?
@@ -559,14 +672,16 @@ export function CostInvoicesClient({
       uncategorized: filterDraft.uncategorizedOnly ? "1" : null,
       recurringSource: filterDraft.recurringSource || null,
       projectId: filterDraft.projectId || null,
-      dateFrom: filterDraft.dateFrom || null,
-      dateTo: filterDraft.dateTo || null,
-      dateField: filterDraft.dateField,
+      vehicleId: filterDraft.vehicleId || null,
+      costPlaceKind: filterDraft.costPlaceKind || null,
+      paymentSource: filterDraft.paymentSource || null,
+      account4: filterDraft.account4.trim() || null,
       overdue: filterDraft.overdueOnly ? "1" : null,
     });
   }
 
   function clearFilters() {
+    clearPersisted();
     setParams({
       q: null,
       status: null,
@@ -575,27 +690,17 @@ export function CostInvoicesClient({
       uncategorized: null,
       recurringSource: null,
       projectId: null,
+      vehicleId: null,
+      costPlaceKind: null,
+      paymentSource: null,
+      account4: null,
       dateFrom: null,
       dateTo: null,
       dateField: null,
       overdue: null,
+      sort: null,
+      order: null,
     });
-  }
-
-  function applyQuickPreset(id: "all" | "uncategorized" | "overdue") {
-    if (id === "all") {
-      clearFilters();
-      return;
-    }
-    if (id === "uncategorized") {
-      setParams({
-        uncategorized: "1",
-        categories: null,
-        categoryId: null,
-      });
-      return;
-    }
-    setParams({ overdue: "1" });
   }
 
   function saveCurrentView() {
@@ -606,7 +711,7 @@ export function CostInvoicesClient({
   }
 
   function loadSavedView(v: SavedCostListView) {
-    router.replace(`${pathname}?${v.query}`);
+    replaceQuery(v.query);
   }
 
   function deleteSavedView(id: string) {
@@ -620,8 +725,54 @@ export function CostInvoicesClient({
     return categories.filter((c) => c.isActive !== false || c.id === sel);
   }, [categories, editing.expenseCategoryId]);
 
+  const editCostPlaceKind = (editing.costPlaceKind ?? "UNCLASSIFIED") as CostPlaceKind;
+
+  const editAccount5Preview = useMemo(() => {
+    if (editing.account5Code?.trim()) return editing.account5Code.trim();
+    const fixed = account5FromPlaceKind(editCostPlaceKind);
+    if (fixed) return fixed;
+    if (editCostPlaceKind === "PROJECT") {
+      if (projectAllocMode === "multi") {
+        for (const row of projectAllocRows) {
+          const p = projects.find((x) => x.id === row.projectId);
+          const c = account5FromProjectCode(p?.code);
+          if (c) return c;
+        }
+        return null;
+      }
+      const p = projects.find((x) => x.id === editing.projectId) ?? editing.project;
+      return account5FromProjectCode(p?.code);
+    }
+    return null;
+  }, [
+    editing.account5Code,
+    editing.project,
+    editing.projectId,
+    editCostPlaceKind,
+    projectAllocMode,
+    projectAllocRows,
+    projects,
+  ]);
+
   const sort = merged.get("sort") ?? "plannedPaymentDate";
   const order = (merged.get("order") === "desc" ? "desc" : "asc") as "asc" | "desc";
+
+  const editAccount5CopyAllocs = useMemo(() => {
+    if (editCostPlaceKind !== "PROJECT" || projectAllocMode !== "multi" || projectAllocRows.length <= 1) {
+      return null;
+    }
+    return buildAccount5AllocationsFromFormRows(
+      projectAllocRows,
+      projects,
+      editing.projectAllocations ?? null,
+    );
+  }, [
+    editCostPlaceKind,
+    projectAllocMode,
+    projectAllocRows,
+    projects,
+    editing.projectAllocations,
+  ]);
 
   function clickHeaderSort(key: string) {
     if (!SORT_OPTIONS.some((o) => o.value === key)) return;
@@ -653,6 +804,7 @@ export function CostInvoicesClient({
     postCreateReturnRef.current = { returnTo: null, sourceProjectId: null };
     setProjectAllocMode("simple");
     setProjectAllocRows([]);
+    setVehicleApplies(false);
     if (embedded) {
       onEmbeddedClose?.();
     }
@@ -667,6 +819,7 @@ export function CostInvoicesClient({
     setVatOnlyPayment(false);
     setProjectAllocMode("simple");
     setProjectAllocRows([]);
+    setVehicleApplies(false);
     setEditing(emptyDraft());
     setFormError(null);
     setPdfDraftNote(null);
@@ -739,6 +892,11 @@ export function CostInvoicesClient({
       isRecurringDetached: !!r.isRecurringDetached,
       vatRate: rate,
       expenseCategoryId: r.expenseCategoryId ?? null,
+      costPlaceKind: r.costPlaceKind ?? "UNCLASSIFIED",
+      account5Code: r.account5Code ?? null,
+      accountingNote: r.accountingNote ?? "",
+      vehicleId: r.vehicleId ?? null,
+      vehicle: r.vehicle ?? null,
       documentDate: isoToDateInputValue(r.documentDate),
       paymentDueDate: isoToDateInputValue(r.paymentDueDate),
       plannedPaymentDate: isoToDateInputValue(r.plannedPaymentDate),
@@ -791,6 +949,7 @@ export function CostInvoicesClient({
     }
     setFormError(null);
     setPdfDraftNote(null);
+    setVehicleApplies(!!r.vehicleId);
     setOpen(true);
   }
 
@@ -943,6 +1102,7 @@ export function CostInvoicesClient({
     setEditing((prev) => {
       if (prev.id !== id) return prev;
       setVatOnlyPayment(isStoredVatOnlyCost(j.netAmount, j.vatAmount));
+      setVehicleApplies(!!j.vehicleId);
       plannedPaymentManualRef.current =
         isoToDateInputValue(j.plannedPaymentDate) !== isoToDateInputValue(j.paymentDueDate);
       return {
@@ -951,6 +1111,11 @@ export function CostInvoicesClient({
         isGeneratedFromRecurring: !!j.isGeneratedFromRecurring,
         isRecurringDetached: !!j.isRecurringDetached,
         expenseCategoryId: j.expenseCategoryId ?? null,
+        costPlaceKind: j.costPlaceKind ?? prev.costPlaceKind ?? "UNCLASSIFIED",
+        account5Code: j.account5Code ?? null,
+        accountingNote: j.accountingNote ?? "",
+        vehicleId: j.vehicleId ?? null,
+        vehicle: j.vehicle ?? null,
         vatRate: j.vatRate ?? prev.vatRate,
         documentDate: isoToDateInputValue(j.documentDate),
         paymentDueDate: isoToDateInputValue(j.paymentDueDate),
@@ -1116,7 +1281,7 @@ export function CostInvoicesClient({
         : {};
     const projectIdPayload = editing.projectId?.trim() || null;
 
-    if (projectAllocMode === "multi") {
+    if (editCostPlaceKind === "PROJECT" && projectAllocMode === "multi") {
       const ok = projectAllocRows.filter((row) => row.projectId.trim());
       if (ok.length === 0) {
         setFormError("Tryb kilku projektów: dodaj co najmniej jeden wiersz z wybranym projektem.");
@@ -1126,6 +1291,9 @@ export function CostInvoicesClient({
     }
 
     const allocPart: Record<string, unknown> = (() => {
+      if (editCostPlaceKind !== "PROJECT") {
+        return editing.id ? { projectAllocations: [] as never[] } : {};
+      }
       if (projectAllocMode === "multi") {
         const ok = projectAllocRows.filter((row) => row.projectId.trim());
         return {
@@ -1142,7 +1310,9 @@ export function CostInvoicesClient({
     })();
 
     const projectField =
-      projectAllocMode === "multi" ? { projectId: null } : { projectId: projectIdPayload };
+      editCostPlaceKind !== "PROJECT" || projectAllocMode === "multi"
+        ? { projectId: null }
+        : { projectId: projectIdPayload };
 
     const url = editing.id ? `/api/cost-invoices/${editing.id}` : "/api/cost-invoices";
     const method = editing.id ? "PATCH" : "POST";
@@ -1150,6 +1320,12 @@ export function CostInvoicesClient({
       method === "POST" && sourcePlannedEventIdRef.current
         ? { sourcePlannedEventId: sourcePlannedEventIdRef.current }
         : {};
+
+    const accountingFields = {
+      costPlaceKind: editing.costPlaceKind ?? "UNCLASSIFIED",
+      accountingNote: editing.accountingNote ?? "",
+      vehicleId: vehicleApplies ? editing.vehicleId ?? null : null,
+    };
 
     const body = vatOnlyPayment
       ? {
@@ -1171,6 +1347,7 @@ export function CostInvoicesClient({
           notes: editing.notes,
           ...projectField,
           expenseCategoryId: editing.expenseCategoryId || null,
+          ...accountingFields,
           ...recurringPatch,
           ...postExtra,
           ...allocPart,
@@ -1194,6 +1371,7 @@ export function CostInvoicesClient({
           notes: editing.notes,
           ...projectField,
           expenseCategoryId: editing.expenseCategoryId || null,
+          ...accountingFields,
           ...recurringPatch,
           ...postExtra,
           ...allocPart,
@@ -1268,7 +1446,6 @@ export function CostInvoicesClient({
   }
 
   const overdueFilterActive = merged.get("overdue") === "1";
-  const quickAllActive = costListFiltersEmptyForQuickAll(merged);
 
   return (
     <div className={embedded ? "" : "space-y-6"}>
@@ -1289,264 +1466,43 @@ export function CostInvoicesClient({
             ) : null}
           </p>
         </div>
-        <CrudToolbar
-          sortOptions={SORT_OPTIONS}
-          sort={sort}
-          order={order}
-          onSortChange={(v) => setParam("sort", v)}
-          onOrderChange={(v) => setParam("order", v)}
-          onRefresh={load}
-          onAdd={openNew}
-          loading={listLoading}
-        />
+        <div className="flex flex-wrap gap-2">
+          <Button type="button" variant="secondary" onClick={load} disabled={listLoading}>
+            Odśwież
+          </Button>
+          <Button type="button" onClick={openNew} disabled={listLoading}>
+            Dodaj
+          </Button>
+        </div>
       </div>
 
-      <div className="rounded-xl border border-zinc-200 bg-zinc-50/80 p-4 dark:border-zinc-800 dark:bg-zinc-900/40">
-        <div className="mb-3">
-          <p className="mb-2 text-xs font-medium uppercase tracking-wide text-zinc-500">Szybki widok</p>
-          <div className="flex flex-wrap gap-2">
-            {COST_QUICK_PRESETS.map((p) => {
-              const active =
-                p.id === "all" ? quickAllActive
-                : p.id === "uncategorized" ? merged.get("uncategorized") === "1"
-                : merged.get("overdue") === "1";
-              return (
-                <button
-                  key={p.id}
-                  type="button"
-                  onClick={() => applyQuickPreset(p.id)}
-                  disabled={listLoading}
-                  className={`rounded-full border px-3 py-1.5 text-xs font-medium transition-colors disabled:opacity-50 ${
-                    active
-                      ? "border-zinc-900 bg-zinc-900 text-white dark:border-zinc-100 dark:bg-zinc-100 dark:text-zinc-900"
-                      : "border-zinc-300 bg-white text-zinc-700 hover:bg-zinc-100 dark:border-zinc-600 dark:bg-zinc-950 dark:text-zinc-200 dark:hover:bg-zinc-900"
-                  }`}
-                >
-                  {p.label}
-                </button>
-              );
-            })}
-          </div>
-        </div>
-
-        <div className="mb-4 flex flex-wrap items-end gap-3 rounded-lg border border-dashed border-zinc-300 bg-white/60 px-3 py-2 dark:border-zinc-600 dark:bg-zinc-950/40">
-          <div className="min-w-0 flex-1 basis-[min(100%,12rem)]">
-            <label className="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-400">Moje widoki (ta przeglądarka)</label>
-            <div className="flex flex-wrap gap-2">
-              <Select
-                className="w-full min-w-0 sm:min-w-[12rem]"
-                value=""
-                onChange={(e) => {
-                  const id = e.target.value;
-                  const v = savedViews.find((x) => x.id === id);
-                  if (v) loadSavedView(v);
-                  e.target.value = "";
-                }}
-                disabled={listLoading || savedViews.length === 0}
-              >
-                <option value="">{savedViews.length ? "Wczytaj widok…" : "Brak zapisanych widoków"}</option>
-                {savedViews.map((v) => (
-                  <option key={v.id} value={v.id}>
-                    {v.name}
-                  </option>
-                ))}
-              </Select>
-              <Button type="button" variant="secondary" className="!py-1.5 !text-xs" onClick={saveCurrentView} disabled={listLoading}>
-                Zapisz bieżący widok
-              </Button>
-            </div>
-            {savedViews.length > 0 ? (
-              <ul className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs text-zinc-500">
-                {savedViews.map((v) => (
-                  <li key={v.id} className="inline-flex items-center gap-1">
-                    <button type="button" className="text-blue-600 underline dark:text-blue-400" onClick={() => loadSavedView(v)}>
-                      {v.name}
-                    </button>
-                    <button
-                      type="button"
-                      className="text-red-600 dark:text-red-400"
-                      title="Usuń widok"
-                      onClick={() => deleteSavedView(v.id)}
-                    >
-                      ×
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            ) : null}
-          </div>
-        </div>
-        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-          <span className="text-sm font-medium text-zinc-700 dark:text-zinc-300">Filtry i wyszukiwanie</span>
-          <div className="flex flex-wrap gap-2">
-            <Button type="button" variant="secondary" className="!py-1.5 !text-xs" onClick={clearFilters} disabled={listLoading}>
-              Wyczyść filtry
-            </Button>
-            <Button type="button" className="!py-1.5 !text-xs" onClick={applyFilters} disabled={listLoading}>
-              Zastosuj
-            </Button>
-          </div>
-        </div>
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-6">
-          <Field label="Szukaj (nr, dostawca, opis, projekt)">
-            <Input
-              className="w-full min-w-0"
-              value={filterDraft.q}
-              onChange={(e) => setFilterDraft((d) => ({ ...d, q: e.target.value }))}
-              placeholder="np. FV/1, dostawca lub projekt"
-              disabled={listLoading}
-            />
-          </Field>
-          <Field label="Projekt">
-            <Select
-              value={filterDraft.projectId}
-              onChange={(e) => setFilterDraft((d) => ({ ...d, projectId: e.target.value }))}
-              disabled={listLoading}
-            >
-              <option value="">(wszystkie)</option>
-              {projects
-                .slice()
-                .sort((a, b) => Number(b.isActive) - Number(a.isActive) || a.name.localeCompare(b.name, "pl"))
-                .map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.name}
-                    {!p.isActive ? " (nieaktywny)" : ""}
-                  </option>
-                ))}
-            </Select>
-          </Field>
-          <Field label="Status">
-            <Select
-              value={filterDraft.status}
-              onChange={(e) => setFilterDraft((d) => ({ ...d, status: e.target.value }))}
-              disabled={listLoading}
-            >
-              <option value="">(wszystkie)</option>
-              <option value="PLANOWANA">Planowana</option>
-              <option value="DO_ZAPLATY">Do zapłaty</option>
-              <option value="PARTIALLY_PAID">Częściowo zapłacona</option>
-              <option value="ZAPLACONA">Zapłacona</option>
-            </Select>
-          </Field>
-          <div className="sm:col-span-2 lg:col-span-2 xl:col-span-2">
-            <span className="mb-1 block text-sm font-medium text-zinc-700 dark:text-zinc-300">Kategorie</span>
-            <label className="mb-2 flex cursor-pointer items-center gap-2 text-sm text-zinc-700 dark:text-zinc-300">
-              <input
-                type="checkbox"
-                className="size-4 rounded border-zinc-300"
-                checked={filterDraft.uncategorizedOnly}
-                onChange={(e) =>
-                  setFilterDraft((d) => ({
-                    ...d,
-                    uncategorizedOnly: e.target.checked,
-                    categoryIds: e.target.checked ? [] : d.categoryIds,
-                  }))
-                }
-                disabled={listLoading}
-              />
-              Tylko bez kategorii
-            </label>
-            <div className="max-h-36 overflow-y-auto rounded border border-zinc-300 bg-white px-2 py-1.5 dark:border-zinc-600 dark:bg-zinc-950">
-              {categories.length === 0 ? (
-                <p className="text-xs text-zinc-500">Brak kategorii — dodaj w Ustawieniach.</p>
-              ) : (
-                <div className="grid grid-cols-1 gap-0.5 sm:grid-cols-2">
-                  {categories.map((c) => (
-                    <label key={c.id} className="flex cursor-pointer items-center gap-2 py-0.5 text-xs">
-                      <input
-                        type="checkbox"
-                        className="size-3.5 rounded border-zinc-300"
-                        checked={filterDraft.categoryIds.includes(c.id)}
-                        disabled={listLoading || filterDraft.uncategorizedOnly}
-                        onChange={(e) => {
-                          const checked = e.target.checked;
-                          setFilterDraft((d) => {
-                            const next = new Set(d.categoryIds);
-                            if (checked) next.add(c.id);
-                            else next.delete(c.id);
-                            return { ...d, categoryIds: [...next], uncategorizedOnly: false };
-                          });
-                        }}
-                      />
-                      <span className={c.isActive === false ? "text-zinc-500" : ""}>{c.name}</span>
-                    </label>
-                  ))}
-                </div>
-              )}
-            </div>
-            <p className="mt-1 text-xs text-zinc-500">Zaznacz wiele kategorii i kliknij „Zastosuj”.</p>
-          </div>
-          <Field label="Źródło wpisu">
-            <Select
-              value={filterDraft.recurringSource}
-              onChange={(e) => setFilterDraft((d) => ({ ...d, recurringSource: e.target.value }))}
-              disabled={listLoading}
-            >
-              <option value="">Wszystkie</option>
-              <option value="manual">Ręczne</option>
-              <option value="generated">Z cyklicznych</option>
-            </Select>
-          </Field>
-          <Field label="Pole daty (zakres)">
-            <Select
-              value={filterDraft.dateField}
-              onChange={(e) => setFilterDraft((d) => ({ ...d, dateField: e.target.value }))}
-              disabled={listLoading}
-            >
-              {DATE_FIELD_OPTIONS.map((o) => (
-                <option key={o.value} value={o.value}>
-                  {o.label}
-                </option>
-              ))}
-            </Select>
-          </Field>
-          <Field label="Data od">
-            <Input
-              type="date"
-              value={filterDraft.dateFrom}
-              onChange={(e) => setFilterDraft((d) => ({ ...d, dateFrom: e.target.value }))}
-              disabled={listLoading}
-            />
-          </Field>
-          <Field label="Data do">
-            <Input
-              type="date"
-              value={filterDraft.dateTo}
-              onChange={(e) => setFilterDraft((d) => ({ ...d, dateTo: e.target.value }))}
-              disabled={listLoading}
-            />
-          </Field>
-        </div>
-        <label className="mt-3 flex cursor-pointer items-center gap-2 text-sm text-zinc-700 dark:text-zinc-300">
-          <input
-            type="checkbox"
-            className="size-4 rounded border-zinc-300"
-            checked={filterDraft.overdueOnly}
-            onChange={(e) => setFilterDraft((d) => ({ ...d, overdueOnly: e.target.checked }))}
-            disabled={listLoading}
-          />
-          Tylko po terminie (niezapłacone, data &lt; dziś)
-        </label>
-        <p className="mt-2 text-xs text-zinc-500">
-          <Link href="/cost-invoices?overdue=1" className="font-medium text-zinc-700 underline dark:text-zinc-300">
-            Szybki link: tylko przeterminowane
-          </Link>
-        </p>
-        <div className="mt-3 flex flex-wrap items-center gap-3 border-t border-zinc-200 pt-3 text-xs dark:border-zinc-700">
-          <span className="font-medium text-zinc-600 dark:text-zinc-400">Eksport (z filtrami):</span>
-          <a className="text-zinc-800 underline dark:text-zinc-200" href={`/api/cost-invoices/export?format=csv&${queryString}`}>
-            CSV
-          </a>
-          <a className="text-zinc-800 underline dark:text-zinc-200" href={`/api/cost-invoices/export?format=xlsx&${queryString}`}>
-            Excel
-          </a>
-          <label className="cursor-pointer text-zinc-800 underline dark:text-zinc-200">
-            Import CSV
-            <input type="file" accept=".csv,text/csv" className="hidden" onChange={onImportFile} />
-          </label>
-        </div>
-        {importMsg ? <p className="mt-2 text-xs text-zinc-600 dark:text-zinc-400">{importMsg}</p> : null}
-      </div>
+      <CostInvoicesListToolbar
+        filterDraft={filterDraft}
+        setFilterDraft={setFilterDraft}
+        merged={merged}
+        queryString={queryString}
+        listLoading={listLoading}
+        projects={projects}
+        categories={categories}
+        vehicles={vehicles}
+        sort={sort}
+        order={order}
+        onSortChange={(v) => setParam("sort", v)}
+        onOrderChange={(v) => setParam("order", v)}
+        onApplyMain={applyMainFilters}
+        onApplyAdvanced={applyAdvancedFilters}
+        onClear={clearFilters}
+        onClearChip={(updates) => setParams(updates)}
+        onDatePresetChange={handleDatePresetChange}
+        onDateFieldChange={handleDateFieldChange}
+        onStatusChange={handleStatusChange}
+        savedViews={savedViews}
+        onLoadView={loadSavedView}
+        onSaveView={saveCurrentView}
+        onDeleteView={deleteSavedView}
+        onImportFile={onImportFile}
+        importMsg={importMsg}
+      />
 
       {loadError && <Alert variant="error">{loadError}</Alert>}
 
@@ -1561,14 +1517,14 @@ export function CostInvoicesClient({
                 <th className="sticky top-0 z-20 w-[19%] border-b border-zinc-200 bg-zinc-50 px-1 py-2 dark:border-zinc-800 dark:bg-zinc-900">
                   {costSortTh("Dostawca", "supplier")}
                 </th>
+                <th className="sticky top-0 z-20 w-[12%] border-b border-zinc-200 bg-zinc-50 px-1 py-2 text-xs font-semibold uppercase tracking-wide text-zinc-600 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400">
+                  Miejsce (konto 5)
+                </th>
                 <th className="sticky top-0 z-20 w-[14%] border-b border-zinc-200 bg-zinc-50 px-1 py-2 text-xs font-semibold uppercase tracking-wide text-zinc-600 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400">
-                  Projekt
+                  Klasyfikacja
                 </th>
-                <th className="sticky top-0 z-20 w-[9%] border-b border-zinc-200 bg-zinc-50 px-1 py-2 dark:border-zinc-800 dark:bg-zinc-900">
-                  {costSortTh("Netto", "netAmount", "right")}
-                </th>
-                <th className="sticky top-0 z-20 w-[9%] border-b border-zinc-200 bg-zinc-50 px-1 py-2 dark:border-zinc-800 dark:bg-zinc-900">
-                  {costSortTh("Brutto", "grossAmount", "right")}
+                <th className="sticky top-0 z-20 w-[10%] border-b border-zinc-200 bg-zinc-50 px-1 py-2 dark:border-zinc-800 dark:bg-zinc-900">
+                  {costSortTh("Do zapłaty", "grossAmount", "right")}
                 </th>
                 <th className="sticky top-0 z-20 w-[11%] border-b border-zinc-200 bg-zinc-50 px-1 py-2 dark:border-zinc-800 dark:bg-zinc-900">
                   {costSortTh("Plan", "plannedPaymentDate")}
@@ -1630,55 +1586,10 @@ export function CostInvoicesClient({
                         <ContractorNameLink name={r.supplier} />
                       </span>
                     </td>
-                    <td className="min-w-0 max-w-[220px] px-1 py-2.5 text-xs align-top">
-                      {(() => {
-                        const items = projectAllocationListLinks(r);
-                        if (items.length === 0) {
-                          return <span className="text-zinc-500 dark:text-zinc-400">—</span>;
-                        }
-                        const multi = items.length > 1;
-                        return (
-                          <div
-                            className={
-                              multi
-                                ? "rounded-md border border-emerald-200/90 bg-emerald-50/60 px-1.5 py-1 dark:border-emerald-900/60 dark:bg-emerald-950/30"
-                                : ""
-                            }
-                          >
-                            {multi ? (
-                              <p className="mb-1 text-[10px] font-semibold uppercase leading-tight tracking-wide text-emerald-900 dark:text-emerald-300">
-                                Wiele projektów
-                              </p>
-                            ) : null}
-                            <ul className="list-none space-y-1">
-                              {items.map((it, idx) => (
-                                <li key={`${it.projectId || "x"}-${idx}`}>
-                                  {it.projectId ? (
-                                    <Link
-                                      href={`/projects/${it.projectId}`}
-                                      className="break-words font-medium text-emerald-800 underline decoration-emerald-300 underline-offset-2 hover:decoration-emerald-600 dark:text-emerald-300 dark:decoration-emerald-700 dark:hover:decoration-emerald-400"
-                                      onClick={(e) => e.stopPropagation()}
-                                    >
-                                      {it.label}
-                                    </Link>
-                                  ) : (
-                                    <span
-                                      className="break-words text-amber-800 dark:text-amber-300"
-                                      title="Wybierz projekt z listy przy edycji, aby dodać link"
-                                    >
-                                      {it.label}
-                                    </span>
-                                  )}
-                                </li>
-                              ))}
-                            </ul>
-                          </div>
-                        );
-                      })()}
+                    <td className="min-w-0 px-1 py-2.5 text-xs align-top">
+                      <CostListAccount5Cell row={r} />
                     </td>
-                    <td className="px-1 py-2.5 text-right text-sm tabular-nums font-medium text-zinc-900 dark:text-zinc-100">
-                      {formatMoney(Number(r.netAmount))}
-                    </td>
+                    <td className="min-w-0 px-1 py-2.5 align-top">{costListClassificationCell(r)}</td>
                     <td className="px-1 py-2.5 text-right text-sm tabular-nums text-zinc-800 dark:text-zinc-200">
                       {(() => {
                         const invPick = {
@@ -1780,21 +1691,96 @@ export function CostInvoicesClient({
               />
             </Field>
           </div>
-          <Field label="Kategoria kosztu">
-            <Select
-              value={editing.expenseCategoryId ?? ""}
-              onChange={(e) => setEditing({ ...editing, expenseCategoryId: e.target.value || null })}
-              disabled={saving}
-            >
-              <option value="">(brak)</option>
-              {categoriesForForm.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name}
-                  {c.isActive === false ? " (zarchiwizowana)" : ""}
-                </option>
-              ))}
-            </Select>
-          </Field>
+          <div className="rounded-lg border border-zinc-200 p-3 dark:border-zinc-700">
+            <p className="mb-3 text-sm font-semibold text-zinc-900 dark:text-zinc-100">Klasyfikacja księgowa</p>
+            <div className="space-y-3">
+              <Field label="Miejsce kosztu (konto 5)">
+                <Select
+                  value={editCostPlaceKind}
+                  onChange={(e) =>
+                    setEditing({
+                      ...editing,
+                      costPlaceKind: e.target.value,
+                    })
+                  }
+                  disabled={saving}
+                >
+                  {COST_PLACE_KINDS.map((k) => (
+                    <option key={k} value={k}>
+                      {costPlaceKindLabel(k)}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+              {editCostPlaceKind === "UNCLASSIFIED" ? (
+                <p className="text-xs text-amber-800 dark:text-amber-300">
+                  Wybierz miejsce kosztu: projekt (501), koszty ogólne (502-01) lub koszty zarządu (550-01).
+                </p>
+              ) : null}
+              {editCostPlaceKind === "GENERAL_502" || editCostPlaceKind === "MANAGEMENT_550" ? (
+                <p className="rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2 font-mono text-sm text-zinc-800 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200">
+                  Konto 5: {account5FromPlaceKind(editCostPlaceKind)}
+                </p>
+              ) : null}
+              <Field label="Kategoria kosztu (konto 4)">
+                <ExpenseCategorySearchPicker
+                  categories={categoriesForForm}
+                  value={editing.expenseCategoryId ?? null}
+                  onChange={(id) => setEditing({ ...editing, expenseCategoryId: id })}
+                  disabled={saving}
+                />
+              </Field>
+              <Field label="Notatka księgowa">
+                <Input
+                  value={editing.accountingNote ?? ""}
+                  onChange={(e) => setEditing({ ...editing, accountingNote: e.target.value })}
+                  placeholder="np. uzasadnienie klasyfikacji"
+                  disabled={saving}
+                />
+              </Field>
+              <label className="flex cursor-pointer items-center gap-2 text-sm text-zinc-700 dark:text-zinc-300">
+                <input
+                  type="checkbox"
+                  className="size-4 rounded border-zinc-300"
+                  checked={vehicleApplies}
+                  onChange={(e) => {
+                    const on = e.target.checked;
+                    setVehicleApplies(on);
+                    if (!on) setEditing({ ...editing, vehicleId: null, vehicle: null });
+                  }}
+                  disabled={saving}
+                />
+                Koszt dotyczy pojazdu
+              </label>
+              {vehicleApplies ? (
+                <Field label="Pojazd">
+                  <VehicleSearchPicker
+                    value={editing.vehicleId ?? null}
+                    onChange={(id) => setEditing({ ...editing, vehicleId: id })}
+                    disabled={saving}
+                  />
+                </Field>
+              ) : null}
+              {editAccount5Preview || editAccount5CopyAllocs ? (
+                <div className="rounded-md border border-emerald-200 bg-emerald-50/70 px-3 py-2 text-sm text-emerald-950 dark:border-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-100">
+                  {editAccount5CopyAllocs ? (
+                    <>
+                      <p className="mb-1">
+                        Podgląd konta 5:{" "}
+                        <span className="font-semibold">{editAccount5CopyAllocs.length} projektów</span>
+                      </p>
+                      <Account5MultiCopyActions allocs={editAccount5CopyAllocs} compactCodes />
+                    </>
+                  ) : editAccount5Preview ? (
+                    <p className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                      <span>Podgląd konta 5:</span>
+                      <Account5SingleCopyLine code={editAccount5Preview} className="font-semibold" />
+                    </p>
+                  ) : null}
+                </div>
+              ) : null}
+            </div>
+          </div>
           <Field label="Opis">
             <Textarea
               rows={2}
@@ -1804,6 +1790,8 @@ export function CostInvoicesClient({
             />
           </Field>
           <div className="rounded-lg border border-zinc-200 p-3 dark:border-zinc-700">
+            {editCostPlaceKind === "PROJECT" ? (
+              <>
             <label className="flex cursor-pointer items-center gap-2 text-sm font-medium text-zinc-800 dark:text-zinc-200">
               <input
                 type="checkbox"
@@ -1845,7 +1833,7 @@ export function CostInvoicesClient({
               Alokacja na kilka projektów (suma netto i brutto = dokument)
             </label>
             {projectAllocMode === "multi" ? (
-              <div className="mt-3 space-y-2">
+              <div className="mt-3 w-full space-y-2">
                 <div
                   className={`rounded-md border p-2 text-xs ${
                     projectAllocationTotals.netOver || projectAllocationTotals.grossOver
@@ -1882,7 +1870,7 @@ export function CostInvoicesClient({
                 {projectAllocRows.map((row, idx) => (
                   <div
                     key={idx}
-                    className="grid gap-2 rounded-md border border-zinc-100 p-2 dark:border-zinc-800 sm:grid-cols-2 xl:grid-cols-6"
+                    className="grid w-full gap-2 rounded-md border border-zinc-100 p-2 dark:border-zinc-800 grid-cols-1 sm:grid-cols-2 xl:grid-cols-6"
                   >
                     <Field label="Projekt">
                       <ProjectSearchPicker
@@ -1895,6 +1883,13 @@ export function CostInvoicesClient({
                         listSort="code"
                         disabled={saving}
                       />
+                      {(() => {
+                        const p = projects.find((x) => x.id === row.projectId);
+                        const a5 = account5FromProjectCode(p?.code);
+                        return a5 ? (
+                          <p className="mt-1 font-mono text-[11px] text-zinc-500 dark:text-zinc-400">Konto 5: {a5}</p>
+                        ) : null;
+                      })()}
                     </Field>
                     <Field label="Stawka VAT">
                       <Select
@@ -2036,12 +2031,25 @@ export function CostInvoicesClient({
                   onChange={(id) => setEditing({ ...editing, projectId: id })}
                   disabled={saving}
                 />
+                {(() => {
+                  const p = projects.find((x) => x.id === editing.projectId) ?? editing.project;
+                  const a5 = account5FromProjectCode(p?.code);
+                  return a5 ? (
+                    <p className="mt-1 font-mono text-[11px] text-zinc-500 dark:text-zinc-400">Konto 5: {a5}</p>
+                  ) : null;
+                })()}
                 {!editing.projectId && (editing.projectName ?? "").trim() ? (
                   <p className="mt-1 text-xs text-amber-700 dark:text-amber-400">
                     Legacy: „{(editing.projectName ?? "").trim()}” — wybierz projekt z listy, aby powiązać rekord.
                   </p>
                 ) : null}
               </Field>
+            )}
+              </>
+            ) : (
+              <p className="text-xs text-zinc-500 dark:text-zinc-400">
+                Alokacja projektowa dostępna po wyborze miejsca kosztu „Projekt / zlecenie (501)”.
+              </p>
             )}
           </div>
           <label className="flex cursor-pointer items-center gap-2 text-sm text-zinc-700 dark:text-zinc-300">

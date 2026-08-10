@@ -160,6 +160,8 @@ model CostInvoiceProjectAllocation {
   netAmount     Decimal
   grossAmount   Decimal
   description   String      @default("")
+  /// Snapshot konta 5 przy zapisie, np. 501-1481
+  account5Code  String?
   createdAt     DateTime    @default(now())
   updatedAt     DateTime    @updatedAt
 
@@ -235,11 +237,34 @@ model ExpenseCategory {
   id                 String                  @id @default(cuid())
   name               String
   slug               String                  @unique
+  /// Kod konta 4xx (Saldeo), np. 429-07
+  accountingCode     String?
+  /// Nazwa księgowa Saldeo (opcjonalnie); UI: accountingCode · accountingName|name
+  accountingName     String?
   /// false = zarchiwizowana — ukryta przy nowych wpisach, widoczna przy starych rekordach
   isActive           Boolean                 @default(true)
   invoices           CostInvoice[]
   plannedAsExpense   PlannedFinancialEvent[] @relation("PlannedExpenseCategory")
   recurringTemplates RecurringTemplate[]     @relation("RecurringExpenseCategory")
+
+  @@index([accountingCode])
+}
+
+/// Rejestr pojazdów firmowych — opcjonalne powiązanie z fakturą kosztową.
+model Vehicle {
+  id                 String        @id @default(cuid())
+  registrationNumber String
+  name               String?
+  make               String?
+  model              String?
+  isActive           Boolean       @default(true)
+  notes              String?
+  createdAt          DateTime      @default(now())
+  updatedAt          DateTime      @updatedAt
+  costInvoices       CostInvoice[]
+
+  @@index([registrationNumber])
+  @@index([isActive])
 }
 
 model Contractor {
@@ -385,11 +410,19 @@ model CostInvoice {
   /// Planowane źródło: MAIN | VAT | VAT_THEN_MAIN | CASH
   paymentSource             String // MAIN | VAT | VAT_THEN_MAIN | CASH
   notes                     String                         @default("")
+  /// UNCLASSIFIED | PROJECT | GENERAL_502 | MANAGEMENT_550
+  costPlaceKind             String                         @default("UNCLASSIFIED")
+  /// Snapshot konta 5: 501-{code} | 502-01 | 550-01
+  account5Code              String?
+  /// Krótki opis księgowy (Saldeo) — osobny od notes
+  accountingNote            String                         @default("")
   projectName               String?
   projectId                 String?
   project                   Project?                       @relation(fields: [projectId], references: [id], onDelete: SetNull)
   expenseCategoryId         String?
   expenseCategory           ExpenseCategory?               @relation(fields: [expenseCategoryId], references: [id], onDelete: SetNull)
+  vehicleId                 String?
+  vehicle                   Vehicle?                       @relation(fields: [vehicleId], references: [id], onDelete: SetNull)
   payments                  CostInvoicePayment[]
   sourceRecurringTemplateId String?
   generatedOccurrenceDate   DateTime?
@@ -404,6 +437,9 @@ model CostInvoice {
   @@index([sourceRecurringTemplateId])
   @@index([generatedOccurrenceDate])
   @@index([projectId])
+  @@index([vehicleId])
+  @@index([costPlaceKind])
+  @@index([account5Code])
 }
 
 model CostInvoicePayment {

@@ -18,6 +18,7 @@ import { normalizeDecimalInput } from "@/lib/decimal-input";
 import { resolveProjectFields } from "@/lib/project-persist";
 import { replaceCostInvoiceAllocations, resolveLegacyProjectFieldsFromAllocations } from "@/lib/project-allocations/persist";
 import { validateCostOrIncomeAllocationSums } from "@/lib/project-allocations/validate";
+import { inferCostPlaceKind, resolveCostInvoiceAccount5Fields } from "@/lib/accounting/resolve-cost-account5";
 
 type Ctx = { params: Promise<{ id: string }> };
 
@@ -55,6 +56,7 @@ export async function GET(_req: Request, ctx: Ctx) {
     include: {
       expenseCategory: true,
       project: true,
+      vehicle: true,
       payments: {
         orderBy: { paymentDate: "asc" },
         include: { projectAllocations: { include: { project: { select: { id: true, name: true } } } } },
@@ -190,7 +192,50 @@ export async function PATCH(req: Request, ctx: Ctx) {
       data.isRecurringDetached !== undefined ? data.isRecurringDetached
       : existing.isRecurringDetached;
 
+    if (data.vehicleId) {
+      const v = await prisma.vehicle.findUnique({ where: { id: data.vehicleId } });
+      if (!v) return jsonError("Nieprawidłowy pojazd", 400);
+    }
+
+    const nextVehicleId =
+      data.vehicleId !== undefined ? data.vehicleId : existing.vehicleId;
+    const nextAccountingNote =
+      data.accountingNote !== undefined ? data.accountingNote : existing.accountingNote;
+
+    const allocCountForKind =
+      data.projectAllocations !== undefined
+        ? data.projectAllocations.length
+        : existing.projectAllocations.length;
+    const placeKind = inferCostPlaceKind({
+      costPlaceKind:
+        data.costPlaceKind !== undefined ? data.costPlaceKind : existing.costPlaceKind,
+      projectId,
+      allocationCount: allocCountForKind,
+    });
+
     const row = await prisma.$transaction(async (tx) => {
+      if (data.projectAllocations !== undefined) {
+        await replaceCostInvoiceAllocations(tx, id, data.projectAllocations);
+      }
+      const allocRows = await tx.costInvoiceProjectAllocation.findMany({
+        where: { costInvoiceId: id },
+        select: { account5Code: true },
+      });
+      const projectCode = projectId
+        ? (
+            await tx.project.findUnique({
+              where: { id: projectId },
+              select: { code: true },
+            })
+          )?.code ?? null
+        : null;
+      const acc = await resolveCostInvoiceAccount5Fields({
+        costPlaceKind: placeKind,
+        projectId,
+        allocationAccount5Codes: allocRows.map((a) => a.account5Code),
+        fetchProjectCode: async () => projectCode,
+      });
+
       const updated = await tx.costInvoice.update({
         where: { id },
         data: {
@@ -218,24 +263,26 @@ export async function PATCH(req: Request, ctx: Ctx) {
                 : null,
           paymentSource: data.paymentSource ?? existing.paymentSource,
           notes: data.notes ?? existing.notes,
+          accountingNote: nextAccountingNote ?? "",
+          costPlaceKind: acc.costPlaceKind,
+          account5Code: acc.account5Code,
           projectId,
           projectName,
           expenseCategoryId:
             data.expenseCategoryId !== undefined ? data.expenseCategoryId : existing.expenseCategoryId,
+          vehicleId: nextVehicleId,
           isRecurringDetached: nextIsRecurringDetached,
         },
         include: {
           expenseCategory: true,
           project: true,
+          vehicle: true,
           payments: {
             orderBy: { paymentDate: "asc" },
             include: { projectAllocations: { include: { project: { select: { id: true, name: true } } } } },
           },
         },
       });
-      if (data.projectAllocations !== undefined) {
-        await replaceCostInvoiceAllocations(tx, id, data.projectAllocations);
-      }
       return updated;
     });
     await ensureClosingCostPaymentIfFullySettled(id);
@@ -245,6 +292,7 @@ export async function PATCH(req: Request, ctx: Ctx) {
       include: {
         expenseCategory: true,
         project: true,
+        vehicle: true,
         payments: {
           orderBy: { paymentDate: "asc" },
           include: { projectAllocations: { include: { project: { select: { id: true, name: true } } } } },
