@@ -115,41 +115,43 @@ export function removeSavedCostListView(id: string): void {
   persistViews(list);
 }
 
-/** Filtry z panelu „Więcej filtrów” aktywne w URL. */
+/** Filtry z panelu „Więcej filtrów” aktywne w URL (bez search/status/dat z głównego paska). */
 export function costListAdvancedFilterCount(m: URLSearchParams): number {
   let n = 0;
+  if (m.get("projectId")?.trim()) n++;
   if (m.get("costPlaceKind")?.trim()) n++;
+  if (m.get("account4")?.trim()) n++;
   if (m.get("vehicleId")?.trim()) n++;
   if (m.get("paymentSource")?.trim()) n++;
   if (m.get("recurringSource")?.trim()) n++;
   if (m.get("uncategorized") === "1") n++;
   if (m.get("categories")?.trim() || m.get("categoryId")?.trim()) n++;
-  if (m.get("dateFrom")?.trim() || m.get("dateTo")?.trim()) n++;
   if (m.get("dateField")?.trim() && m.get("dateField") !== "plannedPaymentDate") n++;
   if (m.get("overdue") === "1") n++;
   return n;
 }
 
 export function costListAdvancedFilterCountFromDraft(d: {
+  projectId: string;
   costPlaceKind: string;
+  account4: string;
   vehicleId: string;
   paymentSource: string;
   recurringSource: string;
   uncategorizedOnly: boolean;
   categoryIds: string[];
-  dateFrom: string;
-  dateTo: string;
   dateField: string;
   overdueOnly: boolean;
 }): number {
   let n = 0;
+  if (d.projectId.trim()) n++;
   if (d.costPlaceKind.trim()) n++;
+  if (d.account4.trim()) n++;
   if (d.vehicleId.trim()) n++;
   if (d.paymentSource.trim()) n++;
   if (d.recurringSource.trim()) n++;
   if (d.uncategorizedOnly) n++;
   if (d.categoryIds.length > 0) n++;
-  if (d.dateFrom.trim() || d.dateTo.trim()) n++;
   if (d.dateField.trim() && d.dateField !== "plannedPaymentDate") n++;
   if (d.overdueOnly) n++;
   return n;

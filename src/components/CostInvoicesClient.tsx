@@ -18,6 +18,17 @@ import { formatVehicleLabel } from "@/lib/accounting/vehicle-label";
 import { ContractorNameLink } from "@/components/ContractorNameLink";
 import { Alert, Badge, Button, Field, Input, Modal, Select, Spinner, Textarea } from "@/components/ui";
 import { CostInvoicesListToolbar } from "@/components/CostInvoicesListToolbar";
+import {
+  Account5MultiCopyActions,
+  Account5SingleCopyLine,
+  CostListAccount5Cell,
+} from "@/components/Account5CopyActions";
+import { buildAccount5AllocationsFromFormRows } from "@/lib/accounting/account5-clipboard";
+import {
+  datesForCostDatePreset,
+  inferCostDatePreset,
+  type CostDatePreset,
+} from "@/lib/cost-list-date-filter";
 import { formatDate, formatMoney, toIsoOrNull } from "@/lib/format";
 import { isoToDateInputValue } from "@/lib/date-input";
 import { amountsFromNetRate, inferVatRateFromAmounts, type VatRatePct } from "@/lib/vat-rate";
@@ -301,70 +312,6 @@ const SORT_OPTIONS = [
   { value: "createdAt", label: "Data utworzenia" },
 ];
 
-function costListFiltersEmptyForQuickAll(m: URLSearchParams): boolean {
-  return (
-    !m.get("q")?.trim() &&
-    !m.get("status")?.trim() &&
-    !m.get("categories")?.trim() &&
-    !m.get("categoryId")?.trim() &&
-    m.get("uncategorized") !== "1" &&
-    m.get("overdue") !== "1" &&
-    !m.get("recurringSource")?.trim() &&
-    !m.get("projectId")?.trim() &&
-    !m.get("vehicleId")?.trim() &&
-    !m.get("costPlaceKind")?.trim() &&
-    !m.get("paymentSource")?.trim() &&
-    !m.get("account4")?.trim() &&
-    !m.get("dateFrom")?.trim() &&
-    !m.get("dateTo")?.trim()
-  );
-}
-
-function costListPlaceCell(r: Row) {
-  const kind = r.costPlaceKind;
-  if (kind === "GENERAL_502") {
-    return <span className="font-mono text-xs text-zinc-800 dark:text-zinc-200">502-01</span>;
-  }
-  if (kind === "MANAGEMENT_550") {
-    return <span className="font-mono text-xs text-zinc-800 dark:text-zinc-200">550-01</span>;
-  }
-  const allocs = r.projectAllocations ?? [];
-  if (allocs.length > 1) {
-    const lines = allocs.map((a) => {
-      const code = a.account5Code?.trim() || account5FromProjectCode(a.project?.code) || "—";
-      const name = a.project?.name?.trim() || "—";
-      return `${code} · ${name}`;
-    });
-    return (
-      <span className="font-mono text-xs text-zinc-800 dark:text-zinc-200" title={lines.join("\n")}>
-        {allocs.length} projektów
-      </span>
-    );
-  }
-  if (allocs.length === 1) {
-    const a = allocs[0];
-    const code = a.account5Code?.trim() || account5FromProjectCode(a.project?.code);
-    const name = a.project?.name?.trim();
-    const label = code ?? name ?? "—";
-    const title = code && name ? `${code} · ${name}` : label;
-    return (
-      <span className="font-mono text-xs text-zinc-800 dark:text-zinc-200" title={title}>
-        {label}
-      </span>
-    );
-  }
-  const code = r.account5Code?.trim() || account5FromProjectCode(r.project?.code);
-  if (code) {
-    const name = r.project?.name?.trim();
-    return (
-      <span className="font-mono text-xs text-zinc-800 dark:text-zinc-200" title={name ? `${code} · ${name}` : code}>
-        {code}
-      </span>
-    );
-  }
-  return <span className="text-zinc-500 dark:text-zinc-400">—</span>;
-}
-
 function costListClassificationCell(r: Row) {
   const account5 = r.account5Code?.trim() || null;
   const account4 = r.expenseCategory?.accountingCode?.trim() || null;
@@ -570,6 +517,7 @@ export function CostInvoicesClient({
   const [filterDraft, setFilterDraft] = useState({
     q: "",
     status: "",
+    datePreset: "all" as CostDatePreset,
     categoryIds: [] as string[],
     uncategorizedOnly: false,
     recurringSource: "",
@@ -605,6 +553,7 @@ export function CostInvoicesClient({
     setFilterDraft({
       q: m.get("q") ?? "",
       status: m.get("status") ?? "",
+      datePreset: inferCostDatePreset(m.get("dateFrom") ?? "", m.get("dateTo") ?? ""),
       categoryIds,
       uncategorizedOnly: m.get("uncategorized") === "1",
       recurringSource: m.get("recurringSource") ?? "",
@@ -662,10 +611,45 @@ export function CostInvoicesClient({
     load();
   }, [embedded, load]);
 
-  function applyFilters() {
+  function mainDateParams(d = filterDraft) {
+    const dates = datesForCostDatePreset(d.datePreset, { from: d.dateFrom, to: d.dateTo });
+    const hasDates = Boolean(dates.dateFrom || dates.dateTo);
+    return {
+      dateFrom: dates.dateFrom,
+      dateTo: dates.dateTo,
+      dateField: hasDates ? d.dateField || "plannedPaymentDate" : null,
+    };
+  }
+
+  function applyMainFilters() {
+    const dates = mainDateParams();
     setParams({
       q: filterDraft.q.trim() || null,
       status: filterDraft.status || null,
+      ...dates,
+    });
+  }
+
+  function handleStatusChange(status: string) {
+    setFilterDraft((d) => ({ ...d, status }));
+    setParam("status", status || null);
+  }
+
+  function handleDatePresetChange(preset: CostDatePreset) {
+    const dates = datesForCostDatePreset(preset, { from: filterDraft.dateFrom, to: filterDraft.dateTo });
+    const nextDraft = {
+      ...filterDraft,
+      datePreset: preset,
+      dateFrom: dates.dateFrom ?? "",
+      dateTo: dates.dateTo ?? "",
+    };
+    setFilterDraft(nextDraft);
+    setParams(mainDateParams(nextDraft));
+  }
+
+  function applyAdvancedFilters() {
+    const hasDates = Boolean(merged.get("dateFrom")?.trim() || merged.get("dateTo")?.trim());
+    setParams({
       categories:
         filterDraft.uncategorizedOnly ? null
         : filterDraft.categoryIds.length > 0 ?
@@ -679,10 +663,11 @@ export function CostInvoicesClient({
       costPlaceKind: filterDraft.costPlaceKind || null,
       paymentSource: filterDraft.paymentSource || null,
       account4: filterDraft.account4.trim() || null,
-      dateFrom: filterDraft.dateFrom || null,
-      dateTo: filterDraft.dateTo || null,
-      dateField: filterDraft.dateField,
       overdue: filterDraft.overdueOnly ? "1" : null,
+      dateField:
+        hasDates ? filterDraft.dateField || "plannedPaymentDate"
+        : filterDraft.dateField !== "plannedPaymentDate" ? filterDraft.dateField
+        : null,
     });
   }
 
@@ -707,22 +692,6 @@ export function CostInvoicesClient({
       sort: null,
       order: null,
     });
-  }
-
-  function applyQuickPreset(id: "all" | "uncategorized" | "overdue") {
-    if (id === "all") {
-      clearFilters();
-      return;
-    }
-    if (id === "uncategorized") {
-      setParams({
-        uncategorized: "1",
-        categories: null,
-        categoryId: null,
-      });
-      return;
-    }
-    setParams({ overdue: "1" });
   }
 
   function saveCurrentView() {
@@ -778,6 +747,23 @@ export function CostInvoicesClient({
 
   const sort = merged.get("sort") ?? "plannedPaymentDate";
   const order = (merged.get("order") === "desc" ? "desc" : "asc") as "asc" | "desc";
+
+  const editAccount5CopyAllocs = useMemo(() => {
+    if (editCostPlaceKind !== "PROJECT" || projectAllocMode !== "multi" || projectAllocRows.length <= 1) {
+      return null;
+    }
+    return buildAccount5AllocationsFromFormRows(
+      projectAllocRows,
+      projects,
+      editing.projectAllocations ?? null,
+    );
+  }, [
+    editCostPlaceKind,
+    projectAllocMode,
+    projectAllocRows,
+    projects,
+    editing.projectAllocations,
+  ]);
 
   function clickHeaderSort(key: string) {
     if (!SORT_OPTIONS.some((o) => o.value === key)) return;
@@ -1451,7 +1437,6 @@ export function CostInvoicesClient({
   }
 
   const overdueFilterActive = merged.get("overdue") === "1";
-  const quickAllActive = costListFiltersEmptyForQuickAll(merged);
 
   return (
     <div className={embedded ? "" : "space-y-6"}>
@@ -1495,11 +1480,12 @@ export function CostInvoicesClient({
         order={order}
         onSortChange={(v) => setParam("sort", v)}
         onOrderChange={(v) => setParam("order", v)}
-        onApply={applyFilters}
+        onApplyMain={applyMainFilters}
+        onApplyAdvanced={applyAdvancedFilters}
         onClear={clearFilters}
         onClearChip={(updates) => setParams(updates)}
-        onQuickPreset={applyQuickPreset}
-        quickAllActive={quickAllActive}
+        onDatePresetChange={handleDatePresetChange}
+        onStatusChange={handleStatusChange}
         savedViews={savedViews}
         onLoadView={loadSavedView}
         onSaveView={saveCurrentView}
@@ -1590,7 +1576,9 @@ export function CostInvoicesClient({
                         <ContractorNameLink name={r.supplier} />
                       </span>
                     </td>
-                    <td className="min-w-0 px-1 py-2.5 text-xs align-top">{costListPlaceCell(r)}</td>
+                    <td className="min-w-0 px-1 py-2.5 text-xs align-top">
+                      <CostListAccount5Cell row={r} />
+                    </td>
                     <td className="min-w-0 px-1 py-2.5 align-top">{costListClassificationCell(r)}</td>
                     <td className="px-1 py-2.5 text-right text-sm tabular-nums text-zinc-800 dark:text-zinc-200">
                       {(() => {
@@ -1763,13 +1751,23 @@ export function CostInvoicesClient({
                   />
                 </Field>
               ) : null}
-              {editAccount5Preview ? (
-                <p className="rounded-md border border-emerald-200 bg-emerald-50/70 px-3 py-2 text-sm text-emerald-950 dark:border-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-100">
-                  Podgląd konta 5:{" "}
-                  <span className="font-mono font-semibold">
-                    {formatAccount5Display(editAccount5Preview) ?? editAccount5Preview}
-                  </span>
-                </p>
+              {editAccount5Preview || editAccount5CopyAllocs ? (
+                <div className="rounded-md border border-emerald-200 bg-emerald-50/70 px-3 py-2 text-sm text-emerald-950 dark:border-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-100">
+                  {editAccount5CopyAllocs ? (
+                    <>
+                      <p className="mb-1">
+                        Podgląd konta 5:{" "}
+                        <span className="font-semibold">{editAccount5CopyAllocs.length} projektów</span>
+                      </p>
+                      <Account5MultiCopyActions allocs={editAccount5CopyAllocs} compactCodes />
+                    </>
+                  ) : editAccount5Preview ? (
+                    <p className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                      <span>Podgląd konta 5:</span>
+                      <Account5SingleCopyLine code={editAccount5Preview} className="font-semibold" />
+                    </p>
+                  ) : null}
+                </div>
               ) : null}
             </div>
           </div>
