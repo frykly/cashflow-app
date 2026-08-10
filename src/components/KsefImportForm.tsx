@@ -43,6 +43,9 @@ export function KsefImportForm({
   const sectionRef = useRef<HTMLElement>(null);
   const plannedDateTouchedRef = useRef(false);
   const [projectId, setProjectId] = useState<string | null>(null);
+  const [costPlaceKind, setCostPlaceKind] = useState<
+    "" | "UNCLASSIFIED" | "PROJECT" | "GENERAL_502" | "MANAGEMENT_550"
+  >("");
   const [expenseCategoryId, setExpenseCategoryId] = useState("");
   const [incomeCategoryId, setIncomeCategoryId] = useState("");
   const [costStatus, setCostStatus] = useState<KsefImportCostBody["status"]>("DO_ZAPLATY");
@@ -51,6 +54,7 @@ export function KsefImportForm({
   const [vatDestination, setVatDestination] = useState<KsefImportRevenueBody["vatDestination"]>("MAIN");
   const [plannedDate, setPlannedDate] = useState(() => toDateInputValue(defaultPlannedDate));
   const [notes, setNotes] = useState(() => ksefImportNotes(ksefId));
+  const [accountingNote, setAccountingNote] = useState("");
   const [expenseCategories, setExpenseCategories] = useState<CategoryRow[]>([]);
   const [incomeCategories, setIncomeCategories] = useState<CategoryRow[]>([]);
   const [listsLoading, setListsLoading] = useState(true);
@@ -59,6 +63,8 @@ export function KsefImportForm({
     plannedDateTouchedRef.current = false;
     setPlannedDate(toDateInputValue(defaultPlannedDate));
     setNotes(ksefImportNotes(ksefId));
+    setCostPlaceKind("");
+    setAccountingNote("");
     // Reset tylko przy zmianie dokumentu; defaultPlannedDate celowo poza deps.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ksefId]);
@@ -117,12 +123,14 @@ export function KsefImportForm({
     const plannedIso = plannedDate ? `${plannedDate}T12:00:00.000Z` : undefined;
     if (direction === "PURCHASE") {
       onSubmitCost({
-        projectId,
+        projectId: costPlaceKind === "GENERAL_502" || costPlaceKind === "MANAGEMENT_550" ? null : projectId,
         expenseCategoryId: expenseCategoryId || null,
         status: costStatus,
         paymentSource,
         plannedPaymentDate: plannedIso,
         notes: notes.trim() || undefined,
+        costPlaceKind: costPlaceKind || undefined,
+        accountingNote: accountingNote.trim() || undefined,
       });
       return;
     }
@@ -172,11 +180,30 @@ export function KsefImportForm({
       ) : null}
 
       <form onSubmit={handleSubmit} className="space-y-3">
+        <Field label="Miejsce kosztu (konto 5)">
+          <Select
+            value={costPlaceKind}
+            onChange={(e) => {
+              const v = e.target.value as typeof costPlaceKind;
+              setCostPlaceKind(v);
+              if (v === "GENERAL_502" || v === "MANAGEMENT_550") setProjectId(null);
+            }}
+            disabled={acting}
+          >
+            <option value="">— z projektu / domyślne —</option>
+            <option value="GENERAL_502">502-01 Koszty ogólne</option>
+            <option value="MANAGEMENT_550">550-01 Koszty zarządu</option>
+          </Select>
+        </Field>
+
         <Field label="Projekt (opcjonalnie)">
           <ProjectSearchPicker
             value={projectId}
-            onChange={setProjectId}
-            disabled={acting}
+            onChange={(id) => {
+              setProjectId(id);
+              if (id) setCostPlaceKind("");
+            }}
+            disabled={acting || costPlaceKind === "GENERAL_502" || costPlaceKind === "MANAGEMENT_550"}
             includeInactive
             listSort="code"
             placeholder="Szukaj projektu…"
@@ -226,6 +253,14 @@ export function KsefImportForm({
                 </Select>
               </Field>
             </div>
+            <Field label="Notatka księgowa (opcjonalnie)">
+              <Textarea
+                rows={2}
+                value={accountingNote}
+                onChange={(e) => setAccountingNote(e.target.value)}
+                disabled={acting}
+              />
+            </Field>
             <Field label="Planowana data zapłaty">
               <Input
                 type="date"

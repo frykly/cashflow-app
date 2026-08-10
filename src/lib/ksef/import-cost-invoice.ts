@@ -1,15 +1,16 @@
 import { prisma } from "@/lib/db";
-import { decToNumber } from "@/lib/cashflow/money";
 import { ensureClosingCostPaymentIfFullySettled } from "@/lib/cashflow/invoice-auto-settlement";
+import { createCostInvoiceCore } from "@/lib/cost-invoices/create-cost-invoice-core";
+import { prepareCostInvoiceCreate } from "@/lib/cost-invoices/validate-cost-invoice-create";
 import { syncCostInvoiceStatus } from "@/lib/invoice-status-sync";
-import { resolveLegacyProjectFieldsFromAllocations } from "@/lib/project-allocations/persist";
-import type { KsefImportCostBody } from "@/lib/validation/ksef-import-schemas";
-import { inferVatRateFromAmounts } from "@/lib/vat-rate";
+import {
+  buildCostInvoiceCreatePayloadFromKsef,
+  resolveKsefImportAmountToPayGross,
+} from "@/lib/ksef/build-cost-create-payload";
 import { findProbableCostDuplicate } from "./duplicate-match";
 import { ksefDocumentToPublicRow } from "./document-public-row";
-import { ksefImportNotes } from "./ksef-import-marker";
-import { resolveAmountToPayGrossFromKsefXml } from "./ksef-payment-amounts";
-import { resolveKsefDefaultPlannedDate, resolveKsefPaymentDueDate } from "./ksef-payment-dates";
+import type { KsefImportCostBody } from "@/lib/validation/ksef-import-schemas";
+import { costInvoiceCreateSchema } from "@/lib/validation/schemas";
 
 const ALREADY_IN_SYSTEM_MSG = "Ta faktura prawdopodobnie już istnieje w systemie";
 
@@ -53,40 +54,20 @@ export async function importKsefDocumentAsCost(documentId: string, options: Ksef
     throw new Error(`${ALREADY_IN_SYSTEM_MSG}: ${probable.summary}`);
   }
 
-  const net = decToNumber(doc.netAmount);
-  const vat = decToNumber(doc.vatAmount);
-  const gross = decToNumber(doc.grossAmount);
-  const amountToPayGross = resolveAmountToPayGrossFromKsefXml(doc);
-  const vatRate = inferVatRateFromAmounts(net, vat);
-  const documentDate = doc.issueDate;
-  const paymentDueDate = resolveKsefPaymentDueDate(doc);
-  const plannedPaymentDate = resolveKsefDefaultPlannedDate(doc, options.plannedPaymentDate);
+  const rawPayload = buildCostInvoiceCreatePayloadFromKsef(doc, options);
+  const data = costInvoiceCreateSchema.parse(rawPayload);
+  const prepared = await prepareCostInvoiceCreate(prisma, data);
+  if (!prepared.ok) throw new Error(prepared.message);
+
+  const amountToPayGross = resolveKsefImportAmountToPayGross(doc);
+
   const now = new Date();
 
   const cost = await prisma.$transaction(async (tx) => {
-    const pf = await resolveLegacyProjectFieldsFromAllocations(tx, options.projectId ?? null, undefined);
-
-    const created = await tx.costInvoice.create({
-      data: {
-        documentNumber: doc.invoiceNumber.trim(),
-        supplier: doc.sellerName.trim(),
-        description: "",
-        vatRate,
-        netAmount: net,
-        vatAmount: vat,
-        grossAmount: gross,
-        amountToPayGross: amountToPayGross ?? undefined,
-        documentDate,
-        paymentDueDate,
-        plannedPaymentDate,
-        status: options.status ?? "DO_ZAPLATY",
-        paid: false,
-        paymentSource: options.paymentSource ?? "MAIN",
-        notes: options.notes?.trim() || ksefImportNotes(doc.ksefId),
-        projectId: pf.projectId,
-        projectName: pf.projectName,
-        expenseCategoryId: options.expenseCategoryId ?? null,
-      },
+    const created = await createCostInvoiceCore(tx, {
+      data: prepared.prepared.data,
+      amounts: prepared.prepared.amounts,
+      amountToPayGross,
     });
 
     await tx.ksefDocument.update({
@@ -107,7 +88,13 @@ export async function importKsefDocumentAsCost(documentId: string, options: Ksef
 
   const fresh = await prisma.costInvoice.findUnique({
     where: { id: cost.id },
-    include: { expenseCategory: true, project: true, payments: true },
+    include: {
+      expenseCategory: true,
+      project: true,
+      vehicle: true,
+      payments: true,
+      projectAllocations: { include: { project: { select: { id: true, name: true, code: true } } } },
+    },
   });
 
   const updatedDoc = await prisma.ksefDocument.findUnique({ where: { id: doc.id } });

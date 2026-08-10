@@ -1,16 +1,13 @@
 import { prisma } from "@/lib/db";
 import { jsonData } from "@/lib/api/json-response";
 import { jsonError, routeErrorResponse, zodErrorResponse } from "@/lib/api/errors";
-import { resolveCostInvoiceAmounts } from "@/lib/validation/cost-invoice-amounts";
+import { createCostInvoiceCore } from "@/lib/cost-invoices/create-cost-invoice-core";
+import { prepareCostInvoiceCreate } from "@/lib/cost-invoices/validate-cost-invoice-create";
 import { costInvoiceCreateSchema } from "@/lib/validation/schemas";
 import { buildCostWhere } from "@/lib/prisma-list-filters";
-import type { VatRatePct } from "@/lib/vat-rate";
 import { ensureClosingCostPaymentIfFullySettled } from "@/lib/cashflow/invoice-auto-settlement";
 import { syncCostInvoiceStatus } from "@/lib/invoice-status-sync";
 import { finalizePlannedToCostConversion } from "@/lib/planned-event-conversion";
-import { replaceCostInvoiceAllocations, resolveLegacyProjectFieldsFromAllocations } from "@/lib/project-allocations/persist";
-import { validateCostOrIncomeAllocationSums } from "@/lib/project-allocations/validate";
-import { inferCostPlaceKind, resolveCostInvoiceAccount5Fields } from "@/lib/accounting/resolve-cost-account5";
 import { ZodError } from "zod";
 
 const sortable = new Set([
@@ -73,86 +70,15 @@ export async function POST(req: Request) {
   }
   try {
     const data = costInvoiceCreateSchema.parse(body);
-    const resolved = resolveCostInvoiceAmounts({
-      vatOnly: data.vatOnly,
-      netAmount: data.netAmount,
-      vatAmount: data.vatAmount,
-      grossAmount: data.grossAmount,
-      vatRate: data.vatRate as VatRatePct,
-    });
-    if (!resolved.ok) return jsonError(resolved.message);
-    const { net, vat, gross, storedVatRate } = resolved.amounts;
-    const allocs = data.projectAllocations;
-    if (allocs?.length) {
-      const err = validateCostOrIncomeAllocationSums(allocs, net.toString(), gross.toString());
-      if (err) return jsonError(err, 400);
-    }
-    let pf: { projectId: string | null; projectName: string | null };
-    try {
-      pf = await resolveLegacyProjectFieldsFromAllocations(prisma, data.projectId, allocs);
-    } catch {
-      return jsonError("Nieprawidłowy projekt", 400);
-    }
-    const placeKind = inferCostPlaceKind({
-      costPlaceKind: data.costPlaceKind,
-      projectId: pf.projectId,
-      allocationCount: allocs?.length ?? 0,
-    });
-    if (data.vehicleId) {
-      const v = await prisma.vehicle.findUnique({ where: { id: data.vehicleId } });
-      if (!v) return jsonError("Nieprawidłowy pojazd", 400);
-    }
+    const prepared = await prepareCostInvoiceCreate(prisma, data);
+    if (!prepared.ok) return jsonError(prepared.message);
+
     const row = await prisma.$transaction(async (tx) => {
-      const created = await tx.costInvoice.create({
-        data: {
-          documentNumber: data.documentNumber,
-          supplier: data.supplier,
-          description: data.description ?? "",
-          vatRate: storedVatRate,
-          netAmount: net,
-          vatAmount: vat,
-          grossAmount: gross,
-          documentDate: new Date(data.documentDate),
-          paymentDueDate: new Date(data.paymentDueDate),
-          plannedPaymentDate: new Date(data.plannedPaymentDate),
-          status: data.status,
-          paid: data.paid ?? false,
-          actualPaymentDate: data.actualPaymentDate ? new Date(data.actualPaymentDate) : null,
-          paymentSource: data.paymentSource,
-          notes: data.notes ?? "",
-          accountingNote: data.accountingNote ?? "",
-          costPlaceKind: placeKind,
-          account5Code: null,
-          projectId: pf.projectId,
-          projectName: pf.projectName,
-          expenseCategoryId: data.expenseCategoryId ?? null,
-          vehicleId: data.vehicleId ?? null,
-        },
-        include: { expenseCategory: true, project: true, vehicle: true, payments: true },
+      const created = await createCostInvoiceCore(tx, {
+        data: prepared.prepared.data,
+        amounts: prepared.prepared.amounts,
       });
-      await replaceCostInvoiceAllocations(tx, created.id, allocs ?? []);
-      const allocRows = await tx.costInvoiceProjectAllocation.findMany({
-        where: { costInvoiceId: created.id },
-        select: { account5Code: true },
-      });
-      const projectCode = created.projectId
-        ? (
-            await tx.project.findUnique({
-              where: { id: created.projectId },
-              select: { code: true },
-            })
-          )?.code ?? null
-        : null;
-      const acc = await resolveCostInvoiceAccount5Fields({
-        costPlaceKind: placeKind,
-        projectId: created.projectId,
-        allocationAccount5Codes: allocRows.map((a) => a.account5Code),
-        fetchProjectCode: async () => projectCode,
-      });
-      await tx.costInvoice.update({
-        where: { id: created.id },
-        data: { costPlaceKind: acc.costPlaceKind, account5Code: acc.account5Code },
-      });
+
       if (data.sourcePlannedEventId) {
         try {
           await finalizePlannedToCostConversion(tx, data.sourcePlannedEventId, created.id);
@@ -165,10 +91,13 @@ export async function POST(req: Request) {
           throw e;
         }
       }
+
       return created;
     });
+
     await ensureClosingCostPaymentIfFullySettled(row.id);
     await syncCostInvoiceStatus(row.id);
+
     const fresh = await prisma.costInvoice.findUnique({
       where: { id: row.id },
       include: {
@@ -176,9 +105,9 @@ export async function POST(req: Request) {
         project: true,
         vehicle: true,
         payments: {
-        orderBy: { paymentDate: "asc" },
-        include: { projectAllocations: { include: { project: { select: { id: true, name: true } } } } },
-      },
+          orderBy: { paymentDate: "asc" },
+          include: { projectAllocations: { include: { project: { select: { id: true, name: true } } } } },
+        },
         projectAllocations: { include: { project: { select: { id: true, name: true, code: true } } } },
       },
     });

@@ -26,6 +26,20 @@ export const ksefImportCostBodySchema = z.object({
   paymentSource: z.enum(["MAIN", "VAT", "VAT_THEN_MAIN"]).optional(),
   plannedPaymentDate: isoDateTime.optional(),
   notes: z.string().optional(),
+  description: z.string().optional(),
+  costPlaceKind: z.enum(["UNCLASSIFIED", "PROJECT", "GENERAL_502", "MANAGEMENT_550"]).optional(),
+  accountingNote: z.string().optional(),
+  vehicleId: optionalId,
+  projectAllocations: z
+    .array(
+      z.object({
+        projectId: z.string().min(1),
+        netAmount: z.union([z.number(), z.string()]),
+        grossAmount: z.union([z.number(), z.string()]),
+        description: z.string().max(500).optional().default(""),
+      }),
+    )
+    .optional(),
 });
 
 export const ksefImportRevenueBodySchema = z.object({
