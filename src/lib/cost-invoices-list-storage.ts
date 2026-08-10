@@ -8,6 +8,42 @@ export type SavedCostListView = {
   query: string;
 };
 
+/** Parametry nawigacji / deep link — nie są filtrami listy. */
+export const COST_LIST_NAV_KEYS = [
+  "editCost",
+  "new",
+  "convertPlannedEventId",
+  "clientName",
+  "projectName",
+  "projectCode",
+  "multiProject",
+  "returnTo",
+] as const;
+
+const COST_LIST_FILTER_KEYS = [
+  "q",
+  "status",
+  "categories",
+  "categoryId",
+  "uncategorized",
+  "recurringSource",
+  "projectId",
+  "vehicleId",
+  "costPlaceKind",
+  "paymentSource",
+  "account4",
+  "dateFrom",
+  "dateTo",
+  "dateField",
+  "overdue",
+  "sort",
+  "order",
+] as const;
+
+const DEFAULT_SORT = "plannedPaymentDate";
+const DEFAULT_ORDER = "asc";
+const DEFAULT_DATE_FIELD = "plannedPaymentDate";
+
 function safeParse<T>(raw: string | null, fallback: T): T {
   if (raw == null || raw === "") return fallback;
   try {
@@ -15,6 +51,53 @@ function safeParse<T>(raw: string | null, fallback: T): T {
   } catch {
     return fallback;
   }
+}
+
+function isNavProjectId(sp: URLSearchParams): boolean {
+  return sp.get("new") === "1" || Boolean(sp.get("convertPlannedEventId")?.trim());
+}
+
+/** Czy URL zawiera jawne filtry/sortowanie listy (poza domyślnym sort/order). */
+export function costListHasExplicitFilters(sp: URLSearchParams): boolean {
+  for (const key of COST_LIST_FILTER_KEYS) {
+    if (key === "projectId" && isNavProjectId(sp)) continue;
+    const v = sp.get(key)?.trim();
+    if (!v) continue;
+    if (key === "sort" && v === DEFAULT_SORT) continue;
+    if (key === "order" && v === DEFAULT_ORDER) continue;
+    if (key === "dateField" && v === DEFAULT_DATE_FIELD) continue;
+    return true;
+  }
+  return false;
+}
+
+/** Parametry otwarcia modala / prefilla formularza — zachowaj przy przywracaniu ostatniego widoku. */
+export function extractCostListNavigationParams(sp: URLSearchParams): URLSearchParams {
+  const nav = new URLSearchParams();
+  for (const key of COST_LIST_NAV_KEYS) {
+    const v = sp.get(key);
+    if (v) nav.set(key, v);
+  }
+  if (isNavProjectId(sp)) {
+    const pid = sp.get("projectId")?.trim();
+    if (pid) nav.set("projectId", pid);
+  }
+  return nav;
+}
+
+/** Scal zapisany widok listy z parametrami nawigacji z bieżącego URL. */
+export function mergeCostListQueryWithNavigation(savedQuery: string, nav: URLSearchParams): string {
+  const merged = new URLSearchParams(savedQuery);
+  for (const key of COST_LIST_NAV_KEYS) merged.delete(key);
+  if (!isNavProjectId(nav)) {
+    /* projectId z nav (prefill) nie nadpisuje filtra listy */
+  } else {
+    merged.delete("projectId");
+  }
+  for (const [k, v] of nav.entries()) {
+    merged.set(k, v);
+  }
+  return merged.toString();
 }
 
 export function loadLastCostListQuery(): string | null {
@@ -26,12 +109,29 @@ export function loadLastCostListQuery(): string | null {
   }
 }
 
+/** Zapisz tylko filtry/sortowanie listy — bez parametrów modala / deep link. */
+export function sanitizeCostListQueryForStorage(queryString: string): string {
+  const sp = new URLSearchParams(queryString);
+  for (const key of COST_LIST_NAV_KEYS) sp.delete(key);
+  if (isNavProjectId(sp)) sp.delete("projectId");
+  return sp.toString();
+}
+
 export function saveLastCostListQuery(queryString: string): void {
   if (typeof window === "undefined") return;
   try {
-    window.localStorage.setItem(LAST_KEY, queryString);
+    window.localStorage.setItem(LAST_KEY, sanitizeCostListQueryForStorage(queryString));
   } catch {
     /* quota / private mode */
+  }
+}
+
+export function clearLastCostListQuery(): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.removeItem(LAST_KEY);
+  } catch {
+    /* */
   }
 }
 

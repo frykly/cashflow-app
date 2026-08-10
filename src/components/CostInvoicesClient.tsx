@@ -4,13 +4,13 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ProjectSearchPicker } from "@/components/ProjectSearchPicker";
+import { ExpenseCategorySearchPicker } from "@/components/ExpenseCategorySearchPicker";
 import { VehicleSearchPicker } from "@/components/VehicleSearchPicker";
 import {
   account5FromPlaceKind,
   account5FromProjectCode,
   COST_PLACE_KINDS,
   costPlaceKindLabel,
-  formatAccount4Display,
   formatAccount5Display,
   type CostPlaceKind,
 } from "@/lib/accounting/account-codes";
@@ -39,8 +39,12 @@ import { documentGrossSlicesFromInvoice } from "@/lib/payment-project-allocation
 import { defaultProportionalPaymentAllocationRows } from "@/lib/payment-project-allocation/default-rows";
 import {
   addSavedCostListView,
+  clearLastCostListQuery,
+  costListHasExplicitFilters,
+  extractCostListNavigationParams,
   loadLastCostListQuery,
   loadSavedCostListViews,
+  mergeCostListQueryWithNavigation,
   removeSavedCostListView,
   saveLastCostListQuery,
   type SavedCostListView,
@@ -607,11 +611,18 @@ export function CostInvoicesClient({
     if (embedded) return;
     if (restoredRef.current) return;
     restoredRef.current = true;
-    if (initialQueryString.trim().length > 0) return;
+
+    const current = new URLSearchParams(initialQueryString);
+    if (costListHasExplicitFilters(current)) return;
+
     const last = loadLastCostListQuery();
     if (!last?.trim()) return;
-    router.replace(`${pathname}?${last}`);
-  }, [initialQueryString, pathname, router]);
+
+    const nav = extractCostListNavigationParams(current);
+    const merged = mergeCostListQueryWithNavigation(last, nav);
+    if (merged === initialQueryString.trim()) return;
+    router.replace(`${pathname}?${merged}`);
+  }, [embedded, initialQueryString, pathname, router]);
 
   useEffect(() => {
     const m = new URLSearchParams(queryString);
@@ -718,6 +729,7 @@ export function CostInvoicesClient({
   }
 
   function clearFilters() {
+    clearLastCostListQuery();
     setParams({
       q: null,
       status: null,
@@ -734,6 +746,8 @@ export function CostInvoicesClient({
       dateTo: null,
       dateField: null,
       overdue: null,
+      sort: null,
+      order: null,
     });
   }
 
@@ -2027,19 +2041,12 @@ export function CostInvoicesClient({
                 </p>
               ) : null}
               <Field label="Kategoria kosztu (konto 4)">
-                <Select
-                  value={editing.expenseCategoryId ?? ""}
-                  onChange={(e) => setEditing({ ...editing, expenseCategoryId: e.target.value || null })}
+                <ExpenseCategorySearchPicker
+                  categories={categoriesForForm}
+                  value={editing.expenseCategoryId ?? null}
+                  onChange={(id) => setEditing({ ...editing, expenseCategoryId: id })}
                   disabled={saving}
-                >
-                  <option value="">(brak)</option>
-                  {categoriesForForm.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {formatAccount4Display(c) ?? c.name}
-                      {c.isActive === false ? " (zarchiwizowana)" : ""}
-                    </option>
-                  ))}
-                </Select>
+                />
               </Field>
               <Field label="Notatka księgowa">
                 <Input
