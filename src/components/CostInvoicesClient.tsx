@@ -27,6 +27,9 @@ import { buildAccount5AllocationsFromFormRows } from "@/lib/accounting/account5-
 import {
   datesForCostDatePreset,
   inferCostDatePreset,
+  normalizeCostDateField,
+  COST_DEFAULT_DATE_FIELD,
+  type CostDateField,
   type CostDatePreset,
 } from "@/lib/cost-list-date-filter";
 import { formatDate, formatMoney, toIsoOrNull } from "@/lib/format";
@@ -528,7 +531,7 @@ export function CostInvoicesClient({
     account4: "",
     dateFrom: "",
     dateTo: "",
-    dateField: "plannedPaymentDate",
+    dateField: COST_DEFAULT_DATE_FIELD as CostDateField,
     overdueOnly: false,
   });
 
@@ -564,7 +567,7 @@ export function CostInvoicesClient({
       account4: m.get("account4") ?? "",
       dateFrom: m.get("dateFrom") ?? "",
       dateTo: m.get("dateTo") ?? "",
-      dateField: m.get("dateField") || "plannedPaymentDate",
+      dateField: normalizeCostDateField(m.get("dateField")),
       overdueOnly: m.get("overdue") === "1",
     });
   }, [queryString]);
@@ -614,10 +617,11 @@ export function CostInvoicesClient({
   function mainDateParams(d = filterDraft) {
     const dates = datesForCostDatePreset(d.datePreset, { from: d.dateFrom, to: d.dateTo });
     const hasDates = Boolean(dates.dateFrom || dates.dateTo);
+    const dateField = normalizeCostDateField(d.dateField);
     return {
       dateFrom: dates.dateFrom,
       dateTo: dates.dateTo,
-      dateField: hasDates ? d.dateField || "plannedPaymentDate" : null,
+      dateField: hasDates ? dateField : null,
     };
   }
 
@@ -647,8 +651,17 @@ export function CostInvoicesClient({
     setParams(mainDateParams(nextDraft));
   }
 
+  function handleDateFieldChange(dateField: CostDateField) {
+    setFilterDraft((d) => ({ ...d, dateField }));
+    const hasDates =
+      filterDraft.datePreset !== "all" ||
+      Boolean(filterDraft.dateFrom.trim() || filterDraft.dateTo.trim());
+    if (hasDates) {
+      setParams(mainDateParams({ ...filterDraft, dateField }));
+    }
+  }
+
   function applyAdvancedFilters() {
-    const hasDates = Boolean(merged.get("dateFrom")?.trim() || merged.get("dateTo")?.trim());
     setParams({
       categories:
         filterDraft.uncategorizedOnly ? null
@@ -664,10 +677,6 @@ export function CostInvoicesClient({
       paymentSource: filterDraft.paymentSource || null,
       account4: filterDraft.account4.trim() || null,
       overdue: filterDraft.overdueOnly ? "1" : null,
-      dateField:
-        hasDates ? filterDraft.dateField || "plannedPaymentDate"
-        : filterDraft.dateField !== "plannedPaymentDate" ? filterDraft.dateField
-        : null,
     });
   }
 
@@ -1485,6 +1494,7 @@ export function CostInvoicesClient({
         onClear={clearFilters}
         onClearChip={(updates) => setParams(updates)}
         onDatePresetChange={handleDatePresetChange}
+        onDateFieldChange={handleDateFieldChange}
         onStatusChange={handleStatusChange}
         savedViews={savedViews}
         onLoadView={loadSavedView}

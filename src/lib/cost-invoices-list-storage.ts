@@ -56,7 +56,7 @@ export const COST_LIST_PERSISTENCE_CONFIG: PersistentListConfig = {
   filterKeys: COST_LIST_FILTER_KEYS,
   defaultSort: "plannedPaymentDate",
   defaultOrder: "asc",
-  defaultDateField: "plannedPaymentDate",
+  defaultDateField: "documentDate",
 };
 
 function safeParse<T>(raw: string | null, fallback: T): T {
@@ -126,7 +126,6 @@ export function costListAdvancedFilterCount(m: URLSearchParams): number {
   if (m.get("recurringSource")?.trim()) n++;
   if (m.get("uncategorized") === "1") n++;
   if (m.get("categories")?.trim() || m.get("categoryId")?.trim()) n++;
-  if (m.get("dateField")?.trim() && m.get("dateField") !== "plannedPaymentDate") n++;
   if (m.get("overdue") === "1") n++;
   return n;
 }
@@ -140,7 +139,6 @@ export function costListAdvancedFilterCountFromDraft(d: {
   recurringSource: string;
   uncategorizedOnly: boolean;
   categoryIds: string[];
-  dateField: string;
   overdueOnly: boolean;
 }): number {
   let n = 0;
@@ -152,7 +150,6 @@ export function costListAdvancedFilterCountFromDraft(d: {
   if (d.recurringSource.trim()) n++;
   if (d.uncategorizedOnly) n++;
   if (d.categoryIds.length > 0) n++;
-  if (d.dateField.trim() && d.dateField !== "plannedPaymentDate") n++;
   if (d.overdueOnly) n++;
   return n;
 }

@@ -5,7 +5,9 @@ import { ProjectSearchPicker } from "@/components/ProjectSearchPicker";
 import { COST_PLACE_KINDS, costPlaceKindLabel } from "@/lib/accounting/account-codes";
 import { formatVehicleLabel } from "@/lib/accounting/vehicle-label";
 import {
+  COST_DATE_FIELD_OPTIONS,
   COST_DATE_PRESET_LABELS,
+  type CostDateField,
   type CostDatePreset,
 } from "@/lib/cost-list-date-filter";
 import {
@@ -14,12 +16,6 @@ import {
   type SavedCostListView,
 } from "@/lib/cost-invoices-list-storage";
 import { Button, Field, Input, Select } from "@/components/ui";
-
-const DATE_FIELD_OPTIONS = [
-  { value: "plannedPaymentDate", label: "Plan. zapłata" },
-  { value: "paymentDueDate", label: "Termin płatności" },
-  { value: "documentDate", label: "Data dokumentu" },
-];
 
 const SORT_OPTIONS = [
   { value: "plannedPaymentDate", label: "Plan. zapłata" },
@@ -57,7 +53,7 @@ export type CostFilterDraft = {
   costPlaceKind: string;
   paymentSource: string;
   account4: string;
-  dateField: string;
+  dateField: CostDateField;
   overdueOnly: boolean;
 };
 
@@ -85,6 +81,7 @@ type Props = {
   onClear: () => void;
   onClearChip: (updates: Record<string, string | null>) => void;
   onDatePresetChange: (preset: CostDatePreset) => void;
+  onDateFieldChange: (field: CostDateField) => void;
   onStatusChange: (status: string) => void;
   savedViews: SavedCostListView[];
   onLoadView: (v: SavedCostListView) => void;
@@ -189,16 +186,6 @@ function buildAdvancedFilterChips(
     }
   }
 
-  const dateField = m.get("dateField")?.trim();
-  if (dateField && dateField !== "plannedPaymentDate") {
-    const label = DATE_FIELD_OPTIONS.find((o) => o.value === dateField)?.label ?? dateField;
-    chips.push({
-      id: "dateField",
-      label: `Data wg: ${label}`,
-      onRemove: () => onClearChip({ dateField: null }),
-    });
-  }
-
   if (m.get("overdue") === "1") {
     chips.push({
       id: "overdue",
@@ -228,6 +215,7 @@ export function CostInvoicesListToolbar({
   onClear,
   onClearChip,
   onDatePresetChange,
+  onDateFieldChange,
   onStatusChange,
   savedViews,
   onLoadView,
@@ -287,25 +275,40 @@ export function CostInvoicesListToolbar({
             </option>
           ))}
         </Select>
+        <Select
+          className="w-[11rem] !py-1.5 !text-sm"
+          value={filterDraft.dateField}
+          onChange={(e) => onDateFieldChange(e.target.value as CostDateField)}
+          disabled={listLoading}
+          aria-label="Według daty"
+        >
+          {COST_DATE_FIELD_OPTIONS.map((o) => (
+            <option key={o.value} value={o.value}>
+              {o.label}
+            </option>
+          ))}
+        </Select>
         {filterDraft.datePreset === "range" ? (
           <>
             <Input
               type="date"
-              className="w-[9.5rem] !py-1.5 !text-sm"
+              className="w-[9rem] !py-1.5 !text-sm"
               value={filterDraft.dateFrom}
               onChange={(e) => setFilterDraft((d) => ({ ...d, dateFrom: e.target.value }))}
               onBlur={onApplyMain}
               disabled={listLoading}
-              aria-label="Data od"
+              aria-label="Od"
+              placeholder="Od"
             />
             <Input
               type="date"
-              className="w-[9.5rem] !py-1.5 !text-sm"
+              className="w-[9rem] !py-1.5 !text-sm"
               value={filterDraft.dateTo}
               onChange={(e) => setFilterDraft((d) => ({ ...d, dateTo: e.target.value }))}
               onBlur={onApplyMain}
               disabled={listLoading}
-              aria-label="Data do"
+              aria-label="Do"
+              placeholder="Do"
             />
           </>
         ) : null}
@@ -408,19 +411,6 @@ export function CostInvoicesListToolbar({
                 <option value="">Wszystkie</option>
                 <option value="manual">Ręczne</option>
                 <option value="generated">Z cyklicznych</option>
-              </Select>
-            </Field>
-            <Field label="Rodzaj pola daty">
-              <Select
-                value={filterDraft.dateField}
-                onChange={(e) => setFilterDraft((d) => ({ ...d, dateField: e.target.value }))}
-                disabled={listLoading}
-              >
-                {DATE_FIELD_OPTIONS.map((o) => (
-                  <option key={o.value} value={o.value}>
-                    {o.label}
-                  </option>
-                ))}
               </Select>
             </Field>
             <div className="flex items-end">

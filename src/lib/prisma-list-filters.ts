@@ -110,9 +110,9 @@ export function buildCostWhere(sp: URLSearchParams): Prisma.CostInvoiceWhereInpu
     else if (ids.length > 1) filters.push({ expenseCategoryId: { in: ids } });
   }
 
-  const dateField = sp.get("dateField") ?? "plannedPaymentDate";
+  const dateField = sp.get("dateField") ?? "documentDate";
   const allowed = new Set(["plannedPaymentDate", "documentDate", "paymentDueDate"]);
-  const field = (allowed.has(dateField) ? dateField : "plannedPaymentDate") as
+  const field = (allowed.has(dateField) ? dateField : "documentDate") as
     | "plannedPaymentDate"
     | "documentDate"
     | "paymentDueDate";

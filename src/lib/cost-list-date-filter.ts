@@ -62,3 +62,19 @@ export const COST_DATE_PRESET_LABELS: Record<CostDatePreset, string> = {
   prevMonth: "Poprzedni miesiąc",
   range: "Zakres dat",
 };
+
+export type CostDateField = "documentDate" | "paymentDueDate" | "plannedPaymentDate";
+
+export const COST_DEFAULT_DATE_FIELD: CostDateField = "documentDate";
+
+export const COST_DATE_FIELD_OPTIONS: { value: CostDateField; label: string }[] = [
+  { value: "documentDate", label: "Data wystawienia" },
+  { value: "paymentDueDate", label: "Termin płatności" },
+  { value: "plannedPaymentDate", label: "Planowana zapłata" },
+];
+
+export function normalizeCostDateField(value: string | null | undefined): CostDateField {
+  const v = value?.trim();
+  if (v === "paymentDueDate" || v === "plannedPaymentDate") return v;
+  return COST_DEFAULT_DATE_FIELD;
+}
