@@ -17,13 +17,13 @@ import {
 import { formatVehicleLabel } from "@/lib/accounting/vehicle-label";
 import { ContractorNameLink } from "@/components/ContractorNameLink";
 import { Alert, Badge, Button, Field, Input, Modal, Select, Spinner, Textarea } from "@/components/ui";
-import { CrudToolbar } from "@/components/CrudToolbar";
+import { CostInvoicesListToolbar } from "@/components/CostInvoicesListToolbar";
 import { formatDate, formatMoney, toIsoOrNull } from "@/lib/format";
 import { isoToDateInputValue } from "@/lib/date-input";
 import { amountsFromNetRate, inferVatRateFromAmounts, type VatRatePct } from "@/lib/vat-rate";
 import { ContractorAutocomplete } from "@/components/ContractorAutocomplete";
 import { readApiErrorBody, readApiResponse } from "@/lib/api-client";
-import { useListQuery } from "@/hooks/useListQuery";
+import { usePersistentListState } from "@/hooks/usePersistentListState";
 import { isCalendarOverdue } from "@/lib/cashflow/overdue";
 import type { CostInvoice, CostInvoicePayment } from "@prisma/client";
 import { costRemainingGross, isCostFullyPaid, sumCostPaymentsGross } from "@/lib/cashflow/settlement";
@@ -39,14 +39,9 @@ import { documentGrossSlicesFromInvoice } from "@/lib/payment-project-allocation
 import { defaultProportionalPaymentAllocationRows } from "@/lib/payment-project-allocation/default-rows";
 import {
   addSavedCostListView,
-  clearLastCostListQuery,
-  costListHasExplicitFilters,
-  extractCostListNavigationParams,
-  loadLastCostListQuery,
+  COST_LIST_PERSISTENCE_CONFIG,
   loadSavedCostListViews,
-  mergeCostListQueryWithNavigation,
   removeSavedCostListView,
-  saveLastCostListQuery,
   type SavedCostListView,
 } from "@/lib/cost-invoices-list-storage";
 import { InvoicePdfDraftSection } from "@/components/InvoicePdfDraftSection";
@@ -306,19 +301,6 @@ const SORT_OPTIONS = [
   { value: "createdAt", label: "Data utworzenia" },
 ];
 
-const DATE_FIELD_OPTIONS = [
-  { value: "plannedPaymentDate", label: "Plan. zapłata" },
-  { value: "paymentDueDate", label: "Termin płatności" },
-  { value: "documentDate", label: "Data dokumentu" },
-];
-
-/** Tylko obiektywne presety (bez heurystyk kategorii). */
-const COST_QUICK_PRESETS = [
-  { id: "all" as const, label: "Wszystkie" },
-  { id: "uncategorized" as const, label: "Bez kategorii" },
-  { id: "overdue" as const, label: "Po terminie" },
-];
-
 function costListFiltersEmptyForQuickAll(m: URLSearchParams): boolean {
   return (
     !m.get("q")?.trim() &&
@@ -544,7 +526,10 @@ export function CostInvoicesClient({
   const embedded = Boolean(embeddedCostInvoiceId);
   const router = useRouter();
   const pathname = usePathname();
-  const { queryString, setParam, setParams, merged } = useListQuery("cost", initialQueryString);
+  const { queryString, setParam, setParams, merged, clearPersisted, replaceQuery } = usePersistentListState(
+    initialQueryString,
+    COST_LIST_PERSISTENCE_CONFIG,
+  );
   const [rows, setRows] = useState<Row[]>([]);
   const [listLoading, setListLoading] = useState(true);
   const [open, setOpen] = useState(false);
@@ -600,29 +585,10 @@ export function CostInvoicesClient({
   });
 
   const [savedViews, setSavedViews] = useState<SavedCostListView[]>([]);
-  const persistReadyRef = useRef(false);
-  const restoredRef = useRef(false);
 
   useEffect(() => {
     setSavedViews(loadSavedCostListViews());
   }, []);
-
-  useEffect(() => {
-    if (embedded) return;
-    if (restoredRef.current) return;
-    restoredRef.current = true;
-
-    const current = new URLSearchParams(initialQueryString);
-    if (costListHasExplicitFilters(current)) return;
-
-    const last = loadLastCostListQuery();
-    if (!last?.trim()) return;
-
-    const nav = extractCostListNavigationParams(current);
-    const merged = mergeCostListQueryWithNavigation(last, nav);
-    if (merged === initialQueryString.trim()) return;
-    router.replace(`${pathname}?${merged}`);
-  }, [embedded, initialQueryString, pathname, router]);
 
   useEffect(() => {
     const m = new URLSearchParams(queryString);
@@ -652,14 +618,6 @@ export function CostInvoicesClient({
       dateField: m.get("dateField") || "plannedPaymentDate",
       overdueOnly: m.get("overdue") === "1",
     });
-  }, [queryString]);
-
-  useEffect(() => {
-    if (!persistReadyRef.current) {
-      persistReadyRef.current = true;
-      return;
-    }
-    saveLastCostListQuery(queryString);
   }, [queryString]);
 
   useEffect(() => {
@@ -729,7 +687,7 @@ export function CostInvoicesClient({
   }
 
   function clearFilters() {
-    clearLastCostListQuery();
+    clearPersisted();
     setParams({
       q: null,
       status: null,
@@ -775,7 +733,7 @@ export function CostInvoicesClient({
   }
 
   function loadSavedView(v: SavedCostListView) {
-    router.replace(`${pathname}?${v.query}`);
+    replaceQuery(v.query);
   }
 
   function deleteSavedView(id: string) {
@@ -1514,315 +1472,41 @@ export function CostInvoicesClient({
             ) : null}
           </p>
         </div>
-        <CrudToolbar
-          sortOptions={SORT_OPTIONS}
-          sort={sort}
-          order={order}
-          onSortChange={(v) => setParam("sort", v)}
-          onOrderChange={(v) => setParam("order", v)}
-          onRefresh={load}
-          onAdd={openNew}
-          loading={listLoading}
-        />
+        <div className="flex flex-wrap gap-2">
+          <Button type="button" variant="secondary" onClick={load} disabled={listLoading}>
+            Odśwież
+          </Button>
+          <Button type="button" onClick={openNew} disabled={listLoading}>
+            Dodaj
+          </Button>
+        </div>
       </div>
 
-      <div className="rounded-xl border border-zinc-200 bg-zinc-50/80 p-4 dark:border-zinc-800 dark:bg-zinc-900/40">
-        <div className="mb-3">
-          <p className="mb-2 text-xs font-medium uppercase tracking-wide text-zinc-500">Szybki widok</p>
-          <div className="flex flex-wrap gap-2">
-            {COST_QUICK_PRESETS.map((p) => {
-              const active =
-                p.id === "all" ? quickAllActive
-                : p.id === "uncategorized" ? merged.get("uncategorized") === "1"
-                : merged.get("overdue") === "1";
-              return (
-                <button
-                  key={p.id}
-                  type="button"
-                  onClick={() => applyQuickPreset(p.id)}
-                  disabled={listLoading}
-                  className={`rounded-full border px-3 py-1.5 text-xs font-medium transition-colors disabled:opacity-50 ${
-                    active
-                      ? "border-zinc-900 bg-zinc-900 text-white dark:border-zinc-100 dark:bg-zinc-100 dark:text-zinc-900"
-                      : "border-zinc-300 bg-white text-zinc-700 hover:bg-zinc-100 dark:border-zinc-600 dark:bg-zinc-950 dark:text-zinc-200 dark:hover:bg-zinc-900"
-                  }`}
-                >
-                  {p.label}
-                </button>
-              );
-            })}
-          </div>
-        </div>
-
-        <div className="mb-4 flex flex-wrap items-end gap-3 rounded-lg border border-dashed border-zinc-300 bg-white/60 px-3 py-2 dark:border-zinc-600 dark:bg-zinc-950/40">
-          <div className="min-w-0 flex-1 basis-[min(100%,12rem)]">
-            <label className="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-400">Moje widoki (ta przeglądarka)</label>
-            <div className="flex flex-wrap gap-2">
-              <Select
-                className="w-full min-w-0 sm:min-w-[12rem]"
-                value=""
-                onChange={(e) => {
-                  const id = e.target.value;
-                  const v = savedViews.find((x) => x.id === id);
-                  if (v) loadSavedView(v);
-                  e.target.value = "";
-                }}
-                disabled={listLoading || savedViews.length === 0}
-              >
-                <option value="">{savedViews.length ? "Wczytaj widok…" : "Brak zapisanych widoków"}</option>
-                {savedViews.map((v) => (
-                  <option key={v.id} value={v.id}>
-                    {v.name}
-                  </option>
-                ))}
-              </Select>
-              <Button type="button" variant="secondary" className="!py-1.5 !text-xs" onClick={saveCurrentView} disabled={listLoading}>
-                Zapisz bieżący widok
-              </Button>
-            </div>
-            {savedViews.length > 0 ? (
-              <ul className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs text-zinc-500">
-                {savedViews.map((v) => (
-                  <li key={v.id} className="inline-flex items-center gap-1">
-                    <button type="button" className="text-blue-600 underline dark:text-blue-400" onClick={() => loadSavedView(v)}>
-                      {v.name}
-                    </button>
-                    <button
-                      type="button"
-                      className="text-red-600 dark:text-red-400"
-                      title="Usuń widok"
-                      onClick={() => deleteSavedView(v.id)}
-                    >
-                      ×
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            ) : null}
-          </div>
-        </div>
-        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-          <span className="text-sm font-medium text-zinc-700 dark:text-zinc-300">Filtry i wyszukiwanie</span>
-          <div className="flex flex-wrap gap-2">
-            <Button type="button" variant="secondary" className="!py-1.5 !text-xs" onClick={clearFilters} disabled={listLoading}>
-              Wyczyść filtry
-            </Button>
-            <Button type="button" className="!py-1.5 !text-xs" onClick={applyFilters} disabled={listLoading}>
-              Zastosuj
-            </Button>
-          </div>
-        </div>
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-6">
-          <Field label="Szukaj (nr, dostawca, opis, konto, pojazd)">
-            <Input
-              className="w-full min-w-0"
-              value={filterDraft.q}
-              onChange={(e) => setFilterDraft((d) => ({ ...d, q: e.target.value }))}
-              placeholder="np. FV/1, 501-12, rejestracja"
-              disabled={listLoading}
-            />
-          </Field>
-          <Field label="Projekt">
-            <Select
-              value={filterDraft.projectId}
-              onChange={(e) => setFilterDraft((d) => ({ ...d, projectId: e.target.value }))}
-              disabled={listLoading}
-            >
-              <option value="">(wszystkie)</option>
-              {projects
-                .slice()
-                .sort((a, b) => Number(b.isActive) - Number(a.isActive) || a.name.localeCompare(b.name, "pl"))
-                .map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.name}
-                    {!p.isActive ? " (nieaktywny)" : ""}
-                  </option>
-                ))}
-            </Select>
-          </Field>
-          <Field label="Miejsce kosztu">
-            <Select
-              value={filterDraft.costPlaceKind}
-              onChange={(e) => setFilterDraft((d) => ({ ...d, costPlaceKind: e.target.value }))}
-              disabled={listLoading}
-            >
-              <option value="">(wszystkie)</option>
-              {COST_PLACE_KINDS.map((k) => (
-                <option key={k} value={k}>
-                  {costPlaceKindLabel(k)}
-                </option>
-              ))}
-            </Select>
-          </Field>
-          <Field label="Pojazd">
-            <Select
-              value={filterDraft.vehicleId}
-              onChange={(e) => setFilterDraft((d) => ({ ...d, vehicleId: e.target.value }))}
-              disabled={listLoading}
-            >
-              <option value="">(wszystkie)</option>
-              {vehicles
-                .slice()
-                .sort((a, b) => a.registrationNumber.localeCompare(b.registrationNumber, "pl"))
-                .map((v) => (
-                  <option key={v.id} value={v.id}>
-                    {formatVehicleLabel(v)}
-                  </option>
-                ))}
-            </Select>
-          </Field>
-          <Field label="Konto 4">
-            <Input
-              value={filterDraft.account4}
-              onChange={(e) => setFilterDraft((d) => ({ ...d, account4: e.target.value }))}
-              placeholder="kod lub nazwa"
-              disabled={listLoading}
-            />
-          </Field>
-          <Field label="Źródło płatności">
-            <Select
-              value={filterDraft.paymentSource}
-              onChange={(e) => setFilterDraft((d) => ({ ...d, paymentSource: e.target.value }))}
-              disabled={listLoading}
-            >
-              <option value="">(wszystkie)</option>
-              <option value="MAIN">MAIN</option>
-              <option value="VAT">VAT</option>
-              <option value="VAT_THEN_MAIN">VAT → MAIN</option>
-            </Select>
-          </Field>
-          <Field label="Status">
-            <Select
-              value={filterDraft.status}
-              onChange={(e) => setFilterDraft((d) => ({ ...d, status: e.target.value }))}
-              disabled={listLoading}
-            >
-              <option value="">(wszystkie)</option>
-              <option value="PLANOWANA">Planowana</option>
-              <option value="DO_ZAPLATY">Do zapłaty</option>
-              <option value="PARTIALLY_PAID">Częściowo zapłacona</option>
-              <option value="ZAPLACONA">Zapłacona</option>
-            </Select>
-          </Field>
-          <div className="sm:col-span-2 lg:col-span-2 xl:col-span-2">
-            <span className="mb-1 block text-sm font-medium text-zinc-700 dark:text-zinc-300">Kategorie</span>
-            <label className="mb-2 flex cursor-pointer items-center gap-2 text-sm text-zinc-700 dark:text-zinc-300">
-              <input
-                type="checkbox"
-                className="size-4 rounded border-zinc-300"
-                checked={filterDraft.uncategorizedOnly}
-                onChange={(e) =>
-                  setFilterDraft((d) => ({
-                    ...d,
-                    uncategorizedOnly: e.target.checked,
-                    categoryIds: e.target.checked ? [] : d.categoryIds,
-                  }))
-                }
-                disabled={listLoading}
-              />
-              Tylko bez kategorii
-            </label>
-            <div className="max-h-36 overflow-y-auto rounded border border-zinc-300 bg-white px-2 py-1.5 dark:border-zinc-600 dark:bg-zinc-950">
-              {categories.length === 0 ? (
-                <p className="text-xs text-zinc-500">Brak kategorii — dodaj w Ustawieniach.</p>
-              ) : (
-                <div className="grid grid-cols-1 gap-0.5 sm:grid-cols-2">
-                  {categories.map((c) => (
-                    <label key={c.id} className="flex cursor-pointer items-center gap-2 py-0.5 text-xs">
-                      <input
-                        type="checkbox"
-                        className="size-3.5 rounded border-zinc-300"
-                        checked={filterDraft.categoryIds.includes(c.id)}
-                        disabled={listLoading || filterDraft.uncategorizedOnly}
-                        onChange={(e) => {
-                          const checked = e.target.checked;
-                          setFilterDraft((d) => {
-                            const next = new Set(d.categoryIds);
-                            if (checked) next.add(c.id);
-                            else next.delete(c.id);
-                            return { ...d, categoryIds: [...next], uncategorizedOnly: false };
-                          });
-                        }}
-                      />
-                      <span className={c.isActive === false ? "text-zinc-500" : ""}>{c.name}</span>
-                    </label>
-                  ))}
-                </div>
-              )}
-            </div>
-            <p className="mt-1 text-xs text-zinc-500">Zaznacz wiele kategorii i kliknij „Zastosuj”.</p>
-          </div>
-          <Field label="Źródło wpisu">
-            <Select
-              value={filterDraft.recurringSource}
-              onChange={(e) => setFilterDraft((d) => ({ ...d, recurringSource: e.target.value }))}
-              disabled={listLoading}
-            >
-              <option value="">Wszystkie</option>
-              <option value="manual">Ręczne</option>
-              <option value="generated">Z cyklicznych</option>
-            </Select>
-          </Field>
-          <Field label="Pole daty (zakres)">
-            <Select
-              value={filterDraft.dateField}
-              onChange={(e) => setFilterDraft((d) => ({ ...d, dateField: e.target.value }))}
-              disabled={listLoading}
-            >
-              {DATE_FIELD_OPTIONS.map((o) => (
-                <option key={o.value} value={o.value}>
-                  {o.label}
-                </option>
-              ))}
-            </Select>
-          </Field>
-          <Field label="Data od">
-            <Input
-              type="date"
-              value={filterDraft.dateFrom}
-              onChange={(e) => setFilterDraft((d) => ({ ...d, dateFrom: e.target.value }))}
-              disabled={listLoading}
-            />
-          </Field>
-          <Field label="Data do">
-            <Input
-              type="date"
-              value={filterDraft.dateTo}
-              onChange={(e) => setFilterDraft((d) => ({ ...d, dateTo: e.target.value }))}
-              disabled={listLoading}
-            />
-          </Field>
-        </div>
-        <label className="mt-3 flex cursor-pointer items-center gap-2 text-sm text-zinc-700 dark:text-zinc-300">
-          <input
-            type="checkbox"
-            className="size-4 rounded border-zinc-300"
-            checked={filterDraft.overdueOnly}
-            onChange={(e) => setFilterDraft((d) => ({ ...d, overdueOnly: e.target.checked }))}
-            disabled={listLoading}
-          />
-          Tylko po terminie (niezapłacone, data &lt; dziś)
-        </label>
-        <p className="mt-2 text-xs text-zinc-500">
-          <Link href="/cost-invoices?overdue=1" className="font-medium text-zinc-700 underline dark:text-zinc-300">
-            Szybki link: tylko przeterminowane
-          </Link>
-        </p>
-        <div className="mt-3 flex flex-wrap items-center gap-3 border-t border-zinc-200 pt-3 text-xs dark:border-zinc-700">
-          <span className="font-medium text-zinc-600 dark:text-zinc-400">Eksport (z filtrami):</span>
-          <a className="text-zinc-800 underline dark:text-zinc-200" href={`/api/cost-invoices/export?format=csv&${queryString}`}>
-            CSV
-          </a>
-          <a className="text-zinc-800 underline dark:text-zinc-200" href={`/api/cost-invoices/export?format=xlsx&${queryString}`}>
-            Excel
-          </a>
-          <label className="cursor-pointer text-zinc-800 underline dark:text-zinc-200">
-            Import CSV
-            <input type="file" accept=".csv,text/csv" className="hidden" onChange={onImportFile} />
-          </label>
-        </div>
-        {importMsg ? <p className="mt-2 text-xs text-zinc-600 dark:text-zinc-400">{importMsg}</p> : null}
-      </div>
+      <CostInvoicesListToolbar
+        filterDraft={filterDraft}
+        setFilterDraft={setFilterDraft}
+        merged={merged}
+        queryString={queryString}
+        listLoading={listLoading}
+        projects={projects}
+        categories={categories}
+        vehicles={vehicles}
+        sort={sort}
+        order={order}
+        onSortChange={(v) => setParam("sort", v)}
+        onOrderChange={(v) => setParam("order", v)}
+        onApply={applyFilters}
+        onClear={clearFilters}
+        onClearChip={(updates) => setParams(updates)}
+        onQuickPreset={applyQuickPreset}
+        quickAllActive={quickAllActive}
+        savedViews={savedViews}
+        onLoadView={loadSavedView}
+        onSaveView={saveCurrentView}
+        onDeleteView={deleteSavedView}
+        onImportFile={onImportFile}
+        importMsg={importMsg}
+      />
 
       {loadError && <Alert variant="error">{loadError}</Alert>}
 

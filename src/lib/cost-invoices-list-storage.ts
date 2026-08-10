@@ -1,14 +1,23 @@
-const LAST_KEY = "cashflow-cost-list-query-v1";
+import {
+  clearPersistentListQuery,
+  extractListNavigationParams,
+  listQueryHasExplicitFilters,
+  loadPersistentListQuery,
+  mergeListQueryWithNavigation,
+  PERSISTENT_LIST_STORAGE_KEYS,
+  savePersistentListQuery,
+  sanitizeListQueryForStorage,
+  type PersistentListConfig,
+} from "@/lib/persistent-list-state";
+
 const VIEWS_KEY = "cashflow-cost-saved-views-v1";
 
 export type SavedCostListView = {
   id: string;
   name: string;
-  /** Pełny query string (bez `?`), jak w URL listy kosztów */
   query: string;
 };
 
-/** Parametry nawigacji / deep link — nie są filtrami listy. */
 export const COST_LIST_NAV_KEYS = [
   "editCost",
   "new",
@@ -20,7 +29,7 @@ export const COST_LIST_NAV_KEYS = [
   "returnTo",
 ] as const;
 
-const COST_LIST_FILTER_KEYS = [
+export const COST_LIST_FILTER_KEYS = [
   "q",
   "status",
   "categories",
@@ -40,9 +49,15 @@ const COST_LIST_FILTER_KEYS = [
   "order",
 ] as const;
 
-const DEFAULT_SORT = "plannedPaymentDate";
-const DEFAULT_ORDER = "asc";
-const DEFAULT_DATE_FIELD = "plannedPaymentDate";
+export const COST_LIST_PERSISTENCE_CONFIG: PersistentListConfig = {
+  storageKey: PERSISTENT_LIST_STORAGE_KEYS.costInvoices,
+  defaults: { sort: "plannedPaymentDate", order: "asc" },
+  navKeys: COST_LIST_NAV_KEYS,
+  filterKeys: COST_LIST_FILTER_KEYS,
+  defaultSort: "plannedPaymentDate",
+  defaultOrder: "asc",
+  defaultDateField: "plannedPaymentDate",
+};
 
 function safeParse<T>(raw: string | null, fallback: T): T {
   if (raw == null || raw === "") return fallback;
@@ -53,87 +68,24 @@ function safeParse<T>(raw: string | null, fallback: T): T {
   }
 }
 
-function isNavProjectId(sp: URLSearchParams): boolean {
-  return sp.get("new") === "1" || Boolean(sp.get("convertPlannedEventId")?.trim());
-}
+export const costListHasExplicitFilters = (sp: URLSearchParams) =>
+  listQueryHasExplicitFilters(sp, COST_LIST_PERSISTENCE_CONFIG);
 
-/** Czy URL zawiera jawne filtry/sortowanie listy (poza domyślnym sort/order). */
-export function costListHasExplicitFilters(sp: URLSearchParams): boolean {
-  for (const key of COST_LIST_FILTER_KEYS) {
-    if (key === "projectId" && isNavProjectId(sp)) continue;
-    const v = sp.get(key)?.trim();
-    if (!v) continue;
-    if (key === "sort" && v === DEFAULT_SORT) continue;
-    if (key === "order" && v === DEFAULT_ORDER) continue;
-    if (key === "dateField" && v === DEFAULT_DATE_FIELD) continue;
-    return true;
-  }
-  return false;
-}
+export const extractCostListNavigationParams = (sp: URLSearchParams) =>
+  extractListNavigationParams(sp, COST_LIST_NAV_KEYS);
 
-/** Parametry otwarcia modala / prefilla formularza — zachowaj przy przywracaniu ostatniego widoku. */
-export function extractCostListNavigationParams(sp: URLSearchParams): URLSearchParams {
-  const nav = new URLSearchParams();
-  for (const key of COST_LIST_NAV_KEYS) {
-    const v = sp.get(key);
-    if (v) nav.set(key, v);
-  }
-  if (isNavProjectId(sp)) {
-    const pid = sp.get("projectId")?.trim();
-    if (pid) nav.set("projectId", pid);
-  }
-  return nav;
-}
+export const mergeCostListQueryWithNavigation = (savedQuery: string, nav: URLSearchParams) =>
+  mergeListQueryWithNavigation(savedQuery, nav, COST_LIST_NAV_KEYS);
 
-/** Scal zapisany widok listy z parametrami nawigacji z bieżącego URL. */
-export function mergeCostListQueryWithNavigation(savedQuery: string, nav: URLSearchParams): string {
-  const merged = new URLSearchParams(savedQuery);
-  for (const key of COST_LIST_NAV_KEYS) merged.delete(key);
-  if (!isNavProjectId(nav)) {
-    /* projectId z nav (prefill) nie nadpisuje filtra listy */
-  } else {
-    merged.delete("projectId");
-  }
-  for (const [k, v] of nav.entries()) {
-    merged.set(k, v);
-  }
-  return merged.toString();
-}
+export const loadLastCostListQuery = () => loadPersistentListQuery(COST_LIST_PERSISTENCE_CONFIG.storageKey);
 
-export function loadLastCostListQuery(): string | null {
-  if (typeof window === "undefined") return null;
-  try {
-    return window.localStorage.getItem(LAST_KEY);
-  } catch {
-    return null;
-  }
-}
+export const sanitizeCostListQueryForStorage = (queryString: string) =>
+  sanitizeListQueryForStorage(queryString, COST_LIST_NAV_KEYS);
 
-/** Zapisz tylko filtry/sortowanie listy — bez parametrów modala / deep link. */
-export function sanitizeCostListQueryForStorage(queryString: string): string {
-  const sp = new URLSearchParams(queryString);
-  for (const key of COST_LIST_NAV_KEYS) sp.delete(key);
-  if (isNavProjectId(sp)) sp.delete("projectId");
-  return sp.toString();
-}
+export const saveLastCostListQuery = (queryString: string) =>
+  savePersistentListQuery(COST_LIST_PERSISTENCE_CONFIG.storageKey, queryString, COST_LIST_NAV_KEYS);
 
-export function saveLastCostListQuery(queryString: string): void {
-  if (typeof window === "undefined") return;
-  try {
-    window.localStorage.setItem(LAST_KEY, sanitizeCostListQueryForStorage(queryString));
-  } catch {
-    /* quota / private mode */
-  }
-}
-
-export function clearLastCostListQuery(): void {
-  if (typeof window === "undefined") return;
-  try {
-    window.localStorage.removeItem(LAST_KEY);
-  } catch {
-    /* */
-  }
-}
+export const clearLastCostListQuery = () => clearPersistentListQuery(COST_LIST_PERSISTENCE_CONFIG.storageKey);
 
 export function loadSavedCostListViews(): SavedCostListView[] {
   if (typeof window === "undefined") return [];
@@ -161,4 +113,44 @@ export function addSavedCostListView(name: string, queryString: string): SavedCo
 export function removeSavedCostListView(id: string): void {
   const list = loadSavedCostListViews().filter((v) => v.id !== id);
   persistViews(list);
+}
+
+/** Filtry z panelu „Więcej filtrów” aktywne w URL. */
+export function costListAdvancedFilterCount(m: URLSearchParams): number {
+  let n = 0;
+  if (m.get("costPlaceKind")?.trim()) n++;
+  if (m.get("vehicleId")?.trim()) n++;
+  if (m.get("paymentSource")?.trim()) n++;
+  if (m.get("recurringSource")?.trim()) n++;
+  if (m.get("uncategorized") === "1") n++;
+  if (m.get("categories")?.trim() || m.get("categoryId")?.trim()) n++;
+  if (m.get("dateFrom")?.trim() || m.get("dateTo")?.trim()) n++;
+  if (m.get("dateField")?.trim() && m.get("dateField") !== "plannedPaymentDate") n++;
+  if (m.get("overdue") === "1") n++;
+  return n;
+}
+
+export function costListAdvancedFilterCountFromDraft(d: {
+  costPlaceKind: string;
+  vehicleId: string;
+  paymentSource: string;
+  recurringSource: string;
+  uncategorizedOnly: boolean;
+  categoryIds: string[];
+  dateFrom: string;
+  dateTo: string;
+  dateField: string;
+  overdueOnly: boolean;
+}): number {
+  let n = 0;
+  if (d.costPlaceKind.trim()) n++;
+  if (d.vehicleId.trim()) n++;
+  if (d.paymentSource.trim()) n++;
+  if (d.recurringSource.trim()) n++;
+  if (d.uncategorizedOnly) n++;
+  if (d.categoryIds.length > 0) n++;
+  if (d.dateFrom.trim() || d.dateTo.trim()) n++;
+  if (d.dateField.trim() && d.dateField !== "plannedPaymentDate") n++;
+  if (d.overdueOnly) n++;
+  return n;
 }
