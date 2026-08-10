@@ -1,6 +1,6 @@
 "use client";
 
-import { CostInvoicesClient } from "@/components/CostInvoicesClient";
+import { NewCostInvoiceFormModal } from "@/components/CostInvoiceFormModal";
 import { NewIncomeInvoiceFormModal } from "@/components/IncomeInvoiceFormModal";
 
 const KSEF_INVOICE_MODAL_Z = "z-[70]";
@@ -39,10 +39,15 @@ export function KsefLinkedInvoiceModal({
   }
 
   return (
-    <CostInvoicesClient
-      embeddedCostInvoiceId={invoiceId}
-      onEmbeddedClose={onClose}
-      onEmbeddedSaved={onSaved}
+    <NewCostInvoiceFormModal
+      open={open}
+      mode="edit"
+      invoiceId={invoiceId}
+      onClose={onClose}
+      onSaved={() => {
+        onSaved();
+        onClose();
+      }}
       overlayZIndexClass={KSEF_INVOICE_MODAL_Z}
     />
   );

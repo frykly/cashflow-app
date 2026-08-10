@@ -5,7 +5,7 @@ import { Badge, Button } from "@/components/ui";
 import { formatDate, formatMoney } from "@/lib/format";
 import type { KsefInvoicePreview } from "@/lib/ksef/invoice-preview";
 import type { KsefWorkflowStatus } from "@/lib/ksef/types";
-import type { KsefImportCostBody, KsefImportRevenueBody } from "@/lib/validation/ksef-import-schemas";
+import type { KsefImportRevenueBody } from "@/lib/validation/ksef-import-schemas";
 import { KsefImportForm } from "@/components/KsefImportForm";
 
 type DuplicateCost = {
@@ -54,9 +54,6 @@ export type KsefDocumentDetailPanelProps = {
   importBlockedReason: string | null;
   onAction: (action: DocAction, opts?: { forceXml?: boolean }) => void;
   hideActions?: boolean;
-  focusImportSection?: boolean;
-  onImportFocusHandled?: () => void;
-  onImportCostSubmit?: (body: KsefImportCostBody) => void;
   onImportRevenueSubmit?: (body: KsefImportRevenueBody) => void;
   onOpenLinkedInvoice?: (kind: "cost" | "income", invoiceId: string) => void;
 };
@@ -468,9 +465,6 @@ export function KsefDocumentDetailPanel({
   importBlockedReason,
   onAction,
   hideActions = false,
-  focusImportSection = false,
-  onImportFocusHandled,
-  onImportCostSubmit,
   onImportRevenueSubmit,
   onOpenLinkedInvoice,
 }: KsefDocumentDetailPanelProps) {
@@ -655,28 +649,12 @@ export function KsefDocumentDetailPanel({
         />
       ) : null}
 
-      {canImportCost && onImportCostSubmit ? (
-        <KsefImportForm
-          direction="PURCHASE"
-          ksefId={preview.ksefId}
-          defaultPlannedDate={preview.paymentDueDate ?? preview.issueDate}
-          invoiceGrossAmount={preview.invoiceGrossAmount}
-          amountToPay={preview.amountToPay}
-          acting={acting}
-          focusSection={focusImportSection}
-          onFocusHandled={onImportFocusHandled}
-          onSubmitCost={onImportCostSubmit}
-          onSubmitRevenue={() => {}}
-        />
-      ) : null}
       {canImportRevenue && onImportRevenueSubmit ? (
         <KsefImportForm
           direction="SALE"
           ksefId={preview.ksefId}
           defaultPlannedDate={preview.paymentDueDate ?? preview.issueDate}
           acting={acting}
-          focusSection={focusImportSection}
-          onFocusHandled={onImportFocusHandled}
           onSubmitCost={() => {}}
           onSubmitRevenue={onImportRevenueSubmit}
         />

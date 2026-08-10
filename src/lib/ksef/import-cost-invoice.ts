@@ -59,7 +59,7 @@ export async function importKsefDocumentAsCost(documentId: string, options: Ksef
   const prepared = await prepareCostInvoiceCreate(prisma, data);
   if (!prepared.ok) throw new Error(prepared.message);
 
-  const amountToPayGross = resolveKsefImportAmountToPayGross(doc);
+  const amountToPayGross = resolveKsefImportAmountToPayGross(doc, options);
 
   const now = new Date();
 

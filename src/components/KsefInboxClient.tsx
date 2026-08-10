@@ -5,6 +5,7 @@ import { AlertCircle, FileCheck, FileText, RefreshCw } from "lucide-react";
 import { Alert, Badge, Button, Field, Input, Select, Spinner } from "@/components/ui";
 import { KsefDocumentDrawer } from "@/components/KsefDocumentDrawer";
 import { KsefLinkedInvoiceModal } from "@/components/KsefLinkedInvoiceModal";
+import { NewCostInvoiceFormModal } from "@/components/CostInvoiceFormModal";
 import { readApiResponse } from "@/lib/api-client";
 import type { KsefInvoicePreview } from "@/lib/ksef/invoice-preview";
 import type { KsefPaymentStatus } from "@/lib/ksef/payment-status";
@@ -183,7 +184,7 @@ function QuickActionCell({
           else if (incomeId) onOpenLinkedInvoice("income", incomeId);
         }}
       >
-        Otwórz fakturę
+        {costId ? "Edytuj fakturę" : "Otwórz fakturę"}
       </Button>
     );
   }
@@ -321,7 +322,11 @@ export function KsefInboxClient() {
   const [syncFrom, setSyncFrom] = useState("");
   const [manualRangeFrom, setManualRangeFrom] = useState("2026-01-01");
   const [manualRangeTo, setManualRangeTo] = useState("");
-  const [focusImportSection, setFocusImportSection] = useState(false);
+  const [costFormModal, setCostFormModal] = useState<{
+    mode: "ksef-import" | "edit";
+    ksefDocumentId?: string;
+    invoiceId?: string;
+  } | null>(null);
   const [linkedInvoiceEdit, setLinkedInvoiceEdit] = useState<{
     kind: "cost" | "income";
     id: string;
@@ -553,7 +558,7 @@ export function KsefInboxClient() {
 
   function openForImport(id: string) {
     setSelectedId(id);
-    setFocusImportSection(true);
+    setCostFormModal({ mode: "ksef-import", ksefDocumentId: id });
   }
 
   function openLinkedInvoice(kind: "cost" | "income", id: string) {
@@ -775,7 +780,7 @@ export function KsefInboxClient() {
                       : "hover:bg-zinc-50 dark:hover:bg-zinc-900/50"
                   }`}
                     onClick={() => {
-                      setFocusImportSection(false);
+                      setCostFormModal(null);
                       setSelectedId(r.id);
                     }}
                 >
@@ -863,9 +868,6 @@ export function KsefInboxClient() {
                 canUndoImport: Boolean(canUndoImport),
                 importBlockedReason,
                 onAction: (action, opts) => void runAction(selected.id, action, opts),
-                focusImportSection,
-                onImportFocusHandled: () => setFocusImportSection(false),
-                onImportCostSubmit: (body) => void runAction(selected.id, "import-cost", { importBody: body }),
                 onImportRevenueSubmit: (body) =>
                   void runAction(selected.id, "import-revenue", { importBody: body }),
                 onOpenLinkedInvoice: openLinkedInvoice,
@@ -874,17 +876,17 @@ export function KsefInboxClient() {
         }
         onClose={() => {
           setSelectedId(null);
-          setFocusImportSection(false);
+          setCostFormModal(null);
         }}
         onPrevious={() => {
           if (selectedIndex > 0) {
-            setFocusImportSection(false);
+            setCostFormModal(null);
             setSelectedId(rows[selectedIndex - 1]!.id);
           }
         }}
         onNext={() => {
           if (selectedIndex >= 0 && selectedIndex < rows.length - 1) {
-            setFocusImportSection(false);
+            setCostFormModal(null);
             setSelectedId(rows[selectedIndex + 1]!.id);
           }
         }}
@@ -898,6 +900,23 @@ export function KsefInboxClient() {
         open={Boolean(linkedInvoiceEdit)}
         onClose={() => setLinkedInvoiceEdit(null)}
         onSaved={() => void refreshAfterLinkedInvoiceSave()}
+      />
+
+      <NewCostInvoiceFormModal
+        open={costFormModal !== null}
+        mode={costFormModal?.mode ?? "ksef-import"}
+        ksefDocumentId={costFormModal?.ksefDocumentId ?? null}
+        invoiceId={costFormModal?.invoiceId ?? null}
+        overlayZIndexClass="z-[70]"
+        onClose={() => setCostFormModal(null)}
+        onSaved={async () => {
+          setCostFormModal(null);
+          await load();
+          if (selectedId) {
+            const refreshed = await fetchDocumentDetail(selectedId);
+            if (refreshed) setDetail(refreshed);
+          }
+        }}
       />
     </div>
   );
